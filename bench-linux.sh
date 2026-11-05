@@ -67,6 +67,11 @@ median "$OUT/m_rs" 326316140 'matmul Rust'
 median "$OUT/m_m" 326316140 'matmul MAGIC'
 median "$OUT/m_k" 326316140 'matmul MAGIC i-k-j'
 
+if [ -n "$CLANG" ]; then
+  "$M" build matmul_magic_ikj.magic --cc "$CLANG -march=x86-64-v3" -o "$OUT/m_clang.bin" >/dev/null 2>&1 || true
+  [ -x "$OUT/m_clang.bin" ] && median "$OUT/m_clang.bin" 326316140 'matmul MAGIC clang AVX2'
+fi
+
 echo "== n-body 10M"
 build_c nbody_c.c n_c; build_rust nbody_rs.rs n_rs
 build_magic nbody_unrolled.magic n_u
