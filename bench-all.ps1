@@ -116,6 +116,7 @@ $cases = @(
     @{ name = 'binary trees C'; dir = 'bench-bt'; exe = 'bt_c.exe'; src = 'bt_c.c'; kind = 'c'; expect = '568328208' },
     @{ name = 'binary trees Rust';   dir = 'bench-bt';       exe = 'bt_rust_flat_native.exe'; src = 'bt_rust_flat.rs'; kind = 'rust'; expect = '568328208' },
     @{ name = 'binary trees MAGIC';   dir = 'bench-bt';       exe = 'bt_magic.exe';         src = 'bt_magic.magic';      kind = 'magic'; expect = '568328208' }
+    @{ name = 'binary trees MAGIC count'; dir = 'bench-bt'; exe = 'bt_magic_count.exe'; src = 'bt_magic_count.magic'; kind = 'magic'; expect = '568328208' }
 )
 
 $zig = Get-ChildItem "$env:TEMP\zig-dist" -Recurse -Filter zig.exe -ErrorAction SilentlyContinue | Select-Object -First 1

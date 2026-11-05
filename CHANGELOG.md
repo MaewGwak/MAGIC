@@ -16,6 +16,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
   Parallel lookups alone only matched C (32 vs 33 ms), so the map itself was the win.
 - C port of the binary-trees workload (flat arena, same shape): 735 ms vs MAGIC 725 ms and
   Rust 1346 ms — the five-language matrix is complete for this workload.
+- Binary trees with a node-count check (a perfect tree's size is its allocation counter):
+  427 ms vs 745 ms C (1.74x) and 1349 ms Rust. Storing both children side by side was slower
+  (852 ms), and struct arrays cannot be passed as parameters yet.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
@@ -68,7 +71,7 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 
 **Verification**
 - 124 tests: 44 unit, 22 CLI, 15 integration, 43 end-to-end.
-- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (48 cases, 46 without Zig), `bench-memory.ps1`.
+- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (49 cases, 47 without Zig), `bench-memory.ps1`.
 
 ## v0.3 — the memory model
 
