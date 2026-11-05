@@ -30,6 +30,12 @@ elif [ -x "$HOME/tools/goroot/usr/lib/golang/bin/go" ]; then
   GO="$HOME/tools/goroot/usr/lib/golang/bin/go"
   export GOROOT="$HOME/tools/goroot/usr/lib/golang"
 fi
+GOOSE=""
+if command -v goose >/dev/null 2>&1; then
+  GOOSE=$(command -v goose)
+elif [ -x "$HOME/tools/goose/build/goose" ]; then
+  GOOSE="$HOME/tools/goose/build/goose"
+fi
 
 median() {
   local exe=$1 expect=$2 label=$3
@@ -50,6 +56,7 @@ build_rust() { rustc -C opt-level=3 -o "$OUT/$2" "$1" 2>/dev/null || { echo "bui
 build_magic() { "$M" build "$1" -o "$OUT/$2" >/dev/null 2>&1 || { echo "build failed: $1"; FAIL=$((FAIL + 1)); }; }
 build_cpp() { g++ -O3 -o "$OUT/$2" "$1" || { echo "build failed: $1"; FAIL=$((FAIL + 1)); }; }
 build_go() { "$GO" build -o "$OUT/$2" "$1" || { echo "build failed: $1"; FAIL=$((FAIL + 1)); }; }
+build_goose() { "$GOOSE" build "$1" -o "$OUT/$2" >/dev/null 2>&1 || { echo "build failed: $1"; FAIL=$((FAIL + 1)); }; }
 
 echo "== sieve 100M"
 cd "$ROOT/bench-suite" || exit 2
@@ -63,6 +70,7 @@ median "$OUT/s_c" 5761455 'sieve C'
 median "$OUT/s_rs" 5761455 'sieve Rust'
 if [ -n "$CXX" ]; then build_cpp sieve_cpp.cpp s_cpp; median "$OUT/s_cpp" 5761455 'sieve C++'; fi
 if [ -n "$GO" ]; then build_go sieve_go.go s_go; median "$OUT/s_go" 5761455 'sieve Go'; fi
+if [ -n "$GOOSE" ]; then build_goose sieve_goose.goose s_goose; median "$OUT/s_goose" 5761455 'sieve Goose'; fi
 median "$OUT/s_m" 5761455 'sieve MAGIC'
 median "$OUT/s_o" 5761455 'sieve MAGIC odd'
 median "$OUT/s_p" 5761455 'sieve MAGIC odd par'
@@ -79,6 +87,7 @@ build_magic fannkuch_magic_blocks.magic f_k
 median "$OUT/f_c" "$EXP" 'fannkuch C'
 median "$OUT/f_rs" "$EXP" 'fannkuch Rust'
 if [ -n "$CXX" ]; then build_cpp fannkuch_cpp.cpp f_cpp; median "$OUT/f_cpp" "$EXP" 'fannkuch C++'; fi
+if [ -n "$GOOSE" ]; then build_goose fannkuch_goose.goose f_goose; median "$OUT/f_goose" "$EXP" 'fannkuch Goose'; fi
 median "$OUT/f_m" "$EXP" 'fannkuch MAGIC'
 median "$OUT/f_b" "$EXP" 'fannkuch MAGIC buf'
 median "$OUT/f_k" "$EXP" 'fannkuch MAGIC blocks'

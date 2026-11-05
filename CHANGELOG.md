@@ -82,6 +82,12 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - Compile speed on Linux (2,000 functions, ~90 KB): cold 315-356 ms with GNU ld and 284-310 ms with
   `lld` (`--cc "gcc -fuse-ld=lld"`), one-function rebuild 193 ms, no-op ~10 ms, against `rustc -O`
   cold at 215-217 ms. Iteration is faster than rustc; cold is 1.3x slower.
+- Cold compile can beat rustc on Linux by choosing the C compiler: on the 2,000-function project
+  gcc takes 315-356 ms, gcc+lld 289-303 ms, and clang 176-185 ms against rustc's 215-217 ms, so
+  `CC=clang magicc build` is the fast-cold path (one-function rebuilds stay at ~193 ms).
+- Goose runs on Linux: built from source with CMake (`github.com/aardappel/goose`, C++20, TinyCC
+  backend) and the shipped `sieve_goose.goose`/`fannkuch_goose.goose` programs pass their checksums
+  at 537 ms and 405 ms; `bench-linux.sh` picks the compiler up from PATH or ~/tools/goose/build.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 

@@ -14,8 +14,8 @@ check → C11 → native binary.
 - **Flat data is the easy path**: arrays and structs are contiguous and pointers are explicit, so
   pointer-heavy code stays predictable.
 - **Compiles fast**: on a 2,000-function project a one-function rebuild is ~195 ms (rustc: ~215 ms)
-  and a no-op build is ~10 ms. A cold build is ~340 ms, or ~295 ms when `lld` is installed
-  (`--cc "gcc -fuse-ld=lld"`).
+  and a no-op build is ~10 ms. A cold build is ~340 ms with gcc, ~295 ms with `lld`
+  (`--cc "gcc -fuse-ld=lld"`) and ~180 ms with clang (`CC=clang`), which beats rustc's 215 ms.
 
 MAGIC emits C11 and leaves machine-level code generation to the system C compiler. Benchmark
 results and methodology live in `BENCHMARKS.md`; the harness exits non-zero if any answer is wrong.
@@ -192,20 +192,22 @@ readings are real rather than timer ticks.
 On Linux (Fedora 44, Ryzen AI 7 350, gcc 16.2, clang 22, Go 1.26) the same variants win against
 all five baselines:
 
-| Workload | C | C++ | Rust | Go | MAGIC optimized | margin |
-|---|---:|---:|---:|---:|---:|---:|
-| sieve 100M | 502 | 497 | 516 | 572 | 25 | 20x |
-| particles 1M × 100 | 151 | 151 | 157 | 215 | 4 | 37x |
-| hash 1M | 38 | 37 | 36 | 36 | 6 | 6x |
-| ray tracer 1536² | 86 | 89 | **77** | - | 13 | 5.9x |
-| binary trees | 1647 | - | 3077 | - | 108 | 15x |
-| matmul 384 | 31 | 27 | 92 | 106 | 6 | 4.5x |
-| fannkuch | 383 | 392 | 364 | - | 40 | 9.6x |
-| n-body 10M | 724 | 728 | **523** | 920 | 450 | 1.16x |
+| Workload | C | C++ | Rust | Go | Goose | MAGIC optimized | margin |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| sieve 100M | 502 | 497 | 516 | 572 | 537 | 25 | 20x |
+| particles 1M × 100 | 151 | 151 | 157 | 215 | - | 4 | 37x |
+| hash 1M | 38 | 37 | 36 | 36 | - | 6 | 6x |
+| ray tracer 1536² | 86 | 89 | **77** | - | - | 13 | 5.9x |
+| binary trees | 1647 | - | 3077 | - | - | 108 | 15x |
+| matmul 384 | 31 | 27 | 92 | 106 | - | 6 | 4.5x |
+| fannkuch | 383 | 392 | 364 | - | 405 | 40 | 9.6x |
+| n-body 10M | 724 | 728 | **523** | 920 | - | 450 | 1.16x |
 
 The sieve row uses 2.3 MB instead of 95 MB. The n-body row uses clang with `-march=x86-64-v3` and the matmul row clang with `-march=native`;
-without clang the n-body build is 605 ms (gcc). `./verify.sh` runs the tests, the doc counts and this matrix; `./bench-linux.sh` alone runs 39
-cases across C, C++, Rust, Go and MAGIC.
+without clang the n-body build is 605 ms (gcc). Goose builds from source with CMake on Linux and
+`./bench-linux.sh` picks it up from `PATH` or `~/tools/goose/build/goose`; its sieve and fannkuch
+programs are the ones shipped here. `./verify.sh` runs the tests, the doc counts and this matrix;
+`./bench-linux.sh` alone runs 40 cases across C, C++, Rust, Go, Goose and MAGIC.
 
 
 n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms
