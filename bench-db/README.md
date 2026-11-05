@@ -92,9 +92,11 @@ languages compile to the same loop.
 ## PostgreSQL wire protocol
 
 `pgserver_magic.magic` speaks protocol v3: it accepts a startup packet (and answers an SSLRequest
-with `N`), sends `AuthenticationOk` and `ReadyForQuery`, then handles SimpleQuery messages and
-answers `SELECT 1` with a `RowDescription`, a `DataRow` and `CommandComplete`. The e2e test
-`pg_wire_select_one` starts the server, sends a startup packet and a query, and checks the DataRow.
+with `N`), sends `AuthenticationOk` and `ReadyForQuery`, then handles SimpleQuery messages against
+the heap file (pass its path as the second argument) and answers with `RowDescription`, `DataRow`
+and `CommandComplete`. It serves `SELECT 1`, `SELECT COUNT(*)`, `SELECT SUM(value)` and
+`SELECT value FROM t WHERE id = k` (through the B+tree). The e2e test `pg_wire_queries` builds a
+three-row heap, starts the server and checks each answer.
 
 The CLI (`dbcli_magic.magic`, `bench-db/demo.sh`) runs SQL from a file or stdin against
 `dbcli.dat`, writes new rows back to the file, and answers a second process from the same file:

@@ -846,7 +846,7 @@ fn main() {
 }
 
 #[test]
-fn pg_wire_select_one() {
+fn pg_wire_queries() {
     let Some(cc) = cc() else { return };
     let src = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -855,13 +855,27 @@ fn pg_wire_select_one() {
     .expect("read pgserver source");
     let dir = std::env::temp_dir().join(format!("magic_e2e_{}_pg", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
+
+    let heap = dir.join("heap.dat");
+    let mut bytes = 3i64.to_le_bytes().to_vec();
+    for (k, v) in [(1i64, 70i64), (2, 140), (3, 210)] {
+        bytes.extend(k.to_le_bytes());
+        bytes.extend(v.to_le_bytes());
+    }
+    std::fs::write(&heap, bytes).expect("write heap");
+
     let c = magic::compile_to_c(&src).expect("compile pgserver");
     let c_path = dir.join("t.c");
     let exe = dir.join(if cfg!(windows) { "t.exe" } else { "t" });
     std::fs::write(&c_path, c).expect("write C");
     let status = Command::new(&cc).arg("-O1").arg("-o").arg(&exe).arg(&c_path).status().expect("cc");
     assert!(status.success(), "C compilation failed");
-    let mut child = Command::new(&exe).stdout(Stdio::piped()).spawn().expect("spawn pgserver");
+    let mut child = Command::new(&exe)
+        .arg("0")
+        .arg(&heap)
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn pgserver");
     let mut reader = BufReader::new(child.stdout.take().expect("stdout"));
     let mut line = String::new();
     reader.read_line(&mut line).expect("read port");
@@ -888,24 +902,32 @@ fn pg_wire_select_one() {
     let (tag, _) = read_msg(&mut stream);
     assert_eq!(tag, b'Z');
 
-    let mut q = b"SELECT 1\0".to_vec();
-    let mut msg = b"Q".to_vec();
-    msg.extend(((q.len() + 4) as i32).to_be_bytes());
-    msg.append(&mut q);
-    stream.write_all(&msg).expect("query");
+    let mut query = |s: &mut TcpStream, sql: &str| -> String {
+        let mut q = sql.as_bytes().to_vec();
+        q.push(0);
+        let mut msg = b"Q".to_vec();
+        msg.extend(((q.len() + 4) as i32).to_be_bytes());
+        msg.append(&mut q);
+        s.write_all(&msg).expect("query");
+        let mut value = String::new();
+        loop {
+            let (tag, payload) = read_msg(s);
+            if tag == b'D' {
+                let len = i32::from_be_bytes([payload[2], payload[3], payload[4], payload[5]]) as usize;
+                value = String::from_utf8_lossy(&payload[6..6 + len]).to_string();
+            }
+            if tag == b'Z' {
+                break;
+            }
+        }
+        value
+    };
 
-    let mut saw_row = false;
-    loop {
-        let (tag, payload) = read_msg(&mut stream);
-        if tag == b'D' {
-            saw_row = true;
-            assert!(payload.ends_with(b"1"), "data row was {payload:?}");
-        }
-        if tag == b'Z' {
-            break;
-        }
-    }
-    assert!(saw_row, "no DataRow from SELECT 1");
+    assert_eq!(query(&mut stream, "SELECT 1"), "1");
+    assert_eq!(query(&mut stream, "SELECT COUNT(*) FROM t"), "3");
+    assert_eq!(query(&mut stream, "SELECT SUM(value) FROM t"), "420");
+    assert_eq!(query(&mut stream, "SELECT value FROM t WHERE id = 2"), "140");
+    assert_eq!(query(&mut stream, "SELECT value FROM t WHERE id = 99"), "0");
     drop(stream);
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&dir);

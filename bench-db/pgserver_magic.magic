@@ -1,5 +1,6 @@
-// Minimal PostgreSQL wire-protocol v3 server: startup, AuthenticationOk,
-// ReadyForQuery, and a SimpleQuery that answers "SELECT 1" with an int4 row.
+// PostgreSQL wire-protocol v3 server backed by the mini-db heap file.
+// Startup (with SSLRequest), AuthenticationOk, ReadyForQuery, and SimpleQuery
+// for SELECT 1 / COUNT(*) / SUM(value) / WHERE id = k.
 fn rd32(b: [u8], o: i32) -> i32 {
     return (b[o] as i32) * 16777216 + (b[o + 1] as i32) * 65536 + (b[o + 2] as i32) * 256 + (b[o + 3] as i32);
 }
@@ -14,6 +15,72 @@ fn put32(b: [u8], o: i32, v: i32) {
 fn put16(b: [u8], o: i32, v: i32) {
     b[o] = ((v / 256) % 256) as u8;
     b[o + 1] = (v % 256) as u8;
+}
+
+fn get_i64(b: [u8], off: i32) -> i64 {
+    var v: i64 = 0;
+    var mul: i64 = 1;
+    var k = 0;
+    while k < 8 {
+        v = v + (b[off + k] as i64) * mul;
+        mul = mul * 256;
+        k = k + 1;
+    }
+    return v;
+}
+
+fn is_digit(c: u8) -> bool {
+    return c >= 48 && c <= 57;
+}
+
+fn is_alpha(c: u8) -> bool {
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95;
+}
+
+fn upper(c: u8) -> u8 {
+    if c >= 97 && c <= 122 {
+        return c - 32;
+    }
+    return c;
+}
+
+fn word_is(b: [u8], i: i32, n: i32, s: str) -> bool {
+    var m = str_len(s);
+    if i + m > n {
+        return false;
+    }
+    var k = 0;
+    while k < m {
+        if upper(b[i + k]) != upper(str_byte(s, k)) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+fn has_word(b: [u8], n: i32, s: str) -> bool {
+    var i = 0;
+    while i < n {
+        if is_alpha(b[i]) && word_is(b, i, n, s) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn first_number(b: [u8], n: i32) -> i64 {
+    var i = 0;
+    while i < n && !is_digit(b[i]) {
+        i = i + 1;
+    }
+    var v: i64 = 0;
+    while i < n && is_digit(b[i]) {
+        v = v * 10 + ((b[i] as i64) - 48);
+        i = i + 1;
+    }
+    return v;
 }
 
 fn read_exact(fd: i32, b: [u8], off: i32, n: i32) -> bool {
@@ -43,9 +110,22 @@ fn send_ready(fd: i32) {
     net_write(fd, m, 6);
 }
 
-fn send_select1(fd: i32) {
-    var m: [u8] = [0; 64];
-    // RowDescription: int4 "?column?"
+fn send_int64(fd: i32, value: i64) {
+    var m: [u8] = [0; 128];
+    var digits: [u8] = [0; 24];
+    var v = value;
+    var nd = 0;
+    if v == 0 {
+        digits[0] = 48;
+        nd = 1;
+    }
+    while v > 0 {
+        digits[nd] = (48 + (v % 10)) as u8;
+        v = v / 10;
+        nd = nd + 1;
+    }
+
+    // RowDescription for one int8 column named "?column?"
     m[0] = 84;
     put32(m, 1, 33);
     put16(m, 5, 1);
@@ -53,19 +133,23 @@ fn send_select1(fd: i32) {
     m[11] = 117; m[12] = 109; m[13] = 110; m[14] = 63; m[15] = 0;
     m[16] = 0; m[17] = 0; m[18] = 0; m[19] = 0;
     m[20] = 0; m[21] = 0;
-    m[22] = 0; m[23] = 0; m[24] = 0; m[25] = 23;
-    m[26] = 0; m[27] = 4;
+    m[22] = 0; m[23] = 0; m[24] = 0; m[25] = 20;
+    m[26] = 0; m[27] = 8;
     m[28] = 255; m[29] = 255; m[30] = 255; m[31] = 255;
     m[32] = 0; m[33] = 0;
     net_write(fd, m, 34);
 
-    // DataRow: one text field "1"
+    // DataRow with the decimal text
     m[0] = 68;
-    put32(m, 1, 11);
+    put32(m, 1, 10 + nd);
     put16(m, 5, 1);
-    put32(m, 7, 1);
-    m[11] = 49;
-    net_write(fd, m, 12);
+    put32(m, 7, nd);
+    var k = 0;
+    while k < nd {
+        m[11 + k] = digits[nd - 1 - k];
+        k = k + 1;
+    }
+    net_write(fd, m, 11 + nd);
 
     // CommandComplete "SELECT 1"
     m[0] = 67;
@@ -76,25 +160,202 @@ fn send_select1(fd: i32) {
     send_ready(fd);
 }
 
-fn parse_int(s: str) -> i32 {
-    var v = 0;
-    var i = 0;
-    var n = str_len(s);
-    while i < n && str_byte(s, i) >= 48 && str_byte(s, i) <= 57 {
-        v = v * 10 + ((str_byte(s, i) as i32) - 48);
-        i = i + 1;
+fn bisect_bt(node: i32, key: i64, cnt: [i32], keys: [i64], maxk: i32) -> i32 {
+    var lo = 0;
+    var hi = cnt[node];
+    while lo < hi {
+        var mid = (lo + hi) / 2;
+        if keys[node * (maxk + 1) + mid] < key {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
     }
-    return v;
+    return lo;
+}
+
+fn bisect_gt(node: i32, key: i64, cnt: [i32], keys: [i64], maxk: i32) -> i32 {
+    var lo = 0;
+    var hi = cnt[node];
+    while lo < hi {
+        var mid = (lo + hi) / 2;
+        if keys[node * (maxk + 1) + mid] <= key {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+fn btree_search(root: i32, key: i64, cnt: [i32], leaf: [u8], keys: [i64], ch: [i32], vals: [i64], maxk: i32) -> i64 {
+    var node = root;
+    while leaf[node] == 0 {
+        node = ch[node * (maxk + 2) + bisect_gt(node, key, cnt, keys, maxk)];
+    }
+    var pos = bisect_bt(node, key, cnt, keys, maxk);
+    if pos < cnt[node] && keys[node * (maxk + 1) + pos] == key {
+        return vals[node * (maxk + 1) + pos];
+    }
+    return -1;
 }
 
 fn main() {
     var buf: [u8] = [0; 8192];
     var t: [u8] = [0; 1];
     var no: [u8] = [0; 1];
+    var all: [u8] = [0; 2097152];
+    var rk: [i64] = [0; 200000];
+    var rv: [i64] = [0; 200000];
+    var bcnt: [i32] = [0; 20000];
+    var bleaf: [u8] = [0; 20000];
+    var bnext: [i32] = [0; 20000];
+    var bkeys: [i64] = [0; 1300000];
+    var bvals: [i64] = [0; 1300000];
+    var bch: [i32] = [0; 1320000];
+    var path_node: [i32] = [0; 32];
+    var path_idx: [i32] = [0; 32];
+
     var port = 5433;
     if argc() > 1 {
-        port = parse_int(arg(1));
+        port = 0;
+        var ps = arg(1);
+        var pi = 0;
+        while pi < str_len(ps) && is_digit(str_byte(ps, pi)) {
+            port = port * 10 + ((str_byte(ps, pi) as i32) - 48);
+            pi = pi + 1;
+        }
     }
+
+    var rows: i64 = 0;
+    var dbpath = "bench-db/heap.dat";
+    if argc() > 2 {
+        dbpath = arg(2);
+    }
+    var dbf = file_open(dbpath, "rb");
+    if dbf >= 0 {
+        var hn = file_read(dbf, all, 2097152);
+        file_close(dbf);
+        if hn >= 8 {
+            rows = get_i64(all, 0);
+            var r = 0;
+            while r < rows {
+                rk[r] = get_i64(all, 8 + r * 16);
+                rv[r] = get_i64(all, 8 + r * 16 + 8);
+                r = r + 1;
+            }
+        }
+    }
+
+    var bnodes = 1;
+    var broot = 0;
+    bleaf[0] = 1;
+    bnext[0] = -1;
+    var r = 0;
+    while r < rows {
+        var key = rk[r];
+        var val = r as i64;
+        var bn = broot;
+        var depth = 0;
+        while bleaf[bn] == 0 {
+            var idx = bisect_gt(bn, key, bcnt, bkeys, 64);
+            path_node[depth] = bn;
+            path_idx[depth] = idx;
+            depth = depth + 1;
+            bn = bch[bn * 66 + idx];
+        }
+        var pos = bisect_bt(bn, key, bcnt, bkeys, 64);
+        var j = bcnt[bn];
+        while j > pos {
+            bkeys[bn * 65 + j] = bkeys[bn * 65 + j - 1];
+            bvals[bn * 65 + j] = bvals[bn * 65 + j - 1];
+            j = j - 1;
+        }
+        bkeys[bn * 65 + pos] = key;
+        bvals[bn * 65 + pos] = val;
+        bcnt[bn] = bcnt[bn] + 1;
+
+        var sep: i64 = 0;
+        var new_child: i32 = -1;
+        var split = false;
+        if bcnt[bn] > 64 {
+            var nn = bnodes;
+            bnodes = bnodes + 1;
+            bleaf[nn] = 1;
+            var mid = 32;
+            var m = mid;
+            var tt = 0;
+            while m < bcnt[bn] {
+                bkeys[nn * 65 + tt] = bkeys[bn * 65 + m];
+                bvals[nn * 65 + tt] = bvals[bn * 65 + m];
+                tt = tt + 1;
+                m = m + 1;
+            }
+            bcnt[nn] = tt;
+            bcnt[bn] = mid;
+            bnext[nn] = bnext[bn];
+            bnext[bn] = nn;
+            sep = bkeys[nn * 65];
+            new_child = nn;
+            split = true;
+        }
+        while split && depth > 0 {
+            depth = depth - 1;
+            var pnode = path_node[depth];
+            var pidx = path_idx[depth];
+            var j2 = bcnt[pnode];
+            while j2 > pidx {
+                bkeys[pnode * 65 + j2] = bkeys[pnode * 65 + j2 - 1];
+                j2 = j2 - 1;
+            }
+            bkeys[pnode * 65 + pidx] = sep;
+            var c2 = bcnt[pnode] + 1;
+            while c2 > pidx + 1 {
+                bch[pnode * 66 + c2] = bch[pnode * 66 + c2 - 1];
+                c2 = c2 - 1;
+            }
+            bch[pnode * 66 + pidx + 1] = new_child;
+            bcnt[pnode] = bcnt[pnode] + 1;
+            if bcnt[pnode] <= 64 {
+                split = false;
+            } else {
+                var nn2 = bnodes;
+                bnodes = bnodes + 1;
+                bleaf[nn2] = 0;
+                var mm = 33;
+                var tt = 0;
+                var med = bkeys[pnode * 65 + 32];
+                while mm < bcnt[pnode] {
+                    bkeys[nn2 * 65 + tt] = bkeys[pnode * 65 + mm];
+                    tt = tt + 1;
+                    mm = mm + 1;
+                }
+                var cc = 33;
+                var tc = 0;
+                while cc <= bcnt[pnode] {
+                    bch[nn2 * 66 + tc] = bch[pnode * 66 + cc];
+                    tc = tc + 1;
+                    cc = cc + 1;
+                }
+                bcnt[nn2] = tt;
+                bcnt[pnode] = 32;
+                sep = med;
+                new_child = nn2;
+            }
+        }
+        if split {
+            var nr = bnodes;
+            bnodes = bnodes + 1;
+            bleaf[nr] = 0;
+            bkeys[nr * 65] = sep;
+            bch[nr * 66] = broot;
+            bch[nr * 66 + 1] = new_child;
+            bcnt[nr] = 1;
+            broot = nr;
+        }
+        r = r + 1;
+    }
+
     var lfd = net_listen(port);
     if lfd < 0 {
         print(-1);
@@ -136,21 +397,40 @@ fn main() {
     while running {
         if !read_exact(cfd, t, 0, 1) {
             running = false;
-        } else {
-            if t[0] == 88 {
+        } else if t[0] == 88 {
+            running = false;
+        } else if read_exact(cfd, buf, 0, 4) {
+            var qlen = rd32(buf, 0);
+            if qlen < 4 || qlen > 8192 {
                 running = false;
-            } else if read_exact(cfd, buf, 0, 4) {
-                var qlen = rd32(buf, 0);
-                if qlen < 4 || qlen > 8192 {
-                    running = false;
-                } else if !read_exact(cfd, buf, 0, qlen - 4) {
-                    running = false;
-                } else {
-                    send_select1(cfd);
-                }
+            } else if !read_exact(cfd, buf, 0, qlen - 4) {
+                running = false;
             } else {
-                running = false;
+                var n = qlen - 4;
+                if has_word(buf, n, "COUNT") {
+                    send_int64(cfd, rows);
+                } else if has_word(buf, n, "SUM") {
+                    var total: i64 = 0;
+                    var k = 0;
+                    while k < rows {
+                        total = total + rv[k];
+                        k = k + 1;
+                    }
+                    send_int64(cfd, total);
+                } else if has_word(buf, n, "WHERE") {
+                    var key = first_number(buf, n);
+                    var ri = btree_search(broot, key, bcnt, bleaf, bkeys, bch, bvals, 64);
+                    if ri >= 0 {
+                        send_int64(cfd, rv[ri as i32]);
+                    } else {
+                        send_int64(cfd, 0);
+                    }
+                } else {
+                    send_int64(cfd, 1);
+                }
             }
+        } else {
+            running = false;
         }
     }
     net_close(cfd);
