@@ -1,0 +1,30 @@
+// Page-store baseline: write 50k pages of 4 KB, read them back, checksum.
+fn main() {
+    let PAGES = 50000;
+    let PAGE = 4096;
+    var buf: [u8] = [0; 4096];
+
+    var fd = file_open("bench-db/pageio.dat", "wb");
+    var i = 0;
+    while i < PAGES {
+        buf[0] = (i % 256) as u8;
+        file_write(fd, buf, PAGE);
+        i = i + 1;
+    }
+    file_close(fd);
+
+    var rd = file_open("bench-db/pageio.dat", "rb");
+    var total: i64 = 0;
+    i = 0;
+    while i < PAGES {
+        var n = file_read(rd, buf, PAGE);
+        var j = 0;
+        while j < n {
+            total = total + (buf[j] as i64);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    file_close(rd);
+    print(total);
+}

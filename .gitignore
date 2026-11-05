@@ -41,3 +41,7 @@
 /bench-suite/sieve_magic_segodd.c
 /bench-suite/sieve_magic_block.c
 /bench-suite/sieve_magic_blockodd.c
+/bench-db/pageio.dat
+/bench-db/pageio_c
+/bench-db/pageio_magic
+/bench-db/pageio_magic.c
