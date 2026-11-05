@@ -42,6 +42,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
   the ten/eight-position generator run in parallel. 40 ms vs 383 ms C and 241 ms for the buffered
   version, with 4 MB instead of 40 MB. Per-thread arrays are padded to 128 bytes: without that the
   false sharing made the parallel version slower than serial.
+- Fannkuch dead ends: 720 streams (three fixed positions) tied the 90-stream version at 40 ms, so
+  the simpler 90-stream build stays. A segmented parallel sieve (each thread marking its own chunk)
+  was 344 ms vs 132 ms for the odd-only `par for` sieve, so it was dropped.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 

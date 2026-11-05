@@ -101,6 +101,7 @@ median "$OUT/n_rs" 11211.531383831 'n-body Rust'
 if [ -n "$CXX" ]; then build_cpp nbody_cpp.cpp n_cpp; median "$OUT/n_cpp" 11211.531383831 'n-body C++'; fi
 if [ -n "$GO" ]; then build_go nbody_go.go n_go; median "$OUT/n_go" 11211.531383831 'n-body Go'; fi
 median "$OUT/n_u" 11211.531383831 'n-body MAGIC unrolled'
+build_magic nbody_magic.magic n_loop; median "$OUT/n_loop" 11211.531383831 'n-body MAGIC loop'
 if [ -n "$CLANG" ]; then
   "$M" build nbody_unrolled.magic --cc "$CLANG -march=x86-64-v3" -o "$OUT/n_clang.bin" >/dev/null 2>&1 || true
   [ -x "$OUT/n_clang.bin" ] && median "$OUT/n_clang.bin" 11211.531383844 'n-body MAGIC clang AVX2'
@@ -118,12 +119,14 @@ median "$OUT/r_p" 336141.941 'ray MAGIC par'
 echo "== hash 1M"
 build_c hash_c.c h_c; build_rust hash_rs_open.rs h_rs
 build_magic hash_magic.magic h_m; build_magic hash_magic_direct.magic h_d
+build_magic hash_magic_par.magic h_p
 median "$OUT/h_c" 1500001500000 'hash C'
 median "$OUT/h_rs" 1500001500000 'hash Rust'
 if [ -n "$CXX" ]; then build_cpp hash_cpp.cpp h_cpp; median "$OUT/h_cpp" 1500001500000 'hash C++'; fi
 if [ -n "$GO" ]; then build_go hash_go.go h_go; median "$OUT/h_go" 1500001500000 'hash Go'; fi
 median "$OUT/h_m" 1500001500000 'hash MAGIC'
 median "$OUT/h_d" 1500001500000 'hash MAGIC direct'
+median "$OUT/h_p" 1500001500000 'hash MAGIC par'
 
 echo "== particles 1M x 100"
 build_c particles_c.c p_c; build_rust particles_rs.rs p_rs
