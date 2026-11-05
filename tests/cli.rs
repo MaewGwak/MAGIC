@@ -738,3 +738,52 @@ fn native_backend_file_io_roundtrip() {
     let run = Command::new(&exe).output().expect("run");
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "3\n65");
 }
+
+#[test]
+fn native_backend_wraps_like_the_c_backend() {
+    if !(cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) {
+        return;
+    }
+    if !Command::new("as")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let dir = TempDir::new("nativewrap");
+    let src = dir.path().join("w.magic");
+    std::fs::write(
+        &src,
+        "fn main() {\n\
+         var x: i32 = 2147483647;\n\
+         x = x + 1;\n\
+         print(x);\n\
+         var b: u8 = 255;\n\
+         b = b + 1;\n\
+         print(b);\n\
+         }\n",
+    )
+    .expect("write source");
+    let exe = dir.path().join("w");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run magicc");
+    assert!(
+        out.status.success(),
+        "native build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&exe).output().expect("run");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout).trim(),
+        "-2147483648\n0"
+    );
+}

@@ -11,6 +11,12 @@ The native backend now maps `file_open`, `file_close`, `file_read`, `file_write`
 builds are slower for now (pageio 685 ms vs 329 ms with gcc); performance work comes after feature
 parity.
 
+### Native width semantics
+
+Native arithmetic now narrows after every operation to the declared type, matching the C backend's
+`int32_t`/`uint8_t` wrapping: `2147483647 + 1` prints `-2147483648` and a `u8` at 255 wraps to 0.
+A regression test builds both cases natively and checks the output.
+
 ## v0.8.1 — native backend links with `ld`, no C compiler (2026-11-06)
 
 `--backend native` now builds through GNU `as` and `ld` only: `build_native` finds `crt1.o`,

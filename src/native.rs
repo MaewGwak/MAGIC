@@ -21,6 +21,10 @@ struct Emitter {
     /// 8-byte temporaries currently pushed; used for 16-byte call alignment.
     depth: usize,
     locals: HashMap<String, i64>,
+    /// Declared or inferred integer width of each local, for wrapping semantics.
+    local_ty: HashMap<String, Ty>,
+    func_ret: HashMap<String, Ty>,
+    cur_ret: Ty,
     /// name -> (slot holding the data pointer, element type, constant length or -1)
     arrays: HashMap<String, (i64, Ty, i64)>,
     /// Array parameters whose length is only known at runtime.
@@ -51,6 +55,9 @@ impl Emitter {
             label: 0,
             depth: 0,
             locals: HashMap::new(),
+            local_ty: HashMap::new(),
+            func_ret: HashMap::new(),
+            cur_ret: Ty::Void,
             arrays: HashMap::new(),
             array_len_slot: HashMap::new(),
             owned: Vec::new(),
@@ -213,15 +220,17 @@ impl Emitter {
 
     fn assign_frame(&mut self, f: &Func) -> Result<(), String> {
         self.locals.clear();
+        self.local_ty.clear();
         self.arrays.clear();
         self.array_len_slot.clear();
         self.owned.clear();
         let mut slot = 0i64;
         for (name, pty) in &f.params {
             match pty {
-                ParamTy::Scalar(_) => {
+                ParamTy::Scalar(ty) => {
                     slot += 1;
                     self.locals.insert(name.clone(), 8 * slot);
+                    self.local_ty.insert(name.clone(), *ty);
                 }
                 ParamTy::Array(elem) => {
                     slot += 1;
@@ -256,6 +265,49 @@ impl Emitter {
         }
         self.frame = align16(8 * slot);
         Ok(())
+    }
+
+    fn expr_ty(&self, e: &Expr) -> Ty {
+        match &e.kind {
+            ExprKind::Int(_) => Ty::I32,
+            ExprKind::Bool(_) => Ty::Bool,
+            ExprKind::Float(_) => Ty::F64,
+            ExprKind::Str(_) => Ty::Str,
+            ExprKind::Var(n) => self.local_ty.get(n).copied().unwrap_or(Ty::I64),
+            ExprKind::Bin { op, l, .. } => match op {
+                BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+                | BinOp::And | BinOp::Or => Ty::Bool,
+                _ => self.expr_ty(l),
+            },
+            ExprKind::Un { op, e } => match op {
+                UnOp::Not => Ty::Bool,
+                UnOp::Neg => self.expr_ty(e),
+            },
+            ExprKind::Cast { ty, .. } => *ty,
+            ExprKind::ArrayLen(_) => Ty::I64,
+            ExprKind::Index { name, .. } => self
+                .arrays
+                .get(name)
+                .map(|(_, t, _)| *t)
+                .unwrap_or(Ty::I64),
+            ExprKind::Call { name, .. } => self.func_ret.get(name).copied().unwrap_or(Ty::I64),
+            _ => Ty::I64,
+        }
+    }
+
+    /// C's int32_t/uint8_t arithmetic wraps; native works in 64-bit registers,
+    /// so narrow the result after every operation that is typed narrower.
+    fn truncate(&mut self, ty: Ty) {
+        match ty {
+            Ty::I32 => self.line("    movslq %eax, %rax"),
+            Ty::U8 => self.line("    movzbq %al, %rax"),
+            Ty::Bool => {
+                self.line("    test %rax, %rax");
+                self.line("    setne %al");
+                self.line("    movzbq %al, %rax");
+            }
+            _ => {}
+        }
     }
 
     fn bounds_check(&mut self, idx: &str, name: &str, line: usize) -> Result<(), String> {
@@ -381,6 +433,12 @@ impl Emitter {
                     BinOp::And => self.line("    and %rcx, %rax"),
                     BinOp::Or => self.line("    or %rcx, %rax"),
                 }
+                let ty = match op {
+                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+                    | BinOp::And | BinOp::Or => Ty::Bool,
+                    _ => self.expr_ty(l),
+                };
+                self.truncate(ty);
             }
             ExprKind::Un { op, e } => {
                 self.expr(e)?;
@@ -739,8 +797,11 @@ impl Emitter {
 
     fn stmt(&mut self, s: &Stmt) -> Result<(), String> {
         match &s.kind {
-            StmtKind::Let { name, init, .. } => {
+            StmtKind::Let { name, ty, init, .. } => {
                 self.expr(init)?;
+                let target = ty.unwrap_or_else(|| self.expr_ty(init));
+                self.local_ty.insert(name.clone(), target);
+                self.truncate(target);
                 let off = *self.locals.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown variable `{}`", s.line, name)
                 })?;
@@ -748,6 +809,8 @@ impl Emitter {
             }
             StmtKind::Assign { name, value } => {
                 self.expr(value)?;
+                let target = self.local_ty.get(name).copied().unwrap_or(Ty::I64);
+                self.truncate(target);
                 let off = *self.locals.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown variable `{}`", s.line, name)
                 })?;
@@ -756,6 +819,8 @@ impl Emitter {
             StmtKind::Print { value, ty } => {
                 let as_str = matches!(value.kind, ExprKind::Str(_)) || matches!(ty, Some(Ty::Str));
                 self.expr(value)?;
+                let pty = ty.unwrap_or_else(|| self.expr_ty(value));
+                self.truncate(pty);
                 if as_str {
                     self.line("    mov %rax, %rsi");
                     self.line("    lea .Lfmt_s(%rip), %rdi");
@@ -771,7 +836,11 @@ impl Emitter {
             }
             StmtKind::Return(e) => {
                 match e {
-                    Some(e) => self.expr(e)?,
+                    Some(e) => {
+                        self.expr(e)?;
+                        let ty = self.cur_ret;
+                        self.truncate(ty);
+                    }
                     None => self.line("    xor %eax, %eax"),
                 }
                 let label = self.ret_label.clone();
@@ -949,6 +1018,7 @@ impl Emitter {
 
     fn func(&mut self, f: &Func) -> Result<(), String> {
         self.assign_frame(f)?;
+        self.cur_ret = f.ret;
         self.ret_label = self.fresh("ret");
         self.line(&format!(".globl {}", f.name));
         self.line(&format!(".type {}, @function", f.name));
@@ -1045,6 +1115,9 @@ impl Emitter {
 pub fn emit(prog: &Program) -> Result<String, String> {
     let mut e = Emitter::new();
     e.inlinable = Emitter::collect_inlinable(prog);
+    for f in &prog.funcs {
+        e.func_ret.insert(f.name.clone(), f.ret);
+    }
     e.line(".text");
     for f in &prog.funcs {
         e.func(f)?;
