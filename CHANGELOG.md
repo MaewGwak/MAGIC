@@ -17,6 +17,22 @@ Native arithmetic now narrows after every operation to the declared type, matchi
 `int32_t`/`uint8_t` wrapping: `2147483647 + 1` prints `-2147483648` and a `u8` at 255 wraps to 0.
 A regression test builds both cases natively and checks the output.
 
+## v0.8.2 — native backend: sockets, arguments, sequential par-for (2026-11-06)
+
+The native backend now covers the rest of the process-facing surface:
+
+- **TCP sockets**: `net_listen`, `net_port`, `net_accept`, `net_connect`, `net_read`, `net_write`,
+  `net_read_at`, `net_write_at` and `net_close`, mapped to libc with the `sockaddr_in` built on the
+  stack. A native server and client exchange a request and reply; `verify-native.sh` checks it with
+  no C compiler on PATH.
+- **Arguments, environment and streams**: `argc`, `arg`, `env`, `input_read`, `print_bytes` and
+  `flush` (the latter also fixes a crash: `flush` now calls `fflush(NULL)`).
+- **`par for`** runs sequentially on the native backend, so programs using it build and print the
+  same results; the OpenMP pragma stays a C-backend optimisation.
+- **PostgreSQL wire protocol on native**: `bench-db/pgserver_magic.magic` builds without a C
+  compiler and answers `COUNT(*)`, `SUM(value)` and `WHERE id = k` over TCP with the same values as
+  the C build.
+
 ## v0.8.1 — native backend links with `ld`, no C compiler (2026-11-06)
 
 `--backend native` now builds through GNU `as` and `ld` only: `build_native` finds `crt1.o`,

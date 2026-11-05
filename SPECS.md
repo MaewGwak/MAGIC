@@ -1,4 +1,4 @@
-# 🔮 MAGIC — Language Specification v0.8.1
+# 🔮 MAGIC — Language Specification v0.8.2
 
 Status: pre-1.0. Breaking changes are allowed in any 0.x release.
 Companion docs: `PLANS.md` (roadmap), `TASKS.md` (board), `TEST.md` (tests).
@@ -147,8 +147,10 @@ driver runs in the native path. Its subset is integer functions with up to
 six parameters, locals, arithmetic, comparisons, `if`, `while`, `for`, calls, `print` of integers and
 string literals, and heap arrays with bounds checks (including `[bool]`, `[u8]`, `[i32]`, `[i64]`).
 It also takes array parameters (the checker lowers them to a pointer plus a length), passes more than
-six arguments on the stack, casts between integer types, and supports `str_len`, `str_byte` and
-`str_byte_n`. Structs, floats, vectors and the I/O builtins remain on the C backend for now.
+six arguments on the stack, casts between integer types, wraps `i32`/`u8` like the C backend, and
+supports `str_len`, `str_byte`, `str_byte_n`, `argc`, `arg`, `env`, `input_read`, `print_bytes`, the
+file builtins, the `net_*` TCP builtins and `par for` (sequentially). Structs, floats and vectors
+remain on the C backend for now.
 
 ## 4b. Growable arrays (v0.4)
 

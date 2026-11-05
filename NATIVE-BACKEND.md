@@ -57,6 +57,7 @@ Versioning follows the requested scheme: `0.<feature round>.<fix>`.
 | **0.8.0** ✅ | array parameters, integer casts, string scanning builtins, stack arguments | `hashmap`, `tokenize`, `array_param`, `sieve` run natively with identical output |
 | **0.8.x** | floats and `sqrt` (SSE2), structs, vectors, sockets, the PostgreSQL demo on native | the whole `bench-linux.sh` matrix builds and checksums match |
 | **0.8.x (done)** | file I/O builtins mapped to libc | `pageio`, `sqlscan`, `btree`, `bufpool` run natively with identical checksums |
+| **0.8.2 (done)** | sockets, args/env, input_read/print_bytes, sequential par-for | native TCP roundtrip and the PostgreSQL wire server pass without a C compiler |
 | **0.8.x** | performance: register allocation quality, inlining, direct syscalls for file I/O | native runtime within 10% of the C backend |
 | **0.9.0** | self-hosting gate: the native backend compiles the whole test suite and the mini-PostgreSQL programs without invoking a C compiler | `cc` absent from PATH, all gates pass |
 | **1.0.0** | Linux x86-64 release; Windows keeps the C backend; honest documentation of the libc dependency | no C compiler for the native path |

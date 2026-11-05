@@ -25,6 +25,8 @@ struct Emitter {
     local_ty: HashMap<String, Ty>,
     func_ret: HashMap<String, Ty>,
     cur_ret: Ty,
+    argc_slot: Option<i64>,
+    argv_slot: Option<i64>,
     /// name -> (slot holding the data pointer, element type, constant length or -1)
     arrays: HashMap<String, (i64, Ty, i64)>,
     /// Array parameters whose length is only known at runtime.
@@ -58,6 +60,8 @@ impl Emitter {
             local_ty: HashMap::new(),
             func_ret: HashMap::new(),
             cur_ret: Ty::Void,
+            argc_slot: None,
+            argv_slot: None,
             arrays: HashMap::new(),
             array_len_slot: HashMap::new(),
             owned: Vec::new(),
@@ -263,6 +267,14 @@ impl Emitter {
             self.arrays.insert(name, (8 * slot, elem, len));
             self.owned.push(8 * slot);
         }
+        self.argc_slot = None;
+        self.argv_slot = None;
+        if f.name == "main" {
+            slot += 1;
+            self.argc_slot = Some(8 * slot);
+            slot += 1;
+            self.argv_slot = Some(8 * slot);
+        }
         self.frame = align16(8 * slot);
         Ok(())
     }
@@ -352,6 +364,63 @@ impl Emitter {
         Ok(())
     }
 
+    /// Emit an operand that needs no calls or temporaries directly into `reg`,
+    /// so simple binary expressions never touch the stack.
+    fn simple_into(&mut self, e: &Expr, reg: &str) -> Result<bool, String> {
+        match &e.kind {
+            ExprKind::Int(v) => {
+                if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
+                    self.line(&format!("    mov ${}, {}", v, reg));
+                } else {
+                    self.line(&format!("    movabs ${}, {}", v, reg));
+                }
+            }
+            ExprKind::Bool(b) => self.line(&format!("    mov ${}, {}", if *b { 1 } else { 0 }, reg)),
+            ExprKind::Var(n) => {
+                if let Some(off) = self.locals.get(n) {
+                    self.line(&format!("    mov -{}(%rbp), {}", *off, reg));
+                } else if let Some((off, _, _)) = self.arrays.get(n) {
+                    self.line(&format!("    mov -{}(%rbp), {}", *off, reg));
+                } else {
+                    return Ok(false);
+                }
+            }
+            ExprKind::ArrayLen(name) => {
+                if let Some(len_off) = self.array_len_slot.get(name) {
+                    self.line(&format!("    mov -{}(%rbp), {}", *len_off, reg));
+                } else if let Some((_, _, len)) = self.arrays.get(name) {
+                    self.line(&format!("    mov ${}, {}", len, reg));
+                } else {
+                    return Ok(false);
+                }
+            }
+            ExprKind::Cast { e, ty } => {
+                if !self.simple_into(e, reg)? {
+                    return Ok(false);
+                }
+                let r = reg.trim_start_matches('%');
+                match ty {
+                    Ty::I32 => self.line(&format!("    movslq %e{}, %{}", r, r)),
+                    Ty::U8 => self.line(&format!("    movzbq %{}l, %{}", r, r)),
+                    Ty::Bool => {
+                        self.line(&format!("    test {}, {}", reg, reg));
+                        self.line(&format!("    setne %{}l", r));
+                        self.line(&format!("    movzbq %{}l, %{}", r, r));
+                    }
+                    _ => {}
+                }
+            }
+            ExprKind::Un { op: UnOp::Neg, e } => {
+                if !self.simple_into(e, reg)? {
+                    return Ok(false);
+                }
+                self.line(&format!("    neg {}", reg));
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
     fn expr(&mut self, e: &Expr) -> Result<(), String> {
         match &e.kind {
             ExprKind::Int(v) => {
@@ -401,10 +470,12 @@ impl Emitter {
             }
             ExprKind::Bin { op, l, r } => {
                 self.expr(l)?;
-                self.push("%rax");
-                self.expr(r)?;
-                self.line("    mov %rax, %rcx");
-                self.pop("%rax");
+                if !self.simple_into(r, "%rcx")? {
+                    self.push("%rax");
+                    self.expr(r)?;
+                    self.line("    mov %rax, %rcx");
+                    self.pop("%rax");
+                }
                 match op {
                     BinOp::Add => self.line("    add %rcx, %rax"),
                     BinOp::Sub => self.line("    sub %rcx, %rax"),
@@ -494,6 +565,138 @@ impl Emitter {
             }
         }
         Ok(())
+    }
+
+    /// TCP sockets through libc. `sockaddr_in` (family, big-endian port,
+    /// address, zero) is built in a 32-byte stack scratch area.
+    fn net_builtin(&mut self, name: &str, args: &[Expr], line: usize) -> Result<bool, String> {
+        match name {
+            "net_listen" if args.len() == 1 => {
+                self.expr(&args[0])?;
+                self.line("    sub $32, %rsp");
+                self.line("    mov %rax, 24(%rsp)");
+                self.line("    mov $2, %edi");
+                self.line("    mov $1, %esi");
+                self.line("    xor %edx, %edx");
+                self.call("socket@PLT");
+                let fail = self.fresh("netfail");
+                let done = self.fresh("netdone");
+                self.line("    test %rax, %rax");
+                self.line(&format!("    js {}", fail));
+                self.line("    mov %rax, 16(%rsp)");
+                self.line("    movw $2, (%rsp)");
+                self.line("    mov 24(%rsp), %eax");
+                self.line("    rol $8, %ax");
+                self.line("    movw %ax, 2(%rsp)");
+                self.line("    movl $0, 4(%rsp)");
+                self.line("    movq $0, 8(%rsp)");
+                self.line("    mov 16(%rsp), %rdi");
+                self.line("    lea (%rsp), %rsi");
+                self.line("    mov $16, %edx");
+                self.call("bind@PLT");
+                self.line("    test %eax, %eax");
+                self.line(&format!("    js {}", fail));
+                self.line("    mov 16(%rsp), %rdi");
+                self.line("    mov $16, %esi");
+                self.call("listen@PLT");
+                self.line("    test %eax, %eax");
+                self.line(&format!("    js {}", fail));
+                self.line("    mov 16(%rsp), %rax");
+                self.line(&format!("    jmp {}", done));
+                self.line(&format!("{}:", fail));
+                self.line("    mov $-1, %rax");
+                self.line(&format!("{}:", done));
+                self.line("    add $32, %rsp");
+            }
+            "net_port" if args.len() == 1 => {
+                self.expr(&args[0])?;
+                self.line("    sub $32, %rsp");
+                self.line("    mov %rax, 16(%rsp)");
+                self.line("    movl $16, 24(%rsp)");
+                self.line("    mov 16(%rsp), %rdi");
+                self.line("    lea (%rsp), %rsi");
+                self.line("    lea 24(%rsp), %rdx");
+                self.call("getsockname@PLT");
+                self.line("    movzwl 2(%rsp), %eax");
+                self.line("    rol $8, %ax");
+                self.line("    movzwl %ax, %eax");
+                self.line("    add $32, %rsp");
+            }
+            "net_accept" if args.len() == 1 => {
+                self.expr(&args[0])?;
+                self.line("    mov %rax, %rdi");
+                self.line("    xor %esi, %esi");
+                self.line("    xor %edx, %edx");
+                self.call("accept@PLT");
+            }
+            "net_connect" if args.len() == 2 => {
+                self.expr(&args[0])?;
+                self.line("    mov %rax, %rdi");
+                self.call("inet_addr@PLT");
+                self.line("    sub $32, %rsp");
+                self.line("    mov %eax, 4(%rsp)");
+                self.line("    movw $2, (%rsp)");
+                self.line("    movq $0, 8(%rsp)");
+                self.expr(&args[1])?;
+                self.line("    rol $8, %ax");
+                self.line("    movw %ax, 2(%rsp)");
+                self.line("    mov $2, %edi");
+                self.line("    mov $1, %esi");
+                self.line("    xor %edx, %edx");
+                self.call("socket@PLT");
+                let fail = self.fresh("netfail");
+                let done = self.fresh("netdone");
+                self.line("    test %rax, %rax");
+                self.line(&format!("    js {}", fail));
+                self.line("    mov %rax, 16(%rsp)");
+                self.line("    mov %rax, %rdi");
+                self.line("    lea (%rsp), %rsi");
+                self.line("    mov $16, %edx");
+                self.call("connect@PLT");
+                self.line("    test %eax, %eax");
+                self.line(&format!("    js {}", fail));
+                self.line("    mov 16(%rsp), %rax");
+                self.line(&format!("    jmp {}", done));
+                self.line(&format!("{}:", fail));
+                self.line("    mov $-1, %rax");
+                self.line(&format!("{}:", done));
+                self.line("    add $32, %rsp");
+            }
+            "net_read" | "net_write" if args.len() == 3 => {
+                self.expr(&args[1])?;
+                self.push("%rax");
+                self.expr(&args[2])?;
+                self.line("    mov %rax, %rdx");
+                self.pop("%rsi");
+                self.expr(&args[0])?;
+                self.line("    mov %rax, %rdi");
+                let f = if name == "net_read" { "read@PLT" } else { "write@PLT" };
+                self.call(f);
+            }
+            "net_read_at" | "net_write_at" if args.len() == 4 => {
+                self.expr(&args[1])?;
+                self.push("%rax");
+                self.expr(&args[2])?;
+                self.push("%rax");
+                self.expr(&args[3])?;
+                self.line("    mov %rax, %rdx");
+                self.pop("%rax");
+                self.pop("%rsi");
+                self.line("    add %rax, %rsi");
+                self.expr(&args[0])?;
+                self.line("    mov %rax, %rdi");
+                let f = if name == "net_read_at" { "read@PLT" } else { "write@PLT" };
+                self.call(f);
+            }
+            "net_close" if args.len() == 1 => {
+                self.expr(&args[0])?;
+                self.line("    mov %rax, %rdi");
+                self.call("close@PLT");
+            }
+            _ => return Ok(false),
+        }
+        let _ = line;
+        Ok(true)
     }
 
     /// File I/O builtins, mapped directly onto libc so no runtime library is
@@ -663,6 +866,7 @@ impl Emitter {
 
     fn call_expr(&mut self, name: &str, args: &[Expr], line: usize) -> Result<(), String> {
         if name == "flush" && args.is_empty() {
+            self.line("    xor %edi, %edi");
             self.call("fflush@PLT");
             return Ok(());
         }
@@ -716,7 +920,70 @@ impl Emitter {
             self.line(&format!("{}:", done));
             return Ok(());
         }
+        if name == "argc" && args.is_empty() {
+            if let Some(off) = self.argc_slot {
+                self.line(&format!("    mov -{}(%rbp), %eax", off));
+                self.line("    movslq %eax, %rax");
+            } else {
+                self.line("    mov $0, %eax");
+            }
+            return Ok(());
+        }
+        if name == "arg" && args.len() == 1 {
+            self.expr(&args[0])?;
+            let (argv_off, argc_off) = match (self.argv_slot, self.argc_slot) {
+                (Some(v), Some(a)) => (v, a),
+                _ => {
+                    self.line("    xor %eax, %eax");
+                    return Ok(());
+                }
+            };
+            let bad = self.fresh("argbad");
+            let done = self.fresh("argdone");
+            self.line(&format!("    cmp -{}(%rbp), %eax", argc_off));
+            self.line(&format!("    jae {}", bad));
+            self.line(&format!("    mov -{}(%rbp), %r10", argv_off));
+            self.line("    mov (%r10,%rax,8), %rax");
+            self.line(&format!("    jmp {}", done));
+            self.line(&format!("{}:", bad));
+            self.line("    xor %eax, %eax");
+            self.line(&format!("{}:", done));
+            return Ok(());
+        }
+        if name == "env" && args.len() == 1 {
+            self.expr(&args[0])?;
+            self.line("    mov %rax, %rdi");
+            self.call("getenv@PLT");
+            return Ok(());
+        }
+        if name == "input_read" && args.len() == 2 {
+            self.expr(&args[0])?;
+            self.push("%rax");
+            self.expr(&args[1])?;
+            self.line("    mov %rax, %rdx");
+            self.pop("%rdi");
+            self.line("    mov $1, %esi");
+            self.line("    mov stdin@GOTPCREL(%rip), %rax");
+            self.line("    mov (%rax), %rcx");
+            self.call("fread@PLT");
+            return Ok(());
+        }
+        if name == "print_bytes" && args.len() == 2 {
+            self.expr(&args[0])?;
+            self.push("%rax");
+            self.expr(&args[1])?;
+            self.line("    mov %rax, %rdx");
+            self.pop("%rdi");
+            self.line("    mov $1, %esi");
+            self.line("    mov stdout@GOTPCREL(%rip), %rax");
+            self.line("    mov (%rax), %rcx");
+            self.call("fwrite@PLT");
+            return Ok(());
+        }
         if self.file_builtin(name, args, line)? {
+            return Ok(());
+        }
+        if self.net_builtin(name, args, line)? {
             return Ok(());
         }
         if let Some((params, body)) = self.inlinable.get(name).cloned() {
@@ -880,12 +1147,9 @@ impl Emitter {
                 self.loops.pop();
             }
             StmtKind::For { var, start, end, body, par } => {
-                if *par {
-                    return Err(format!(
-                        "native backend line {}: `par for` needs the C backend for now",
-                        s.line
-                    ));
-                }
+                // `par for` is legal sequential code; the native backend runs the
+                // iterations in order until a pthread runtime exists.
+                let _ = par;
                 self.expr(start)?;
                 let voff = *self.locals.get(var).ok_or_else(|| {
                     format!("native backend line {}: unknown loop variable `{}`", s.line, var)
@@ -1027,6 +1291,10 @@ impl Emitter {
         self.line("    mov %rsp, %rbp");
         if self.frame > 0 {
             self.line(&format!("    sub ${}, %rsp", self.frame));
+        }
+        if let (Some(a), Some(v)) = (self.argc_slot, self.argv_slot) {
+            self.line(&format!("    mov %edi, -{}(%rbp)", a));
+            self.line(&format!("    mov %rsi, -{}(%rbp)", v));
         }
 
         // Expanded parameters: an array parameter arrives as (pointer, length).

@@ -85,6 +85,64 @@ else
   echo "FAIL(build oob): $(tail -1 "$WORK/oob.err")"; fail=1
 fi
 
+# TCP: a native server and a native client, still with no C compiler.
+cat > "$WORK/srv.magic" <<'MAGIC'
+fn main() {
+    var lfd = net_listen(0);
+    print(net_port(lfd));
+    flush();
+    var c = net_accept(lfd);
+    var b: [u8] = [0; 8];
+    var n = net_read(c, b, 4);
+    print(n);
+    var o: [u8] = [0; 4];
+    o[0] = 112; o[1] = 111; o[2] = 110; o[3] = 103;
+    net_write(c, o, 4);
+    net_close(c);
+    net_close(lfd);
+}
+MAGIC
+cat > "$WORK/cli.magic" <<'MAGIC'
+fn atoi(s: str) -> i32 {
+    var v = 0;
+    var i = 0;
+    while i < str_len(s) {
+        v = v * 10 + ((str_byte(s, i) as i32) - 48);
+        i = i + 1;
+    }
+    return v;
+}
+fn main() {
+    var fd = net_connect("127.0.0.1", atoi(arg(1)));
+    var o: [u8] = [0; 4];
+    o[0] = 112; o[1] = 105; o[2] = 110; o[3] = 103;
+    net_write(fd, o, 4);
+    var b: [u8] = [0; 8];
+    var n = net_read(fd, b, 4);
+    print(n);
+    print(b[0]);
+    net_close(fd);
+}
+MAGIC
+if env -i PATH="$SAFE" "$M" build "$WORK/srv.magic" --backend native -o "$WORK/srv" >/dev/null 2>"$WORK/srv.err" &&
+   env -i PATH="$SAFE" "$M" build "$WORK/cli.magic" --backend native -o "$WORK/cli" >/dev/null 2>"$WORK/cli.err"; then
+  "$WORK/srv" >"$WORK/srv.out" 2>&1 &
+  srv_pid=$!
+  for _ in $(seq 1 50); do [ -s "$WORK/srv.out" ] && break; sleep 0.1; done
+  port=$(head -1 "$WORK/srv.out")
+  client_out=$("$WORK/cli" "$port" 2>&1)
+  wait "$srv_pid" 2>/dev/null
+  if [ "$client_out" != $'4\n112' ]; then
+    echo "FAIL(socket client): [$client_out]"; fail=1
+  elif ! grep -q '^4$' "$WORK/srv.out"; then
+    echo "FAIL(socket server): [$(cat "$WORK/srv.out")]"; fail=1
+  else
+    echo "ok native TCP server/client"
+  fi
+else
+  echo "FAIL(build sockets): $(tail -1 "$WORK/srv.err" "$WORK/cli.err")"; fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "NATIVE GATE FAILED"
   exit 1
