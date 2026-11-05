@@ -3,7 +3,7 @@
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language that
 compiles to C11 and runs anywhere a C compiler does.
 
-**Status: v0.4** — 130 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.4** — 131 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is ~2.5k lines of dependency-free Rust; programs go source → tokens → AST → type
 check → C11 → native binary.
 

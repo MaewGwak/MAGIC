@@ -844,3 +844,69 @@ fn main() {
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn pg_wire_select_one() {
+    let Some(cc) = cc() else { return };
+    let src = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/bench-db/pgserver_magic.magic"
+    ))
+    .expect("read pgserver source");
+    let dir = std::env::temp_dir().join(format!("magic_e2e_{}_pg", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let c = magic::compile_to_c(&src).expect("compile pgserver");
+    let c_path = dir.join("t.c");
+    let exe = dir.join(if cfg!(windows) { "t.exe" } else { "t" });
+    std::fs::write(&c_path, c).expect("write C");
+    let status = Command::new(&cc).arg("-O1").arg("-o").arg(&exe).arg(&c_path).status().expect("cc");
+    assert!(status.success(), "C compilation failed");
+    let mut child = Command::new(&exe).stdout(Stdio::piped()).spawn().expect("spawn pgserver");
+    let mut reader = BufReader::new(child.stdout.take().expect("stdout"));
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read port");
+    let port: u16 = line.trim().parse().expect("port");
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+
+    let mut body = 196608i32.to_be_bytes().to_vec();
+    body.push(0);
+    let mut startup = ((body.len() + 4) as i32).to_be_bytes().to_vec();
+    startup.extend(body);
+    stream.write_all(&startup).expect("startup");
+
+    let mut read_msg = |s: &mut TcpStream| -> (u8, Vec<u8>) {
+        let mut head = [0u8; 5];
+        s.read_exact(&mut head).expect("message head");
+        let len = i32::from_be_bytes([head[1], head[2], head[3], head[4]]) as usize;
+        let mut payload = vec![0u8; len - 4];
+        s.read_exact(&mut payload).expect("message payload");
+        (head[0], payload)
+    };
+
+    let (tag, _) = read_msg(&mut stream);
+    assert_eq!(tag, b'R');
+    let (tag, _) = read_msg(&mut stream);
+    assert_eq!(tag, b'Z');
+
+    let mut q = b"SELECT 1\0".to_vec();
+    let mut msg = b"Q".to_vec();
+    msg.extend(((q.len() + 4) as i32).to_be_bytes());
+    msg.append(&mut q);
+    stream.write_all(&msg).expect("query");
+
+    let mut saw_row = false;
+    loop {
+        let (tag, payload) = read_msg(&mut stream);
+        if tag == b'D' {
+            saw_row = true;
+            assert!(payload.ends_with(b"1"), "data row was {payload:?}");
+        }
+        if tag == b'Z' {
+            break;
+        }
+    }
+    assert!(saw_row, "no DataRow from SELECT 1");
+    drop(stream);
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+}

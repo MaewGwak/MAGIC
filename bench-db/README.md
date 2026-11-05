@@ -89,6 +89,13 @@ bits choose the page, so the low bits do not cycle).
 Identical results and identical time: the pool is a few arrays and a linear scan, which both
 languages compile to the same loop.
 
+## PostgreSQL wire protocol
+
+`pgserver_magic.magic` speaks protocol v3: it accepts a startup packet (and answers an SSLRequest
+with `N`), sends `AuthenticationOk` and `ReadyForQuery`, then handles SimpleQuery messages and
+answers `SELECT 1` with a `RowDescription`, a `DataRow` and `CommandComplete`. The e2e test
+`pg_wire_select_one` starts the server, sends a startup packet and a query, and checks the DataRow.
+
 The CLI (`dbcli_magic.magic`, `bench-db/demo.sh`) runs SQL from a file or stdin against
 `dbcli.dat`, writes new rows back to the file, and answers a second process from the same file:
 

@@ -308,6 +308,25 @@ fn header_base(prog: &Program) -> String {
          }\n\n",
     );
 
+    out.push_str(
+        "static int64_t magic_net_read_at(int32_t fd, uint8_t *buf, int64_t off, int64_t len, int64_t cap, const char *msg) {\n\
+         \x20   if (off < 0 || len < 0 || off + len > cap) magic_panic(msg);\n\
+         #ifdef _WIN32\n\
+         \x20   return (int64_t)recv((SOCKET)fd, (char*)buf + off, (int)len, 0);\n\
+         #else\n\
+         \x20   return (int64_t)read(fd, buf + off, (size_t)len);\n\
+         #endif\n\
+         }\n\
+         static int64_t magic_net_write_at(int32_t fd, const uint8_t *buf, int64_t off, int64_t len, int64_t cap, const char *msg) {\n\
+         \x20   if (off < 0 || len < 0 || off + len > cap) magic_panic(msg);\n\
+         #ifdef _WIN32\n\
+         \x20   return (int64_t)send((SOCKET)fd, (const char*)buf + off, (int)len, 0);\n\
+         #else\n\
+         \x20   return (int64_t)write(fd, buf + off, (size_t)len);\n\
+         #endif\n\
+         }\n\n",
+    );
+
     for s in &prog.structs {
         out.push_str("typedef struct {\n");
         for (fname, fty) in &s.fields {
@@ -1053,6 +1072,17 @@ fn expr(e: &Expr) -> String {
                     "magic_net_connect((const char*)({}), (int32_t)({}))",
                     expr(&args[0]),
                     expr(&args[1])
+                );
+            }
+            if (name == "net_read_at" || name == "net_write_at") && args.len() == 4 {
+                let var = match &args[1].kind {
+                    ExprKind::Var(n) => n.clone(),
+                    _ => String::new(),
+                };
+                let helper = if name == "net_read_at" { "magic_net_read_at" } else { "magic_net_write_at" };
+                return format!(
+                    "{}((int32_t)({}), (uint8_t*)({}), (int64_t)({}), (int64_t)({}), (int64_t)({}_len), \"line {}: {} range exceeds the buffer\")",
+                    helper, expr(&args[0]), var, expr(&args[2]), expr(&args[3]), var, e.line, name
                 );
             }
             if (name == "net_read" || name == "net_write") && args.len() == 3 {

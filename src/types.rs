@@ -740,6 +740,32 @@ impl Checker {
                     }
                     return Ok(Ty::I32);
                 }
+                if name == "net_read_at" || name == "net_write_at" {
+                    if args.len() != 4 {
+                        return Err(format!("{}: {} takes 4 arguments", e.line, name));
+                    }
+                    let t = self.check_expr(&args[0], None, scopes)?;
+                    if !t.is_numeric() {
+                        return Err(format!("{}: {} needs a socket handle", e.line, name));
+                    }
+                    let ok = match &args[1].kind {
+                        ExprKind::Var(n) => lookup_array(scopes, n) == Some(Ty::U8),
+                        _ => false,
+                    };
+                    if !ok {
+                        return Err(format!(
+                            "{}: {} needs a [u8] array variable as its second argument",
+                            e.line, name
+                        ));
+                    }
+                    for a in &args[2..] {
+                        let t = self.check_expr(a, None, scopes)?;
+                        if !t.is_numeric() {
+                            return Err(format!("{}: {} offset/length must be integers", e.line, name));
+                        }
+                    }
+                    return Ok(Ty::I32);
+                }
                 if name == "net_read" || name == "net_write" {
                     if args.len() != 3 {
                         return Err(format!("{}: {} takes 3 arguments", e.line, name));

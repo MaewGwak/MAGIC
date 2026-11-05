@@ -1,0 +1,158 @@
+// Minimal PostgreSQL wire-protocol v3 server: startup, AuthenticationOk,
+// ReadyForQuery, and a SimpleQuery that answers "SELECT 1" with an int4 row.
+fn rd32(b: [u8], o: i32) -> i32 {
+    return (b[o] as i32) * 16777216 + (b[o + 1] as i32) * 65536 + (b[o + 2] as i32) * 256 + (b[o + 3] as i32);
+}
+
+fn put32(b: [u8], o: i32, v: i32) {
+    b[o] = ((v / 16777216) % 256) as u8;
+    b[o + 1] = ((v / 65536) % 256) as u8;
+    b[o + 2] = ((v / 256) % 256) as u8;
+    b[o + 3] = (v % 256) as u8;
+}
+
+fn put16(b: [u8], o: i32, v: i32) {
+    b[o] = ((v / 256) % 256) as u8;
+    b[o + 1] = (v % 256) as u8;
+}
+
+fn read_exact(fd: i32, b: [u8], off: i32, n: i32) -> bool {
+    var got = 0;
+    while got < n {
+        var r = net_read_at(fd, b, off + got, n - got);
+        if r <= 0 {
+            return false;
+        }
+        got = got + r;
+    }
+    return true;
+}
+
+fn send_auth(fd: i32) {
+    var m: [u8] = [0; 9];
+    m[0] = 82;
+    put32(m, 1, 8);
+    net_write(fd, m, 9);
+}
+
+fn send_ready(fd: i32) {
+    var m: [u8] = [0; 6];
+    m[0] = 90;
+    put32(m, 1, 5);
+    m[5] = 73;
+    net_write(fd, m, 6);
+}
+
+fn send_select1(fd: i32) {
+    var m: [u8] = [0; 64];
+    // RowDescription: int4 "?column?"
+    m[0] = 84;
+    put32(m, 1, 33);
+    put16(m, 5, 1);
+    m[7] = 63; m[8] = 99; m[9] = 111; m[10] = 108;
+    m[11] = 117; m[12] = 109; m[13] = 110; m[14] = 63; m[15] = 0;
+    m[16] = 0; m[17] = 0; m[18] = 0; m[19] = 0;
+    m[20] = 0; m[21] = 0;
+    m[22] = 0; m[23] = 0; m[24] = 0; m[25] = 23;
+    m[26] = 0; m[27] = 4;
+    m[28] = 255; m[29] = 255; m[30] = 255; m[31] = 255;
+    m[32] = 0; m[33] = 0;
+    net_write(fd, m, 34);
+
+    // DataRow: one text field "1"
+    m[0] = 68;
+    put32(m, 1, 11);
+    put16(m, 5, 1);
+    put32(m, 7, 1);
+    m[11] = 49;
+    net_write(fd, m, 12);
+
+    // CommandComplete "SELECT 1"
+    m[0] = 67;
+    put32(m, 1, 13);
+    m[5] = 83; m[6] = 69; m[7] = 76; m[8] = 69; m[9] = 67;
+    m[10] = 84; m[11] = 32; m[12] = 49; m[13] = 0;
+    net_write(fd, m, 14);
+    send_ready(fd);
+}
+
+fn parse_int(s: str) -> i32 {
+    var v = 0;
+    var i = 0;
+    var n = str_len(s);
+    while i < n && str_byte(s, i) >= 48 && str_byte(s, i) <= 57 {
+        v = v * 10 + ((str_byte(s, i) as i32) - 48);
+        i = i + 1;
+    }
+    return v;
+}
+
+fn main() {
+    var buf: [u8] = [0; 8192];
+    var t: [u8] = [0; 1];
+    var no: [u8] = [0; 1];
+    var port = 5433;
+    if argc() > 1 {
+        port = parse_int(arg(1));
+    }
+    var lfd = net_listen(port);
+    if lfd < 0 {
+        print(-1);
+        flush();
+        return;
+    }
+    print(net_port(lfd));
+    flush();
+
+    var cfd = net_accept(lfd);
+    if cfd < 0 {
+        net_close(lfd);
+        return;
+    }
+
+    var len = 0;
+    if read_exact(cfd, buf, 0, 4) {
+        len = rd32(buf, 0);
+    }
+    if len == 8 {
+        if read_exact(cfd, buf, 0, 4) {
+            if rd32(buf, 0) == 80877103 {
+                no[0] = 78;
+                net_write(cfd, no, 1);
+                if read_exact(cfd, buf, 0, 4) {
+                    len = rd32(buf, 0);
+                }
+            }
+        }
+    }
+    if len > 4 && len < 8192 {
+        read_exact(cfd, buf, 0, len - 4);
+    }
+
+    send_auth(cfd);
+    send_ready(cfd);
+
+    var running = true;
+    while running {
+        if !read_exact(cfd, t, 0, 1) {
+            running = false;
+        } else {
+            if t[0] == 88 {
+                running = false;
+            } else if read_exact(cfd, buf, 0, 4) {
+                var qlen = rd32(buf, 0);
+                if qlen < 4 || qlen > 8192 {
+                    running = false;
+                } else if !read_exact(cfd, buf, 0, qlen - 4) {
+                    running = false;
+                } else {
+                    send_select1(cfd);
+                }
+            } else {
+                running = false;
+            }
+        }
+    }
+    net_close(cfd);
+    net_close(lfd);
+}

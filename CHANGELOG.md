@@ -126,6 +126,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - `file_read_at(fd, buf, off, n)` and `file_write_at` fill or flush a slice of a buffer, so a page
   pool writes frames in place. A 64-frame LRU buffer pool over 512 pages and 200,000 accesses gives
   identical hits (24,997), misses (175,003), checksum and time (128 ms) in MAGIC and C.
+- PostgreSQL wire protocol v3 skeleton: `pgserver_magic.magic` answers startup (including
+  SSLRequest), sends AuthenticationOk/ReadyForQuery, and answers a SimpleQuery for `SELECT 1` with
+  RowDescription, DataRow and CommandComplete; an e2e test drives it over loopback.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
