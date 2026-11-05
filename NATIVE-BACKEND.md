@@ -59,6 +59,7 @@ Versioning follows the requested scheme: `0.<feature round>.<fix>`.
 | **0.8.5 (done)** | struct locals, literals, fields, arrays of structs | struct/points/particles byte-identical to C |
 | **0.8.6 (done)** | nested fields, arrays of nested structs, vectors incl. vectors of structs | all 15 examples + vecpart run natively |
 | **0.8.7 (done)** | bit-packed `[bool]` on both backends | sieve peak 13.5 MB (7.2x less), same answer |
+| **0.8.8 (done)** | calloc zero-fill, div/mod strength reduction, fewer normalisations | sqlscan 63→39 ms, btree 216→170 ms |
 | **0.8.x** | threads, the PostgreSQL demo on native, IR + register allocation | the whole `bench-linux.sh` matrix builds and checksums match |
 | **0.8.x (done)** | file I/O builtins mapped to libc | `pageio`, `sqlscan`, `btree`, `bufpool` run natively with identical checksums |
 | **0.8.2 (done)** | sockets, args/env, input_read/print_bytes, sequential par-for | native TCP roundtrip and the PostgreSQL wire server pass without a C compiler |

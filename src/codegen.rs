@@ -817,18 +817,31 @@ fn emit_stmt(
                 "{}if ({}_len < 0 || {}_len > 1073741824LL) magic_panic(\"line {}: bad array length\");\n",
                 p, name, name, st.line
             ));
-            out.push_str(&format!(
-                "{}{} = ({}*)malloc((size_t){}_len * sizeof({}));\n",
-                p, name, t, name, t
-            ));
+            let zero_fill = matches!(
+                value.kind,
+                ExprKind::Int(0) | ExprKind::Bool(false)
+            ) || matches!(value.kind, ExprKind::Float(v) if v == 0.0);
+            if zero_fill {
+                out.push_str(&format!(
+                    "{}{} = ({}*)calloc((size_t){}_len, sizeof({}));\n",
+                    p, name, t, name, t
+                ));
+            } else {
+                out.push_str(&format!(
+                    "{}{} = ({}*)malloc((size_t){}_len * sizeof({}));\n",
+                    p, name, t, name, t
+                ));
+            }
             out.push_str(&format!(
                 "{}if (!{} && {}_len > 0) magic_panic(\"line {}: out of memory\");\n",
                 p, name, name, st.line
             ));
-            out.push_str(&format!(
-                "{}{{ {} magic_tmp = ({}); for (int64_t magic_i = 0; magic_i < {}_len; magic_i++) {}[magic_i] = magic_tmp; }}\n",
-                p, t, expr(value), name, name
-            ));
+            if !zero_fill {
+                out.push_str(&format!(
+                    "{}{{ {} magic_tmp = ({}); for (int64_t magic_i = 0; magic_i < {}_len; magic_i++) {}[magic_i] = magic_tmp; }}\n",
+                    p, t, expr(value), name, name
+                ));
+            }
         }
         StmtKind::Assign { name, value } => {
             out.push_str(&format!("{}{} = {};\n", pad(indent), name, expr(value)));

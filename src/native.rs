@@ -271,6 +271,15 @@ impl Emitter {
         }
     }
 
+    fn zero_literal(e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Int(0) => true,
+            ExprKind::Bool(false) => true,
+            ExprKind::Float(v) => *v == 0.0,
+            _ => false,
+        }
+    }
+
     fn const_int(e: &Expr, consts: &HashMap<String, i64>) -> Option<i64> {
         match &e.kind {
             ExprKind::Int(v) => Some(*v),
@@ -1431,6 +1440,42 @@ impl Emitter {
                         }
                     }
                 }
+                if matches!(op, BinOp::Div | BinOp::Rem) {
+                    if let ExprKind::Int(c) = r.kind {
+                        if c > 0 && (c & (c - 1)) == 0 {
+                            self.expr(l)?;
+                            let ty = self.arith_ty(l, r);
+                            if c == 1 {
+                                if *op == BinOp::Rem {
+                                    self.line("    xor %eax, %eax");
+                                }
+                            } else {
+                                if c <= (1i64 << 31) {
+                                let k = 63 - (c as u64).leading_zeros() as i64;
+                                if *op == BinOp::Div {
+                                    self.line("    mov %rax, %rcx");
+                                    self.line("    sar $63, %rcx");
+                                    self.line(&format!("    shr ${}, %rcx", 64 - k));
+                                    self.line("    add %rcx, %rax");
+                                    self.line(&format!("    sar ${}, %rax", k));
+                                } else {
+                                    // rem = (adjusted & (c-1)) - bias, where
+                                    // adjusted = x + bias and bias = c-1 when x < 0.
+                                    self.line("    mov %rax, %rcx");
+                                    self.line("    sar $63, %rcx");
+                                    self.line("    mov %rcx, %r9");
+                                    self.line(&format!("    shr ${}, %r9", 64 - k));
+                                    self.line("    add %r9, %rax");
+                                    self.line(&format!("    and ${}, %rax", c - 1));
+                                    self.line("    sub %r9, %rax");
+                                }
+                            }
+                            }
+                            self.truncate(ty);
+                            return Ok(());
+                        }
+                    }
+                }
                 self.expr(l)?;
                 if !self.simple_into(r, "%rcx")? {
                     self.push("%rax");
@@ -1474,8 +1519,9 @@ impl Emitter {
                     BinOp::Or => self.line("    or %rcx, %rax"),
                 }
                 let ty = match op {
+                    // Comparisons and boolean and/or already produce 0/1.
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
-                    | BinOp::And | BinOp::Or => Ty::Bool,
+                    | BinOp::And | BinOp::Or => Ty::I64,
                     _ => self.arith_ty(l, r),
                 };
                 self.truncate(ty);
@@ -2598,7 +2644,22 @@ impl Emitter {
                 if let Ty::Struct(si) = elem {
                     return self.array_let_struct(name, off, si as usize, len, value, s.line);
                 }
-                if elem == Ty::Bool {
+                                if Self::zero_literal(value) && elem != Ty::Bool {
+                    let esz = self.elem_size(elem);
+                    self.line(&format!("    mov ${}, %rdi", len));
+                    self.line(&format!("    mov ${}, %rsi", esz));
+                    self.call("calloc@PLT");
+                    let ok = self.fresh("zalloc");
+                    self.line("    test %rax, %rax");
+                    self.line(&format!("    jne {}", ok));
+                    let msg = self.panic_msg(s.line, "out of memory");
+                    self.line(&format!("    lea {}(%rip), %rdi", msg));
+                    self.call(".Lmagic_panic");
+                    self.line(&format!("{}:", ok));
+                    self.line(&format!("    mov %rax, -{}(%rbp)", off));
+                    return Ok(());
+                }
+if elem == Ty::Bool {
                     let words = (len + 63) / 64;
                     self.line(&format!("    mov ${}, %rdi", words));
                     self.line("    mov $8, %esi");

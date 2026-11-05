@@ -17,6 +17,17 @@ Native arithmetic now narrows after every operation to the declared type, matchi
 `int32_t`/`uint8_t` wrapping: `2147483647 + 1` prints `-2147483648` and a `u8` at 255 wraps to 0.
 A regression test builds both cases natively and checks the output.
 
+## v0.8.8 — calloc fast path and native strength reduction (2026-11-06)
+
+- Zero-initialised arrays (`[0; n]`, `[false; n]`, `[0.0; n]`) now use `calloc` on both backends
+  instead of a malloc plus a store loop, skipping 25-32 MB of writes on sparse benchmarks and making
+  their RSS deterministic.
+- The native backend turns division and remainder by a positive power-of-two constant into shifts
+  and masks with C's signed truncation semantics (no `idiv`), and comparisons/boolean and/or are no
+  longer normalised twice.
+- Native medians: sqlscan 63 → 39 ms, btree 216 → 170 ms, bufpool 196 → 180 ms, pageio 685 → 658 ms.
+  The C backend is unchanged in output; all checksums and gates stay green.
+
 ## v0.8.7 — bit-packed `[bool]` arrays (2026-11-06)
 
 Top-level `[bool]` arrays are stored as bitsets on both backends: allocation uses `(len + 63) / 64`
