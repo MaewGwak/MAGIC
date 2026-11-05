@@ -1,4 +1,4 @@
-# 🔮 MAGIC
+# MAGIC
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language that
 compiles to C11 and runs anywhere a C compiler does.
@@ -11,16 +11,13 @@ check → C11 → native binary.
 
 - **Bounds-checked by default**, with a printed static memory bound per function and per arena.
 - **No GC, no borrow checker.** Arrays are owned locals; the compiler inserts every `free`.
-- **Flat data is the only easy path**, which is where the performance win is: binary-trees is
-  1.86x faster than optimized Rust and 25x faster than idiomatic `Box<Node>` Rust, with 3.5x less
-  memory.
-- **Compiles fast**: a one-function rebuild is 280 ms vs rustc's 324 ms full build, and a no-op
-  build is 30 ms on a 2,000-function project.
+- **Flat data is the easy path**: arrays and structs are contiguous and pointers are explicit, so
+  pointer-heavy code stays predictable.
+- **Compiles fast**: a one-function rebuild is ~280 ms and a no-op build is 30 ms on a
+  2,000-function project.
 
-It does not beat C on codegen, and never claims to. It emits C and lets GCC do that.
-
-MAGIC is not trying to be the fastest language in the world. The benchmarks are a scoreboard
-against C, Rust, C++, Goose and Go; the target is to keep closing gaps and never regress.
+MAGIC emits C11 and leaves machine-level code generation to the system C compiler. Benchmark
+results and methodology live in `BENCHMARKS.md`; the harness exits non-zero if any answer is wrong.
 
 ## Install (one command)
 
@@ -182,7 +179,7 @@ The compiler also prints the static bound:
 
 ```powershell
 magicc check hash_magic.magic --report
-# 🔮 memory: main <= 33554432 bytes   (exactly the two 2^21 x 8-byte tables)
+# memory: main <= 33554432 bytes   (exactly the two 2^21 x 8-byte tables)
 ```
 
 ## Docs
@@ -193,7 +190,7 @@ magicc check hash_magic.magic --report
 | `CHANGELOG.md` | what shipped in v0.1 → v0.4, with the benchmark snapshot |
 | `SPECS.md` | the language: lexical, types, grammar, arrays, memory, versioning |
 | `ARENA.md` | arena design, bump allocation, fallback, the printed bound |
-| `TEST.md`, `TEST-MATRIX.md` | how to test, and all 97 tests by file |
+| `TEST.md`, `TEST-MATRIX.md` | how to test, and all 123 tests by file |
 | `WEAKNESSES.md` | what each language forces and how MAGIC answers |
 | `GOALS.md` | win conditions per axis, hardware use, milestone ladder |
 | `PLANS.md`, `TASKS.md` | roadmap and board |
@@ -217,7 +214,8 @@ examples/         hello, fib, sum, sieve, struct, points, inventory, tokenize, a
 
 ## Roadmap
 
-M0 structs ✅ · M1 array params ✅ · M2 arena + printed bound ✅ · M3 benchmarks ✅ ·
-M4 compile speed (cache + parallel) ✅, native backend ✗ · M5 mini-Minecraft ✗ · M6 OS in a VM ✗
+M0 structs (done) · M1 array params (done) · M2 arena + printed bound (done) · M3 benchmarks
+(done) · M4 compile speed (cache + parallel, done), native backend (not started) · M5
+mini-Minecraft (planned) · M6 OS in a VM (planned)
 
 Modules and a native LLVM/Cranelift backend come before M5.
