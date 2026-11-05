@@ -1,6 +1,6 @@
 # MAGIC test matrix
 
-119 tests, all green. Run with `cargo test`. Every row names the file that owns the test and
+120 tests, all green. Run with `cargo test`. Every row names the file that owns the test and
 what it proves, so the docs can link straight to it.
 
 ## Added after v0.3
@@ -155,6 +155,7 @@ These run `magicc` itself, so argument parsing, the build cache and `--report` a
 | `cc_flag_overrides_cc_env` | bogus `CC`, `--cc "gcc -O1"` still builds | yes |
 | `output_flag_names_the_binary` | `-o custom.exe` writes that path and it runs | yes |
 | `duplicate_function_names_the_file` | second `helper` reported as `b.magic:1` | yes |
+| `else_if_chain_picks_the_matching_branch` | `else if` chain → `2` | yes |
 | `emit_prints_c` | stdout contains `int main(void)` | no |
 | `build_creates_an_executable_that_runs` | builds, runs, prints `42` | yes |
 | `second_build_is_up_to_date` | cache hit prints `up to date` | yes |

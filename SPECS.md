@@ -48,7 +48,7 @@ veclet     := "var" ident ":" "[" type "+" "]" "=" "[" "]" ";"
 push       := ident "." "push" "(" expr ")" ";"
 assign     := ident "=" expr ";"
 indexassign:= ident "[" expr "]" "=" expr ";"
-if         := "if" expr block ("else" block)?
+if         := "if" expr block ("else" (if | block))?
 while      := "while" expr block
 for        := "for" ident "in" expr ".." expr block
 break      := "break" ";"

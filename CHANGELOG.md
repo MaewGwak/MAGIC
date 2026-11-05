@@ -14,6 +14,8 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - `str_eq`, `str_len`, `str_byte` (bounds-checked), `str_byte_n` (O(1) per byte, caller supplies the length).
 
 **Numeric**
+**Language**
+- `else if` chains: `if a { } else if b { } else { }` (the else branch may be another `if`).
 - `abs` for any numeric type (call-free argument; negating the minimum integer overflows).
 - `min(a, b)` and `max(a, b)` for matching numeric types (call-free arguments, ternary codegen).
 
@@ -29,7 +31,7 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - `-fno-asynchronous-unwind-tables -fno-ident` by default: `big.exe` 201,673 → 167,105 bytes, one-function rebuild 280 → 271 ms.
 
 **Verification**
-- 119 tests: 44 unit, 19 CLI, 15 integration, 41 end-to-end.
+- 120 tests: 44 unit, 19 CLI, 15 integration, 42 end-to-end.
 - `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (41 cases, 40 without Zig), `bench-memory.ps1`.
 
 ## v0.3 — the memory model

@@ -182,6 +182,26 @@ impl Parser {
         })
     }
 
+    fn parse_if(&mut self) -> Result<Stmt, String> {
+        let line = self.cur_line();
+        self.expect(Tok::If, "'if'")?;
+        let cond = self.parse_expr()?;
+        let then = self.parse_block()?;
+        let els = if self.eat(&Tok::Else) {
+            if self.at(&Tok::If) {
+                vec![self.parse_if()?]
+            } else {
+                self.parse_block()?
+            }
+        } else {
+            Vec::new()
+        };
+        Ok(Stmt {
+            kind: StmtKind::If { cond, then, els },
+            line,
+        })
+    }
+
     fn parse_block(&mut self) -> Result<Vec<Stmt>, String> {
         self.expect(Tok::LBrace, "'{'")?;
         let mut stmts = Vec::new();
@@ -256,20 +276,7 @@ impl Parser {
                     line,
                 })
             }
-            Tok::If => {
-                self.bump();
-                let cond = self.parse_expr()?;
-                let then = self.parse_block()?;
-                let els = if self.eat(&Tok::Else) {
-                    self.parse_block()?
-                } else {
-                    Vec::new()
-                };
-                Ok(Stmt {
-                    kind: StmtKind::If { cond, then, els },
-                    line,
-                })
-            }
+            Tok::If => self.parse_if(),
             Tok::While => {
                 self.bump();
                 let cond = self.parse_expr()?;

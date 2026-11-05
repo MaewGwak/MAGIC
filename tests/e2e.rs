@@ -619,3 +619,21 @@ fn struct_field_roundtrip() {
         assert_eq!(out, "8\n35");
     }
 }
+
+#[test]
+fn else_if_chain_picks_the_matching_branch() {
+    let src = "fn main() {\n\
+               let x = 2;\n\
+               if x == 1 {\n\
+               print(1);\n\
+               } else if x == 2 {\n\
+               print(2);\n\
+               } else {\n\
+               print(3);\n\
+               }\n\
+               }";
+    let out = build_and_run("elseif", src);
+    if let Some(out) = out {
+        assert_eq!(out, "2");
+    }
+}
