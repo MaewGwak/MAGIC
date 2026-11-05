@@ -2,7 +2,7 @@
 
 A small systems language that compiles to C11 and runs anywhere a C compiler does.
 
-**Status: v0.4** — 115 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.4** — 116 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is ~2.5k lines of dependency-free Rust; programs go source → tokens → AST → type
 check → C11 → native binary.
 
