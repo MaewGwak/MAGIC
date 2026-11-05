@@ -203,7 +203,8 @@ all five baselines:
 | n-body 10M | 724 | 728 | **523** | 920 | 450 | 1.16x |
 
 The n-body row uses clang with `-march=x86-64-v3` and the matmul row clang with `-march=native`;
-without clang the n-body build is 605 ms (gcc). `./verify.sh` runs the tests, the doc counts and this matrix.
+without clang the n-body build is 605 ms (gcc). `./verify.sh` runs the tests, the doc counts and this matrix; `./bench-linux.sh` alone runs 54
+cases across C, C++, Rust, Go and MAGIC.
 
 
 n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms

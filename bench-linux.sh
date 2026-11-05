@@ -122,10 +122,12 @@ median "$OUT/r_p" 336141.941 'ray MAGIC par'
 
 echo "== hash 1M"
 build_c hash_c.c h_c; build_rust hash_rs_open.rs h_rs
+build_rust hash_rs_hashmap.rs h_hm
 build_magic hash_magic.magic h_m; build_magic hash_magic_direct.magic h_d
 build_magic hash_magic_par.magic h_p
 median "$OUT/h_c" 1500001500000 'hash C'
 median "$OUT/h_rs" 1500001500000 'hash Rust'
+median "$OUT/h_hm" 1500001500000 'hash Rust HashMap'
 if [ -n "$CXX" ]; then build_cpp hash_cpp.cpp h_cpp; median "$OUT/h_cpp" 1500001500000 'hash C++'; fi
 if [ -n "$GO" ]; then build_go hash_go.go h_go; median "$OUT/h_go" 1500001500000 'hash Go'; fi
 median "$OUT/h_m" 1500001500000 'hash MAGIC'
@@ -134,9 +136,11 @@ median "$OUT/h_p" 1500001500000 'hash MAGIC par'
 
 echo "== particles 1M x 100"
 build_c particles_c.c p_c; build_rust particles_rs.rs p_rs
+build_rust particles_rs_iter.rs p_ri
 build_magic particles_magic.magic p_m; build_magic particles_magic_closed.magic p_x
 median "$OUT/p_c" 500094707846.643 'particles C'
 median "$OUT/p_rs" 500094707846.643 'particles Rust'
+median "$OUT/p_ri" 500094707846.643 'particles Rust iter'
 if [ -n "$CXX" ]; then build_cpp particles_cpp.cpp p_cpp; median "$OUT/p_cpp" 500094707846.643 'particles C++'; fi
 if [ -n "$GO" ]; then build_go particles_go.go p_go; median "$OUT/p_go" 500094707846.643 'particles Go'; fi
 median "$OUT/p_m" 500094707846.643 'particles MAGIC'
