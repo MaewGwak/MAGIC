@@ -1,0 +1,129 @@
+// fannkuch-redux, n = 10, split into 10 x 9 = 90 independent streams: the
+// top-level block fixes the last element, the sub-block fixes the eighth, and
+// each stream runs the same odometer over the first eight positions. Both
+// factorials are even, so the local index parity is the global parity.
+fn rot(a: [i32], base: i32, len: i32, by: i32, tmp: [i32], tbase: i32) {
+    var i = 0;
+    while i < len {
+        tmp[tbase + i] = a[base + i];
+        i = i + 1;
+    }
+    i = 0;
+    while i < len {
+        var src = i + by;
+        if src >= len {
+            src = src - len;
+        }
+        a[base + i] = tmp[tbase + src];
+        i = i + 1;
+    }
+}
+
+fn flips_of(base: i32, perm: [i32]) -> i32 {
+    var flips = 0;
+    while perm[base] != 0 {
+        var k = perm[base];
+        var a = 0;
+        var b = k;
+        while a < b {
+            var t = perm[base + a];
+            perm[base + a] = perm[base + b];
+            perm[base + b] = t;
+            a = a + 1;
+            b = b - 1;
+        }
+        flips = flips + 1;
+    }
+    return flips;
+}
+
+fn main() {
+    let n = 10;
+    let m = 8;
+    let subs = 9;
+    let streams = 90;
+
+    var perm1: [i32] = [0; 2880];
+    var perm: [i32] = [0; 2880];
+    var count: [i32] = [0; 2880];
+    var tmp: [i32] = [0; 2880];
+    var sums: [i64] = [0; 90];
+    var maxes: [i32] = [0; 90];
+
+    par for s in 0..streams {
+        var base = s * 32;
+        var b1 = s / subs;
+        var b2 = s % subs;
+        var i = 0;
+        while i < n {
+            perm1[base + i] = i;
+            i = i + 1;
+        }
+        rot(perm1, base, n, b1, tmp, base);
+        rot(perm1, base, m + 1, b2, tmp, base);
+
+        var r = m;
+        var sum: i64 = 0;
+        var mx = 0;
+        var parity = 0;
+        var running = true;
+        while running {
+            while r != 1 {
+                count[base + r - 1] = r;
+                r = r - 1;
+            }
+            var j = 0;
+            while j < n {
+                perm[base + j] = perm1[base + j];
+                j = j + 1;
+            }
+            var fl = flips_of(base, perm);
+            if fl > mx {
+                mx = fl;
+            }
+            if parity == 0 {
+                sum = sum + (fl as i64);
+            } else {
+                sum = sum - (fl as i64);
+            }
+            parity = 1 - parity;
+
+            var advanced = false;
+            while !advanced {
+                if r == m {
+                    running = false;
+                    advanced = true;
+                } else {
+                    var p0 = perm1[base];
+                    var k = 0;
+                    while k < r {
+                        perm1[base + k] = perm1[base + k + 1];
+                        k = k + 1;
+                    }
+                    perm1[base + r] = p0;
+                    count[base + r] = count[base + r] - 1;
+                    if count[base + r] > 0 {
+                        advanced = true;
+                    } else {
+                        r = r + 1;
+                    }
+                }
+            }
+        }
+        sums[s] = sum;
+        maxes[s] = mx;
+    }
+
+    var checksum: i64 = 0;
+    var mxall = 0;
+    var u = 0;
+    while u < streams {
+        checksum = checksum + sums[u];
+        if maxes[u] > mxall {
+            mxall = maxes[u];
+        }
+        u = u + 1;
+    }
+    print(checksum);
+    print(mxall);
+}

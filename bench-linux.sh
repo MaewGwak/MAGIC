@@ -69,11 +69,13 @@ cd "$ROOT/bench-fannkuch" || exit 2
 EXP=$'73196\n38'
 build_c fannkuch_c.c f_c; build_rust fannkuch_rs.rs f_rs
 build_magic fannkuch_magic.magic f_m; build_magic fannkuch_magic_buf.magic f_b
+build_magic fannkuch_magic_blocks.magic f_k
 median "$OUT/f_c" "$EXP" 'fannkuch C'
 median "$OUT/f_rs" "$EXP" 'fannkuch Rust'
 if [ -n "$CXX" ]; then build_cpp fannkuch_cpp.cpp f_cpp; median "$OUT/f_cpp" "$EXP" 'fannkuch C++'; fi
 median "$OUT/f_m" "$EXP" 'fannkuch MAGIC'
 median "$OUT/f_b" "$EXP" 'fannkuch MAGIC buf'
+median "$OUT/f_k" "$EXP" 'fannkuch MAGIC blocks'
 
 echo "== matmul 384"
 cd "$ROOT/bench-suite" || exit 2

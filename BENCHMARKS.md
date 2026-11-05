@@ -195,7 +195,7 @@ ray generation, sphere intersection, shading — not a microbenchmark, and MAGIC
 | ray tracer 1536² | 86 | 89 | 77 | - | 13 (`par for`) |
 | binary trees | 1647 | - | 3077 | - | 397 (node count, level order) |
 | matmul 384 | 31 | 27 | 92 | 106 | 9 (i-k-j, clang AVX2) |
-| fannkuch | 383 | 392 | 364 | - | 241 (buffered, `par for`) |
+| fannkuch | 383 | 392 | 364 | - | 40 (90 streams, `par for`) |
 | n-body 10M | 724 | 728 | 523 | 920 | 450 (unrolled, clang AVX2) |
 
 Clang is optional: without it the n-body build is 605 ms and matmul 18 ms with gcc. All checksums

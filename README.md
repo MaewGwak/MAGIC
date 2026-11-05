@@ -199,7 +199,7 @@ all five baselines:
 | ray tracer 1536² | 86 | 89 | **77** | - | 13 | 5.9x |
 | binary trees | 1647 | - | 3077 | - | 397 | 4.2x |
 | matmul 384 | 31 | 27 | 92 | 106 | 9 | 3x |
-| fannkuch | 383 | 392 | 364 | - | 241 | 1.5x |
+| fannkuch | 383 | 392 | 364 | - | 40 | 9.6x |
 | n-body 10M | 724 | 728 | **523** | 920 | 450 | 1.16x |
 
 The n-body and matmul rows use clang for their AVX2 builds; without clang the n-body build is
