@@ -634,3 +634,55 @@ fn native_backend_supports_arrays() {
     let run = Command::new(&exe).output().expect("run");
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "15");
 }
+
+#[test]
+fn native_backend_passes_arrays_and_extra_args() {
+    if !(cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) {
+        return;
+    }
+    if !Command::new("as")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let dir = TempDir::new("nativeargs");
+    let src = dir.path().join("a.magic");
+    std::fs::write(
+        &src,
+        "fn sum(xs: [i32], n: i32) -> i32 {\n\
+         var i = 0; var t = 0;\n\
+         while i < n { t = t + xs[i]; i = i + 1; }\n\
+         return t;\n\
+         }\n\
+         fn seven(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32) -> i32 {\n\
+         return a + g;\n\
+         }\n\
+         fn main() {\n\
+         var a: [i32] = [0; 3];\n\
+         a[0] = 10; a[1] = 20; a[2] = 30;\n\
+         print(sum(a, 3));\n\
+         print(seven(1, 2, 3, 4, 5, 6, 7));\n\
+         }\n",
+    )
+    .expect("write source");
+    let exe = dir.path().join("a");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run magicc");
+    assert!(
+        out.status.success(),
+        "native build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&exe).output().expect("run");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "60\n8");
+}

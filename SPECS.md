@@ -1,4 +1,4 @@
-# 🔮 MAGIC — Language Specification v0.7.0
+# 🔮 MAGIC — Language Specification v0.8.0
 
 Status: pre-1.0. Breaking changes are allowed in any 0.x release.
 Companion docs: `PLANS.md` (roadmap), `TASKS.md` (board), `TEST.md` (tests).
@@ -145,7 +145,9 @@ native backend (`--backend native`) skips the C compiler: it emits GNU assembler
 and assembles with `as`, linking through the same driver. Its subset is integer functions with up to
 six parameters, locals, arithmetic, comparisons, `if`, `while`, `for`, calls, `print` of integers and
 string literals, and heap arrays with bounds checks (including `[bool]`, `[u8]`, `[i32]`, `[i64]`).
-Structs, floats, vectors, array parameters and I/O builtins remain on the C backend for now.
+It also takes array parameters (the checker lowers them to a pointer plus a length), passes more than
+six arguments on the stack, casts between integer types, and supports `str_len`, `str_byte` and
+`str_byte_n`. Structs, floats, vectors and the I/O builtins remain on the C backend for now.
 
 ## 4b. Growable arrays (v0.4)
 

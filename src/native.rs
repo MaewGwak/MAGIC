@@ -1,13 +1,15 @@
 //! Experimental native x86-64 backend (Linux, System V ABI).
 //!
-//! Emits GNU assembler text for an integer subset: functions with up to six
-//! integer parameters, locals, arithmetic, comparisons, `if`/`while`/`for`,
-//! calls and `print` of integers and string literals. Arrays, structs, floats,
-//! vectors and sockets stay on the C backend until later milestones.
+//! Emits GNU assembler text. Subset: integer functions with up to six register
+//! arguments (more through the stack), locals, arithmetic, comparisons,
+//! `if`/`while`/`for`, calls, `print`, casts between integer types, and heap
+//! arrays (including array parameters, which the checker lowers to a pointer
+//! plus a length argument) with bounds checks. Structs, floats, vectors and the
+//! I/O builtins stay on the C backend until later milestones.
 //!
-//! The subset is deliberately small: correctness first, speed later. Every
-//! expression is evaluated into `%rax`; sub-expressions spill through `%rcx`
-//! and the stack.
+//! Calling convention for array parameters: the checker rewrites a call
+//! `f(a, x)` into `f(a, a.len, x)`, so the native prologue reads the pointer
+//! and the length like any other two integer arguments.
 
 use crate::ast::{BinOp, Expr, ExprKind, Func, ParamTy, Program, Stmt, StmtKind, Ty, UnOp};
 use std::collections::HashMap;
@@ -16,10 +18,15 @@ struct Emitter {
     out: String,
     rodata: Vec<(String, String)>,
     label: usize,
-    /// How many 8-byte temporaries are pushed. Used for 16-byte call alignment.
+    /// 8-byte temporaries currently pushed; used for 16-byte call alignment.
     depth: usize,
     locals: HashMap<String, i64>,
+    /// name -> (slot holding the data pointer, element type, constant length or -1)
     arrays: HashMap<String, (i64, Ty, i64)>,
+    /// Array parameters whose length is only known at runtime.
+    array_len_slot: HashMap<String, i64>,
+    /// Slots of arrays this function allocated and must free on return.
+    owned: Vec<i64>,
     frame: i64,
     ret_label: String,
     loops: Vec<(String, String)>,
@@ -28,6 +35,8 @@ struct Emitter {
 fn align16(n: i64) -> i64 {
     (n + 15) & !15
 }
+
+const ARG_REGS: [&str; 6] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
 
 impl Emitter {
     fn new() -> Self {
@@ -38,6 +47,8 @@ impl Emitter {
             depth: 0,
             locals: HashMap::new(),
             arrays: HashMap::new(),
+            array_len_slot: HashMap::new(),
+            owned: Vec::new(),
             frame: 0,
             ret_label: String::new(),
             loops: Vec::new(),
@@ -64,6 +75,7 @@ impl Emitter {
         self.depth -= 1;
     }
 
+    /// Call with automatic 16-byte stack alignment.
     fn call(&mut self, target: &str) {
         let pad = self.depth % 2 == 1;
         if pad {
@@ -77,25 +89,13 @@ impl Emitter {
         }
     }
 
-    /// Collect every name that needs a stack slot: parameters, `var`/`let`
-    /// declarations and `for` counters.
-    fn collect_locals(stmts: &[Stmt], names: &mut Vec<String>) {
-        for s in stmts {
-            match &s.kind {
-                StmtKind::Let { name, .. } => names.push(name.clone()),
-                StmtKind::For { var, body, .. } => {
-                    names.push(var.clone());
-                    Self::collect_locals(body, names);
-                }
-                StmtKind::If { then, els, .. } => {
-                    Self::collect_locals(then, names);
-                    Self::collect_locals(els, names);
-                }
-                StmtKind::While { body, .. } => Self::collect_locals(body, names),
-                StmtKind::Arena { body } => Self::collect_locals(body, names),
-                _ => {}
-            }
-        }
+    fn panic_msg(&mut self, line: usize, text: &str) -> String {
+        let label = format!(".Lmsg{}", self.rodata.len());
+        self.rodata.push((
+            label.clone(),
+            format!("line {}: {}", line, text),
+        ));
+        label
     }
 
     fn elem_size(ty: Ty) -> i64 {
@@ -113,6 +113,25 @@ impl Emitter {
             ExprKind::Var(n) => consts.get(n).copied(),
             ExprKind::Un { op: UnOp::Neg, e } => Self::const_int(e, consts).map(|v| -v),
             _ => None,
+        }
+    }
+
+    fn collect_locals(stmts: &[Stmt], names: &mut Vec<String>) {
+        for s in stmts {
+            match &s.kind {
+                StmtKind::Let { name, .. } => names.push(name.clone()),
+                StmtKind::For { var, body, .. } => {
+                    names.push(var.clone());
+                    Self::collect_locals(body, names);
+                }
+                StmtKind::If { then, els, .. } => {
+                    Self::collect_locals(then, names);
+                    Self::collect_locals(els, names);
+                }
+                StmtKind::While { body, .. } => Self::collect_locals(body, names),
+                StmtKind::Arena { body } => Self::collect_locals(body, names),
+                _ => {}
+            }
         }
     }
 
@@ -156,10 +175,32 @@ impl Emitter {
     fn assign_frame(&mut self, f: &Func) -> Result<(), String> {
         self.locals.clear();
         self.arrays.clear();
-        let mut names: Vec<String> = f.params.iter().map(|(n, _)| n.clone()).collect();
+        self.array_len_slot.clear();
+        self.owned.clear();
+        let mut slot = 0i64;
+        for (name, pty) in &f.params {
+            match pty {
+                ParamTy::Scalar(_) => {
+                    slot += 1;
+                    self.locals.insert(name.clone(), 8 * slot);
+                }
+                ParamTy::Array(elem) => {
+                    slot += 1;
+                    self.arrays.insert(name.clone(), (8 * slot, *elem, -1));
+                    slot += 1;
+                    self.array_len_slot.insert(name.clone(), 8 * slot);
+                }
+                ParamTy::Vec(_) => {
+                    return Err(format!(
+                        "native backend: `{}` takes `{}` by vec, which the native backend does not support yet",
+                        f.name, name
+                    ))
+                }
+            }
+        }
+        let mut names = Vec::new();
         Self::collect_locals(&f.body, &mut names);
         let mut seen = std::collections::HashSet::new();
-        let mut slot = 0;
         for n in names {
             if seen.insert(n.clone()) {
                 slot += 1;
@@ -169,13 +210,12 @@ impl Emitter {
         let mut consts = HashMap::new();
         let mut arrays = Vec::new();
         Self::collect_arrays(&f.body, &mut consts, &mut arrays)?;
-        let mut total = 8 * slot;
         for (name, elem, len) in arrays {
             slot += 1;
-            total += 8;
             self.arrays.insert(name, (8 * slot, elem, len));
+            self.owned.push(8 * slot);
         }
-        self.frame = align16(total);
+        self.frame = align16(8 * slot);
         Ok(())
     }
 
@@ -184,29 +224,57 @@ impl Emitter {
             .arrays
             .get(name)
             .ok_or_else(|| format!("native backend line {}: unknown array `{}`", line, name))?;
-        let msg_label = format!(".Lmsg{}", self.rodata.len());
-        self.rodata.push((
-            msg_label.clone(),
-            format!("line {}: index out of bounds", line),
-        ));
+        let len_slot = self.array_len_slot.get(name).copied();
+        let msg = self.panic_msg(line, "index out of bounds");
         let nonneg = self.fresh("idxnn");
         let ok = self.fresh("idxok");
         self.line(&format!("    cmp $0, {}", idx));
         self.line(&format!("    jge {}", nonneg));
-        self.line(&format!("    lea {}(%rip), %rdi", msg_label));
+        self.line(&format!("    lea {}(%rip), %rdi", msg));
         self.call(".Lmagic_panic");
         self.line(&format!("{}:", nonneg));
-        self.line(&format!("    cmp ${}, {}", len, idx));
+        if let Some(len_off) = len_slot {
+            self.line(&format!("    mov -{}(%rbp), %r11", len_off));
+            self.line(&format!("    cmp %r11, {}", idx));
+        } else {
+            self.line(&format!("    cmp ${}, {}", len, idx));
+        }
         self.line(&format!("    jl {}", ok));
-        self.line(&format!("    lea {}(%rip), %rdi", msg_label));
+        self.line(&format!("    lea {}(%rip), %rdi", msg));
         self.call(".Lmagic_panic");
         self.line(&format!("{}:", ok));
         Ok(())
     }
 
+    fn array_load(&mut self, name: &str, idx_reg: &str, elem: Ty, line: usize) -> Result<(), String> {
+        let (off, _, _) = *self
+            .arrays
+            .get(name)
+            .ok_or_else(|| format!("native backend line {}: unknown array `{}`", line, name))?;
+        self.line(&format!("    mov -{}(%rbp), %r10", off));
+        match elem {
+            Ty::U8 | Ty::Bool => self.line(&format!("    movzbq (%r10,{},1), %rax", idx_reg)),
+            Ty::I32 => self.line(&format!("    movslq (%r10,{},4), %rax", idx_reg)),
+            Ty::I64 => self.line(&format!("    movq (%r10,{},8), %rax", idx_reg)),
+            other => {
+                return Err(format!(
+                    "native backend line {}: array element type {:?} is not supported yet",
+                    line, other
+                ))
+            }
+        }
+        Ok(())
+    }
+
     fn expr(&mut self, e: &Expr) -> Result<(), String> {
         match &e.kind {
-            ExprKind::Int(v) => self.line(&format!("    mov ${}, %rax", v)),
+            ExprKind::Int(v) => {
+                if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
+                    self.line(&format!("    mov ${}, %rax", v));
+                } else {
+                    self.line(&format!("    movabs ${}, %rax", v));
+                }
+            }
             ExprKind::Bool(b) => self.line(&format!("    mov ${}, %rax", if *b { 1 } else { 0 })),
             ExprKind::Str(s) => {
                 let label = format!(".Lstr{}", self.rodata.len());
@@ -214,36 +282,16 @@ impl Emitter {
                 self.line(&format!("    lea {}(%rip), %rax", label));
             }
             ExprKind::Var(n) => {
-                let off = *self
-                    .locals
-                    .get(n)
-                    .ok_or_else(|| format!("native backend line {}: unknown variable `{}`", e.line, n))?;
-                self.line(&format!("    mov -{}(%rbp), %rax", off));
-            }
-            ExprKind::Index { name, index } => {
-                let (off, elem, _len) = *self.arrays.get(name).ok_or_else(|| {
-                    format!("native backend line {}: unknown array `{}`", e.line, name)
-                })?;
-                self.expr(index)?;
-                self.bounds_check("%rax", name, e.line)?;
-                self.line(&format!("    mov -{}(%rbp), %r10", off));
-                match elem {
-                    Ty::U8 | Ty::Bool => self.line("    movzbq (%r10,%rax,1), %rax"),
-                    Ty::I32 => self.line("    movslq (%r10,%rax,4), %rax"),
-                    Ty::I64 => self.line("    movq (%r10,%rax,8), %rax"),
-                    other => {
-                        return Err(format!(
-                            "native backend line {}: array element type {:?} is not supported yet",
-                            e.line, other
-                        ))
-                    }
+                if let Some(off) = self.locals.get(n) {
+                    self.line(&format!("    mov -{}(%rbp), %rax", *off));
+                } else if let Some((off, _, _)) = self.arrays.get(n) {
+                    self.line(&format!("    mov -{}(%rbp), %rax", *off));
+                } else {
+                    return Err(format!(
+                        "native backend line {}: unknown variable `{}`",
+                        e.line, n
+                    ));
                 }
-            }
-            ExprKind::ArrayLen(name) => {
-                let (_, _, len) = *self.arrays.get(name).ok_or_else(|| {
-                    format!("native backend line {}: unknown array `{}`", e.line, name)
-                })?;
-                self.line(&format!("    mov ${}, %rax", len));
             }
             ExprKind::Bin { op, l, r } => {
                 self.expr(l)?;
@@ -262,34 +310,18 @@ impl Emitter {
                             self.line("    mov %rdx, %rax");
                         }
                     }
-                    BinOp::Eq => {
+                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                         self.line("    cmp %rcx, %rax");
-                        self.line("    sete %al");
-                        self.line("    movzbq %al, %rax");
-                    }
-                    BinOp::Ne => {
-                        self.line("    cmp %rcx, %rax");
-                        self.line("    setne %al");
-                        self.line("    movzbq %al, %rax");
-                    }
-                    BinOp::Lt => {
-                        self.line("    cmp %rcx, %rax");
-                        self.line("    setl %al");
-                        self.line("    movzbq %al, %rax");
-                    }
-                    BinOp::Le => {
-                        self.line("    cmp %rcx, %rax");
-                        self.line("    setle %al");
-                        self.line("    movzbq %al, %rax");
-                    }
-                    BinOp::Gt => {
-                        self.line("    cmp %rcx, %rax");
-                        self.line("    setg %al");
-                        self.line("    movzbq %al, %rax");
-                    }
-                    BinOp::Ge => {
-                        self.line("    cmp %rcx, %rax");
-                        self.line("    setge %al");
+                        let set = match op {
+                            BinOp::Eq => "sete",
+                            BinOp::Ne => "setne",
+                            BinOp::Lt => "setl",
+                            BinOp::Le => "setle",
+                            BinOp::Gt => "setg",
+                            BinOp::Ge => "setge",
+                            _ => unreachable!(),
+                        };
+                        self.line(&format!("    {} %al", set));
                         self.line("    movzbq %al, %rax");
                     }
                     BinOp::And => self.line("    and %rcx, %rax"),
@@ -303,27 +335,45 @@ impl Emitter {
                     UnOp::Not => self.line("    xor $1, %rax"),
                 }
             }
-            ExprKind::Call { name, args } => {
-                if name == "flush" && args.is_empty() {
-                    self.call("fflush@PLT");
-                    return Ok(());
+            ExprKind::Cast { e, ty } => {
+                self.expr(e)?;
+                match ty {
+                    Ty::I64 | Ty::Str => {}
+                    Ty::I32 => self.line("    movslq %eax, %rax"),
+                    Ty::U8 => self.line("    movzbq %al, %rax"),
+                    Ty::Bool => {
+                        self.line("    test %rax, %rax");
+                        self.line("    setne %al");
+                        self.line("    movzbq %al, %rax");
+                    }
+                    other => {
+                        return Err(format!(
+                            "native backend line {}: cast to {:?} is not supported yet",
+                            e.line, other
+                        ))
+                    }
                 }
-                if args.len() > 6 {
-                    return Err(format!(
-                        "native backend line {}: calls with more than 6 arguments are not supported yet",
-                        e.line
-                    ));
-                }
-                for a in args {
-                    self.expr(a)?;
-                    self.push("%rax");
-                }
-                let regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
-                for i in (0..args.len()).rev() {
-                    self.pop(regs[i]);
-                }
-                self.call(name);
             }
+            ExprKind::Index { name, index } => {
+                let (_, elem, _) = *self
+                    .arrays
+                    .get(name)
+                    .ok_or_else(|| format!("native backend line {}: unknown array `{}`", e.line, name))?;
+                self.expr(index)?;
+                self.bounds_check("%rax", name, e.line)?;
+                self.array_load(name, "%rax", elem, e.line)?;
+            }
+            ExprKind::ArrayLen(name) => {
+                let (_, _, len) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("native backend line {}: unknown array `{}`", e.line, name)
+                })?;
+                if let Some(len_off) = self.array_len_slot.get(name) {
+                    self.line(&format!("    mov -{}(%rbp), %rax", *len_off));
+                } else {
+                    self.line(&format!("    mov ${}, %rax", len));
+                }
+            }
+            ExprKind::Call { name, args } => self.call_expr(name, args, e.line)?,
             other => {
                 return Err(format!(
                     "native backend line {}: expression not supported yet ({:?})",
@@ -334,14 +384,104 @@ impl Emitter {
         Ok(())
     }
 
-    fn cond_jump(&mut self, cond: &Expr, target: &str, jump_if_true: bool) -> Result<(), String> {
-        self.expr(cond)?;
-        self.line("    cmp $0, %rax");
-        if jump_if_true {
-            self.line(&format!("    jne {}", target));
-        } else {
-            self.line(&format!("    je {}", target));
+    fn call_expr(&mut self, name: &str, args: &[Expr], line: usize) -> Result<(), String> {
+        if name == "flush" && args.is_empty() {
+            self.call("fflush@PLT");
+            return Ok(());
         }
+        if name == "str_len" && args.len() == 1 {
+            self.expr(&args[0])?;
+            self.line("    mov %rax, %rdi");
+            self.call("strlen@PLT");
+            return Ok(());
+        }
+        if name == "str_byte" && args.len() == 2 {
+            self.expr(&args[0])?;
+            self.push("%rax");
+            self.line("    mov %rax, %rdi");
+            self.call("strlen@PLT");
+            self.line("    mov %rax, %r11");
+            self.pop("%r10");
+            self.expr(&args[1])?;
+            self.line("    mov %rax, %rcx");
+            let zero = self.fresh("strz");
+            let done = self.fresh("strd");
+            self.line("    cmp $0, %rcx");
+            self.line(&format!("    jl {}", zero));
+            self.line("    cmp %r11, %rcx");
+            self.line(&format!("    jge {}", zero));
+            self.line("    movzbq (%r10,%rcx,1), %rax");
+            self.line(&format!("    jmp {}", done));
+            self.line(&format!("{}:", zero));
+            self.line("    mov $0, %eax");
+            self.line(&format!("{}:", done));
+            return Ok(());
+        }
+        if name == "str_byte_n" && args.len() == 3 {
+            self.expr(&args[0])?;
+            self.push("%rax");
+            self.expr(&args[1])?;
+            self.push("%rax");
+            self.expr(&args[2])?;
+            self.line("    mov %rax, %r11");
+            self.pop("%rcx");
+            self.pop("%r10");
+            let zero = self.fresh("strz");
+            let done = self.fresh("strd");
+            self.line("    cmp $0, %rcx");
+            self.line(&format!("    jl {}", zero));
+            self.line("    cmp %r11, %rcx");
+            self.line(&format!("    jge {}", zero));
+            self.line("    movzbq (%r10,%rcx,1), %rax");
+            self.line(&format!("    jmp {}", done));
+            self.line(&format!("{}:", zero));
+            self.line("    mov $0, %eax");
+            self.line(&format!("{}:", done));
+            return Ok(());
+        }
+        let n = args.len();
+        if n > 6 {
+            let stack_k = n - 6;
+            let pad = (self.depth + stack_k) % 2 == 1;
+            if pad {
+                self.line("    sub $8, %rsp");
+                self.depth += 1;
+            }
+            for i in (6..n).rev() {
+                self.expr(&args[i])?;
+                self.push("%rax");
+            }
+            for i in (0..6).rev() {
+                self.expr(&args[i])?;
+                self.push("%rax");
+            }
+            for i in 0..6 {
+                let r = ARG_REGS[i].to_string();
+                self.pop(&r);
+            }
+            self.line(&format!("    call {}", name));
+            self.line(&format!("    add ${}, %rsp", 8 * stack_k));
+            self.depth -= stack_k;
+            if pad {
+                self.line("    add $8, %rsp");
+                self.depth -= 1;
+            }
+        } else {
+            for a in args {
+                self.expr(a)?;
+                self.push("%rax");
+            }
+            for i in (0..n).rev() {
+                let r = ARG_REGS[i].to_string();
+                self.pop(&r);
+            }
+            if args.is_empty() {
+                self.call(name);
+            } else {
+                self.call(name);
+            }
+        }
+        let _ = line;
         Ok(())
     }
 
@@ -361,102 +501,18 @@ impl Emitter {
                 })?;
                 self.line(&format!("    mov %rax, -{}(%rbp)", off));
             }
-            StmtKind::ArrayLet { name, value, .. } => {
-                let (off, elem, len) = *self.arrays.get(name).ok_or_else(|| {
-                    format!("native backend line {}: unknown array `{}`", s.line, name)
-                })?;
+            StmtKind::Print { value, ty } => {
+                let as_str = matches!(value.kind, ExprKind::Str(_)) || matches!(ty, Some(Ty::Str));
                 self.expr(value)?;
-                self.push("%rax");
-                let size = Self::elem_size(elem) * len;
-                self.line(&format!("    mov ${}, %rdi", size));
-                self.call("malloc@PLT");
-                let ok = self.fresh("malloc");
-                self.line("    test %rax, %rax");
-                self.line(&format!("    jne {}", ok));
-                let msg_label = format!(".Lmsg{}", self.rodata.len());
-                self.rodata
-                    .push((msg_label.clone(), format!("line {}: out of memory", s.line)));
-                self.line(&format!("    lea {}(%rip), %rdi", msg_label));
-                self.call(".Lmagic_panic");
-                self.line(&format!("{}:", ok));
-                self.line(&format!("    mov %rax, -{}(%rbp)", off));
-                self.line("    mov %rax, %r10");
-                self.pop("%rax");
-                self.line(&format!("    mov ${}, %rcx", len));
-                self.line("    mov $0, %r8");
-                let fill = self.fresh("fill");
-                let filled = self.fresh("filled");
-                self.line(&format!("{}:", fill));
-                self.line("    cmp %rcx, %r8");
-                self.line(&format!("    jge {}", filled));
-                match elem {
-                    Ty::U8 | Ty::Bool => self.line("    movb %al, (%r10,%r8,1)"),
-                    Ty::I32 => self.line("    movl %eax, (%r10,%r8,4)"),
-                    Ty::I64 => self.line("    movq %rax, (%r10,%r8,8)"),
-                    other => {
-                        return Err(format!(
-                            "native backend line {}: array element type {:?} is not supported yet",
-                            s.line, other
-                        ))
-                    }
-                }
-                self.line("    add $1, %r8");
-                self.line(&format!("    jmp {}", fill));
-                self.line(&format!("{}:", filled));
-            }
-            StmtKind::IndexAssign { name, index, value } => {
-                let (off, elem, _len) = *self.arrays.get(name).ok_or_else(|| {
-                    format!("native backend line {}: unknown array `{}`", s.line, name)
-                })?;
-                self.expr(value)?;
-                self.push("%rax");
-                self.expr(index)?;
-                self.bounds_check("%rax", name, s.line)?;
-                self.pop("%rcx");
-                self.line(&format!("    mov -{}(%rbp), %r10", off));
-                match elem {
-                    Ty::U8 | Ty::Bool => self.line("    movb %cl, (%r10,%rax,1)"),
-                    Ty::I32 => self.line("    movl %ecx, (%r10,%rax,4)"),
-                    Ty::I64 => self.line("    movq %rcx, (%r10,%rax,8)"),
-                    other => {
-                        return Err(format!(
-                            "native backend line {}: array element type {:?} is not supported yet",
-                            s.line, other
-                        ))
-                    }
-                }
-            }
-            StmtKind::Arena { body } => {
-                for st in body {
-                    self.stmt(st)?;
-                }
-            }
-            StmtKind::Assert { cond } => {
-                let ok = self.fresh("assert");
-                self.expr(cond)?;
-                self.line("    cmp $0, %rax");
-                self.line(&format!("    jne {}", ok));
-                let msg_label = format!(".Lmsg{}", self.rodata.len());
-                self.rodata
-                    .push((msg_label.clone(), "assertion failed".to_string()));
-                self.line(&format!("    lea {}(%rip), %rdi", msg_label));
-                self.call(".Lmagic_panic");
-                self.line(&format!("{}:", ok));
-            }
-            StmtKind::Print { value, .. } => {
-                if let ExprKind::Str(_) = value.kind {
-                    self.expr(value)?;
+                if as_str {
                     self.line("    mov %rax, %rsi");
                     self.line("    lea .Lfmt_s(%rip), %rdi");
-                    self.line("    xor %eax, %eax");
-                    self.call("printf@PLT");
                 } else {
-                    self.expr(value)?;
                     self.line("    mov %rax, %rsi");
                     self.line("    lea .Lfmt_i(%rip), %rdi");
-                    self.line("    xor %eax, %eax");
-                    self.call("printf@PLT");
                 }
+                self.line("    xor %eax, %eax");
+                self.call("printf@PLT");
             }
             StmtKind::Expr(e) => {
                 self.expr(e)?;
@@ -472,7 +528,9 @@ impl Emitter {
             StmtKind::If { cond, then, els } => {
                 let else_label = self.fresh("else");
                 let end_label = self.fresh("endif");
-                self.cond_jump(cond, &else_label, false)?;
+                self.expr(cond)?;
+                self.line("    cmp $0, %rax");
+                self.line(&format!("    je {}", else_label));
                 for st in then {
                     self.stmt(st)?;
                 }
@@ -490,7 +548,9 @@ impl Emitter {
                 let end = self.fresh("wend");
                 self.loops.push((end.clone(), start.clone()));
                 self.line(&format!("{}:", start));
-                self.cond_jump(cond, &end, false)?;
+                self.expr(cond)?;
+                self.line("    cmp $0, %rax");
+                self.line(&format!("    je {}", end));
                 for st in body {
                     self.stmt(st)?;
                 }
@@ -505,7 +565,6 @@ impl Emitter {
                         s.line
                     ));
                 }
-                // var = start
                 self.expr(start)?;
                 let voff = *self.locals.get(var).ok_or_else(|| {
                     format!("native backend line {}: unknown loop variable `{}`", s.line, var)
@@ -516,7 +575,6 @@ impl Emitter {
                 let done = self.fresh("forend");
                 self.loops.push((done.clone(), cont.clone()));
                 self.line(&format!("{}:", head));
-                // compare var < end
                 self.expr(end)?;
                 self.line("    mov %rax, %rcx");
                 self.line(&format!("    mov -{}(%rbp), %rax", voff));
@@ -549,6 +607,84 @@ impl Emitter {
                 let c = c.clone();
                 self.line(&format!("    jmp {}", c));
             }
+            StmtKind::ArrayLet { name, value, .. } => {
+                let (off, elem, len) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("native backend line {}: unknown array `{}`", s.line, name)
+                })?;
+                self.expr(value)?;
+                self.push("%rax");
+                let size = Self::elem_size(elem) * len;
+                self.line(&format!("    mov ${}, %rdi", size));
+                self.call("malloc@PLT");
+                let ok = self.fresh("malloc");
+                self.line("    test %rax, %rax");
+                self.line(&format!("    jne {}", ok));
+                let msg = self.panic_msg(s.line, "out of memory");
+                self.line(&format!("    lea {}(%rip), %rdi", msg));
+                self.call(".Lmagic_panic");
+                self.line(&format!("{}:", ok));
+                self.line(&format!("    mov %rax, -{}(%rbp)", off));
+                self.line("    mov %rax, %r10");
+                self.pop("%rax");
+                self.line(&format!("    mov ${}, %rcx", len));
+                self.line("    mov $0, %r8");
+                let fill = self.fresh("fill");
+                let filled = self.fresh("filled");
+                self.line(&format!("{}:", fill));
+                self.line("    cmp %rcx, %r8");
+                self.line(&format!("    jge {}", filled));
+                match elem {
+                    Ty::U8 | Ty::Bool => self.line("    movb %al, (%r10,%r8,1)"),
+                    Ty::I32 => self.line("    movl %eax, (%r10,%r8,4)"),
+                    Ty::I64 => self.line("    movq %rax, (%r10,%r8,8)"),
+                    other => {
+                        return Err(format!(
+                            "native backend line {}: array element type {:?} is not supported yet",
+                            s.line, other
+                        ))
+                    }
+                }
+                self.line("    add $1, %r8");
+                self.line(&format!("    jmp {}", fill));
+                self.line(&format!("{}:", filled));
+            }
+            StmtKind::IndexAssign { name, index, value } => {
+                let (off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("native backend line {}: unknown array `{}`", s.line, name)
+                })?;
+                self.expr(value)?;
+                self.push("%rax");
+                self.expr(index)?;
+                self.bounds_check("%rax", name, s.line)?;
+                self.pop("%rcx");
+                self.line(&format!("    mov -{}(%rbp), %r10", off));
+                match elem {
+                    Ty::U8 | Ty::Bool => self.line("    movb %cl, (%r10,%rax,1)"),
+                    Ty::I32 => self.line("    movl %ecx, (%r10,%rax,4)"),
+                    Ty::I64 => self.line("    movq %rcx, (%r10,%rax,8)"),
+                    other => {
+                        return Err(format!(
+                            "native backend line {}: array element type {:?} is not supported yet",
+                            s.line, other
+                        ))
+                    }
+                }
+            }
+            StmtKind::Arena { body } => {
+                for st in body {
+                    self.stmt(st)?;
+                }
+            }
+            StmtKind::Assert { cond } => {
+                let ok = self.fresh("assert");
+                self.expr(cond)?;
+                self.line("    cmp $0, %rax");
+                self.line(&format!("    jne {}", ok));
+                let msg = self.panic_msg(s.line, "assertion failed");
+                self.line(&format!("    lea {}(%rip), %rdi", msg));
+                self.call(".Lmagic_panic");
+                self.line(&format!("{}:", ok));
+            }
             other => {
                 return Err(format!(
                     "native backend line {}: statement not supported yet ({:?})",
@@ -570,26 +706,67 @@ impl Emitter {
         if self.frame > 0 {
             self.line(&format!("    sub ${}, %rsp", self.frame));
         }
-        let regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
-        if f.params.len() > 6 {
-            return Err(format!(
-                "native backend: `{}` has more than 6 parameters, which the native backend does not support yet",
-                f.name
-            ));
-        }
-        for (i, (name, pty)) in f.params.iter().enumerate() {
+
+        // Expanded parameters: an array parameter arrives as (pointer, length).
+        let mut expanded: Vec<(String, bool)> = Vec::new();
+        for (name, pty) in &f.params {
             match pty {
-                ParamTy::Scalar(_) => {}
-                _ => {
+                ParamTy::Scalar(_) => expanded.push((name.clone(), false)),
+                ParamTy::Array(_) => {
+                    expanded.push((name.clone(), true));
+                    expanded.push((format!("{}#len", name), false));
+                }
+                ParamTy::Vec(_) => {
                     return Err(format!(
-                        "native backend: `{}` takes `{}` by array/vec, which the native backend does not support yet",
+                        "native backend: `{}` takes `{}` by vec, which the native backend does not support yet",
                         f.name, name
                     ))
                 }
             }
-            let off = self.locals[name];
-            self.line(&format!("    mov {}, -{}(%rbp)", regs[i], off));
         }
+        if expanded.len() > 20 {
+            return Err(format!(
+                "native backend: `{}` has too many parameters for the native backend",
+                f.name
+            ));
+        }
+        for (idx, (name, is_array)) in expanded.iter().enumerate() {
+            let src = if idx < 6 {
+                ARG_REGS[idx].to_string()
+            } else {
+                format!("{}(%rbp)", 16 + 8 * (idx - 6))
+            };
+            if *is_array {
+                let (ptr_off, _, _) = self.arrays[name];
+                if idx < 6 {
+                    self.line(&format!("    mov {}, -{}(%rbp)", src, ptr_off));
+                } else {
+                    self.line(&format!("    mov {}, %rax", src));
+                    self.line(&format!("    mov %rax, -{}(%rbp)", ptr_off));
+                }
+                let (len_src, len_in_reg) = if idx + 1 < 6 {
+                    (ARG_REGS[idx + 1].to_string(), true)
+                } else {
+                    (format!("{}(%rbp)", 16 + 8 * (idx + 1 - 6)), false)
+                };
+                let len_off = self.array_len_slot[name];
+                if len_in_reg {
+                    self.line(&format!("    mov {}, -{}(%rbp)", len_src, len_off));
+                } else {
+                    self.line(&format!("    mov {}, %rax", len_src));
+                    self.line(&format!("    mov %rax, -{}(%rbp)", len_off));
+                }
+            } else if !name.ends_with("#len") {
+                let off = self.locals[name];
+                if idx < 6 {
+                    self.line(&format!("    mov {}, -{}(%rbp)", src, off));
+                } else {
+                    self.line(&format!("    mov {}, %rax", src));
+                    self.line(&format!("    mov %rax, -{}(%rbp)", off));
+                }
+            }
+        }
+
         for s in &f.body {
             self.stmt(s)?;
         }
@@ -597,10 +774,10 @@ impl Emitter {
             self.line("    xor %eax, %eax");
         }
         self.line(&format!("{}:", self.ret_label));
-        let frees: Vec<i64> = self.arrays.values().map(|(off, _, _)| *off).collect();
-        if !frees.is_empty() {
+        let owned = self.owned.clone();
+        if !owned.is_empty() {
             self.push("%rax");
-            for off in frees {
+            for off in owned {
                 self.line(&format!("    mov -{}(%rbp), %rdi", off));
                 self.call("free@PLT");
             }
@@ -623,19 +800,6 @@ pub fn emit(prog: &Program) -> Result<String, String> {
     e.line(".Lfmt_i: .asciz \"%ld\\n\"");
     e.line(".Lfmt_s: .asciz \"%s\\n\"");
     e.line(".Lfmt_panic: .asciz \"%s\\n\"");
-    e.line(".text");
-    e.line(".Lmagic_panic:");
-    e.line("    push %rbp");
-    e.line("    mov %rsp, %rbp");
-    e.line("    mov %rdi, %rdx");
-    e.line("    mov stderr@GOTPCREL(%rip), %rax");
-    e.line("    mov (%rax), %rdi");
-    e.line("    lea .Lfmt_panic(%rip), %rsi");
-    e.line("    xor %eax, %eax");
-    e.line("    call fprintf@PLT");
-    e.line("    mov $1, %edi");
-    e.line("    call exit@PLT");
-    e.line(".section .rodata");
     let rodata = std::mem::take(&mut e.rodata);
     for (label, text) in &rodata {
         let mut escaped = String::new();
@@ -650,6 +814,18 @@ pub fn emit(prog: &Program) -> Result<String, String> {
         }
         e.line(&format!("{}: .asciz \"{}\"", label, escaped));
     }
+    e.line(".text");
+    e.line(".Lmagic_panic:");
+    e.line("    push %rbp");
+    e.line("    mov %rsp, %rbp");
+    e.line("    mov %rdi, %rdx");
+    e.line("    mov stderr@GOTPCREL(%rip), %rax");
+    e.line("    mov (%rax), %rdi");
+    e.line("    lea .Lfmt_panic(%rip), %rsi");
+    e.line("    xor %eax, %eax");
+    e.line("    call fprintf@PLT");
+    e.line("    mov $1, %edi");
+    e.line("    call exit@PLT");
     e.line(".section .note.GNU-stack,\"\",@progbits");
     Ok(e.out)
 }

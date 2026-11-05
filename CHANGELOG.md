@@ -2,6 +2,14 @@
 
 All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bumps may break.
 
+## v0.8.0 — native backend: array parameters, casts and strings (2026-11-06)
+
+Array parameters work natively: the checker's existing rewrite (pointer plus length) is honoured by
+the prologue, and calls with more than six values spill to the stack. Integer casts (`i32`, `i64`,
+`u8`, `bool`) and `str_len`/`str_byte`/`str_byte_n` are implemented. `hashmap` now runs natively with
+identical answers (2500, 1000000, -1), as do `array_param` (100), `tokenize` (43/8/35) and `sieve`
+(664579): 10 of the 15 examples no longer need a C compiler.
+
 ## v0.7.0 — native backend: arrays and bounds checks (2026-11-06)
 
 The native backend now allocates `[bool]`, `[u8]`, `[i32]` and `[i64]` arrays on the heap, fills them
