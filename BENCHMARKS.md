@@ -193,7 +193,7 @@ ray generation, sphere intersection, shading — not a microbenchmark, and MAGIC
 | particles 1M × 100 | 151 | 151 | 157 | 215 | 4 (closed form) |
 | hash 1M | 38 | 37 | 36 | 36 | 6 (direct map) |
 | ray tracer 1536² | 86 | 89 | 77 | - | 13 (`par for`) |
-| binary trees | 1647 | - | 3077 | - | 397 (node count, level order) |
+| binary trees | 1647 | - | 3077 | - | 108 (node count, level order, native) |
 | matmul 384 | 31 | 27 | 92 | 106 | 6 (i-k-j, clang native) |
 | fannkuch | 383 | 392 | 364 | - | 40 (90 streams, `par for`) |
 | n-body 10M | 724 | 728 | 523 | 920 | 450 (unrolled, clang AVX2) |
