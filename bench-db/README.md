@@ -63,16 +63,20 @@ scan, parity on the index).
 ## Persistence
 
 `dbload` parses the INSERT file once and writes 16-byte `(key, value)` records to `heap.dat` behind
-an 8-byte row count. `dbquery` opens that file in a fresh process, reads the rows back and answers
-lookups, so the SQL text is not parsed at query time.
+an 8-byte row count. `dbquery` opens that file in a fresh process, reads the rows back, builds a
+B+tree over the keys, and answers 10,000 point lookups with the index or with a heap scan
+(`index` / `scan` argument), so the SQL text is not parsed at query time.
 
 | Step | C | MAGIC |
 |---|---:|---:|
 | bulk load: 100,000 INSERTs to heap | 11 ms | 13 ms |
-| query process: load 1.6 MB heap + 1,000 point scans | 65 ms | **57 ms** |
+| query: load + index build + 10,000 point lookups | **12 ms** | 14 ms |
+| query: load + 10,000 heap-scan lookups | 523 ms | 1026 ms |
+| index speedup | 44x | **73x** |
 
-Both processes print the same rows (100,000) and checksum (348883500). The next step is to build the
-B+tree on load instead of scanning, which should take the query process to a few milliseconds.
+Both processes print the same rows (100,000) and checksum (3498635000). The index is within 17% of C
+and makes the persistent query path 73x faster than scanning; the scan itself is where MAGIC is
+2x slower, because a billion bounds-checked comparisons add up.
 
 Build and run:
 

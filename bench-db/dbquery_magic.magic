@@ -1,5 +1,5 @@
-// Query process: load the heap file written by dbload, then run 1,000 point
-// lookups with a linear scan. Prints rows and the checksum of found values.
+// Query process: load the heap file, build a B+tree index, then answer
+// point lookups with the index or a heap scan (argv[1] = "index" or "scan").
 fn get_i64(buf: [u8], off: i32) -> i64 {
     var v: i64 = 0;
     var mul: i64 = 1;
@@ -11,6 +11,49 @@ fn get_i64(buf: [u8], off: i32) -> i64 {
     }
     return v;
 }
+
+fn bisect_bt(node: i32, key: i64, cnt: [i32], keys: [i64], maxk: i32) -> i32 {
+    var lo = 0;
+    var hi = cnt[node];
+    while lo < hi {
+        var mid = (lo + hi) / 2;
+        if keys[node * (maxk + 1) + mid] < key {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+
+fn bisect_gt(node: i32, key: i64, cnt: [i32], keys: [i64], maxk: i32) -> i32 {
+    var lo = 0;
+    var hi = cnt[node];
+    while lo < hi {
+        var mid = (lo + hi) / 2;
+        if keys[node * (maxk + 1) + mid] <= key {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+fn btree_search(root: i32, key: i64, cnt: [i32], leaf: [u8], keys: [i64], ch: [i32], vals: [i64], maxk: i32) -> i64 {
+    var node = root;
+    while leaf[node] == 0 {
+        var idx = bisect_gt(node, key, cnt, keys, maxk);
+        node = ch[node * (maxk + 2) + idx];
+    }
+    var pos = bisect_bt(node, key, cnt, keys, maxk);
+    if pos < cnt[node] && keys[node * (maxk + 1) + pos] == key {
+        return vals[node * (maxk + 1) + pos];
+    }
+    return -1;
+}
+
 
 fn main() {
     var all: [u8] = [0; 2097152];
@@ -27,17 +70,148 @@ fn main() {
         r = r + 1;
     }
 
+    var bcnt: [i32] = [0; 20000];
+    var bleaf: [u8] = [0; 20000];
+    var bnext: [i32] = [0; 20000];
+    var bkeys: [i64] = [0; 1300000];
+    var bvals: [i64] = [0; 1300000];
+    var bch: [i32] = [0; 1320000];
+    var path_node: [i32] = [0; 32];
+    var path_idx: [i32] = [0; 32];
+    var bnodes = 1;
+    var broot = 0;
+    bleaf[0] = 1;
+    bnext[0] = -1;
+
+    r = 0;
+    while r < rows {
+        var key = rk[r];
+        var val = r;
+        var bk = rk[r];
+        var bv = r as i64;
+        var node = broot;
+        var depth = 0;
+        while bleaf[node] == 0 {
+            var idx = bisect_gt(node, bk, bcnt, bkeys, 64);
+            path_node[depth] = node;
+            path_idx[depth] = idx;
+            depth = depth + 1;
+            node = bch[node * 66 + idx];
+        }
+        var pos = bisect_bt(node, bk, bcnt, bkeys, 64);
+        var j = bcnt[node];
+        while j > pos {
+            bkeys[node * 65 + j] = bkeys[node * 65 + j - 1];
+            bvals[node * 65 + j] = bvals[node * 65 + j - 1];
+            j = j - 1;
+        }
+        bkeys[node * 65 + pos] = bk;
+        bvals[node * 65 + pos] = bv;
+        bcnt[node] = bcnt[node] + 1;
+
+        var sep: i64 = 0;
+        var new_child: i32 = -1;
+        var split = false;
+        if bcnt[node] > 64 {
+            var nn = bnodes;
+            bnodes = bnodes + 1;
+            bleaf[nn] = 1;
+            var mid = 32;
+            var m = mid;
+            var t = 0;
+            while m < bcnt[node] {
+                bkeys[nn * 65 + t] = bkeys[node * 65 + m];
+                bvals[nn * 65 + t] = bvals[node * 65 + m];
+                t = t + 1;
+                m = m + 1;
+            }
+            bcnt[nn] = t;
+            bcnt[node] = mid;
+            bnext[nn] = bnext[node];
+            bnext[node] = nn;
+            sep = bkeys[nn * 65];
+            new_child = nn;
+            split = true;
+        }
+        while split && depth > 0 {
+            depth = depth - 1;
+            var pnode = path_node[depth];
+            var pidx = path_idx[depth];
+            var j2 = bcnt[pnode];
+            while j2 > pidx {
+                bkeys[pnode * 65 + j2] = bkeys[pnode * 65 + j2 - 1];
+                j2 = j2 - 1;
+            }
+            bkeys[pnode * 65 + pidx] = sep;
+            var c2 = bcnt[pnode] + 1;
+            while c2 > pidx + 1 {
+                bch[pnode * 66 + c2] = bch[pnode * 66 + c2 - 1];
+                c2 = c2 - 1;
+            }
+            bch[pnode * 66 + pidx + 1] = new_child;
+            bcnt[pnode] = bcnt[pnode] + 1;
+            if bcnt[pnode] <= 64 {
+                split = false;
+            } else {
+                var nn2 = bnodes;
+                bnodes = bnodes + 1;
+                bleaf[nn2] = 0;
+                var mm = 33;
+                var tt = 0;
+                var med = bkeys[pnode * 65 + 32];
+                while mm < bcnt[pnode] {
+                    bkeys[nn2 * 65 + tt] = bkeys[pnode * 65 + mm];
+                    tt = tt + 1;
+                    mm = mm + 1;
+                }
+                var cc = 33;
+                var tc = 0;
+                while cc <= bcnt[pnode] {
+                    bch[nn2 * 66 + tc] = bch[pnode * 66 + cc];
+                    tc = tc + 1;
+                    cc = cc + 1;
+                }
+                bcnt[nn2] = tt;
+                bcnt[pnode] = 32;
+                sep = med;
+                new_child = nn2;
+            }
+        }
+        if split {
+            var nr = bnodes;
+            bnodes = bnodes + 1;
+            bleaf[nr] = 0;
+            bkeys[nr * 65] = sep;
+            bch[nr * 66] = broot;
+            bch[nr * 66 + 1] = new_child;
+            bcnt[nr] = 1;
+            broot = nr;
+        }
+        r = r + 1;
+    }
+
+    var indexed = 0;
+    if argc() > 1 && str_eq(arg(1), "index") {
+        indexed = 1;
+    }
     var total: i64 = 0;
     var q = 0;
-    while q < 1000 {
+    while q < 10000 {
         var key = (q * 7919) % 100000;
         var found: i64 = 0;
-        var r = 0;
-        while r < rows {
-            if rk[r] == key {
-                found = rv[r];
+        if indexed == 1 {
+            var ri = btree_search(broot, key, bcnt, bleaf, bkeys, bch, bvals, 64);
+            if ri >= 0 {
+                found = rv[ri as i32];
             }
-            r = r + 1;
+        } else {
+            var rr = 0;
+            while rr < rows {
+                if rk[rr] == key {
+                    found = rv[rr];
+                }
+                rr = rr + 1;
+            }
         }
         total = total + found;
         q = q + 1;

@@ -114,6 +114,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - mini-PostgreSQL persistence: `dbload` writes 100,000 rows to a 1.6 MB heap file (MAGIC 13 ms,
   C 11 ms) and a separate `dbquery` process reads it back and answers 1,000 point lookups
   (MAGIC 57 ms, C 65 ms), with identical rows and checksums and no SQL parsing at query time.
+- Persistence now builds the B+tree on load: a fresh `dbquery` process loads the 1.6 MB heap,
+  builds the index and answers 10,000 point lookups in 14 ms (C 12 ms), against 1026 ms for the
+  same lookups by heap scan (C 523 ms) — a 73x speedup with identical checksums.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
