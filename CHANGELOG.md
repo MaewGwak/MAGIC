@@ -73,6 +73,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
   397 ms for the default build. The stores were the whole cost; AVX2/AVX-512 writes 4.5 GB in 108 ms.
 - Odd-only blocked sieve: blocks of 128 KB of odd slots, so half the writes and half the counting
   pass of the byte-wide version. 25 ms vs 497 ms C++ (20x) and 2.3 MB RSS instead of 95 MB.
+- Codegen experiments that did not pay off: 64-byte aligned array allocation (`posix_memalign`)
+  and `restrict` on local array pointers moved binary trees by +1 ms and nothing else, so the
+  allocator and pointer emission stay unchanged.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
