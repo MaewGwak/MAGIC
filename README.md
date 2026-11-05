@@ -206,7 +206,14 @@ all five baselines:
 The sieve row uses 2.3 MB instead of 95 MB. The n-body row uses clang with `-march=x86-64-v3` and the matmul row clang with `-march=native`;
 without clang the n-body build is 605 ms (gcc). Goose builds from source with CMake on Linux and
 `./bench-linux.sh` picks it up from `PATH` or `~/tools/goose/build/goose`; its sieve and fannkuch
-programs are the ones shipped here. `./verify.sh` runs the tests, the doc counts and this matrix;
+programs are the ones shipped here:
+
+```bash
+git clone https://github.com/aardappel/goose ~/tools/goose
+cmake -S ~/tools/goose -B ~/tools/goose/build -DCMAKE_BUILD_TYPE=Release
+cmake --build ~/tools/goose/build -j
+```
+ `./verify.sh` runs the tests, the doc counts and this matrix;
 `./bench-linux.sh` alone runs 57 cases across C, C++, Rust, Go, Goose and MAGIC.
 
 
