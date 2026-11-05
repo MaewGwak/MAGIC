@@ -35,3 +35,4 @@
 /bench-suite/nbody_v3.c
 /bench-fannkuch/fannkuch_magic_par.c
 /bench-fannkuch/fannkuch_magic_buf.c
+/bench-suite/nbody_ilp.c
