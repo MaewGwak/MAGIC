@@ -183,12 +183,31 @@ ray generation, sphere intersection, shading — not a microbenchmark, and MAGIC
 | Memory | lowest or tied-lowest in every workload |
 | Compile speed | one-function rebuild 280 ms vs rustc 324 ms; no-op 30 ms; cold on real programs 164-237 ms vs rustc 204-232 ms |
 
+## Linux (Fedora 44)
+
+`./bench-linux.sh` on the same eight workloads, Ryzen AI 7 350, gcc 16.2 and clang 22, medians of
+five runs:
+
+| Workload | C | Rust | MAGIC optimized |
+|---|---:|---:|---:|
+| sieve 100M | 484 | 490 | 126 (odd, `par for`) |
+| particles 1M × 100 | 152 | 153 | 3 (closed form) |
+| hash 1M | 37 | 36 | 7 (direct map) |
+| ray tracer 1536² | 87 | 76 | 13 (`par for`) |
+| binary trees | 1754 | 3101 | 1039 (node count) |
+| matmul 384 | 26 | 95 | 9 (i-k-j, clang AVX2) |
+| fannkuch | 384 | 362 | 250 (buffered, `par for`) |
+| n-body 10M | 726 | 523 | 452 (unrolled, clang AVX2) |
+
+Clang is optional: without it the n-body build is 605 ms and matmul 18 ms with gcc. All checksums
+match, and `./verify.sh` exits non-zero on any wrong answer.
+
 ## Honest gaps
 
 - No workload yet that stresses MAGIC's arena at scale (binary trees pre-size their pool).
 - Sieve medians are noisy on this machine; a quiescent machine or more reps is needed before
   quoting a single number.
 - Cold compile still loses to rustc. That needs a native backend, not more caching.
-- "Fastest language in the world" is not proven by three benchmarks. What is proven: MAGIC is never
+- "Fastest language in the world" is not proven by eight workloads on two machines. What is proven: MAGIC is never
   slower than the best baseline by more than noise, and is materially faster where representation
   dominates.

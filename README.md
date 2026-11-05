@@ -188,6 +188,23 @@ parallel fannkuch (106 ms vs 162 ms for C — **1.5x** — at ~40 MB). Times are
 medians of five interleaved runs; the harness now times with a precise wall clock, so sub-15 ms
 readings are real rather than timer ticks.
 
+On Linux (Fedora 44, Ryzen AI 7 350, gcc 16.2, clang 22) the same variants win:
+
+| Workload | C | Rust | MAGIC optimized | margin |
+|---|---:|---:|---:|---:|
+| sieve 100M | 484 | 490 | 126 | 3.8x |
+| particles 1M × 100 | 152 | 153 | 3 | 50x |
+| hash 1M | 37 | 36 | 7 | 5.3x |
+| ray tracer 1536² | 87 | 76 | 13 | 5.8x |
+| binary trees | 1754 | 3101 | 1039 | 1.7x |
+| matmul 384 | 26 | 95 | 9 | 2.9x |
+| fannkuch | 384 | 362 | 250 | 1.5x |
+| n-body 10M | 726 | 523 | 452 | 1.16x |
+
+The n-body and matmul rows use clang for their AVX2 builds; without clang the n-body build is
+605 ms (gcc). `./verify.sh` runs the tests, the doc counts and this matrix.
+
+
 n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms
 with gcc, and `--unroll` with clang/zig gives 205–236 ms. The harness verifies every checksum:
 
@@ -202,6 +219,15 @@ Run the pieces individually:
 pwsh -File .\bench-all.ps1 -Rebuild   # 53 cases (50 without Zig): checksums, time, memory
 pwsh -File .\bench-memory.ps1         # --report bound vs measured peak RSS
 pwsh -File check-docs.ps1             # the numbers quoted here still match the repo
+```
+
+Linux / macOS:
+
+```bash
+./verify.sh          # tests + doc counts + the benchmark matrix
+./verify.sh -Fast    # tests + doc counts only
+./bench-linux.sh     # the matrix on its own
+./bench-memory.sh    # --report bound vs measured peak RSS
 ```
 
 The compiler also prints the static bound:
