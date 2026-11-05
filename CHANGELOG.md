@@ -17,6 +17,15 @@ Native arithmetic now narrows after every operation to the declared type, matchi
 `int32_t`/`uint8_t` wrapping: `2147483647 + 1` prints `-2147483648` and a `u8` at 255 wraps to 0.
 A regression test builds both cases natively and checks the output.
 
+## v0.8.5 — native structs (2026-11-06)
+
+Structs now work on the native backend with the same layout as the C backend (shared `ty_size` /
+`ty_align`): inline struct locals, zero-initialising struct literals, field reads and writes, arrays
+of structs with per-field fills and bounds checks, and `f64` fields through SSE2. `struct` prints
+11/2 and `points` prints 0/11/20 natively; `particles` prints 500094707846.643, byte-identical to C
+(1010 ms native vs 150 ms C, before the IR work). Nested struct fields (`.a.b.c`) and vectors are the
+next step.
+
 ## v0.8.4 — native floats and SSE2 (2026-11-06)
 
 The native backend now supports `f64`: literals, `+ - * /`, signed negation, comparisons (NaN-safe

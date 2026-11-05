@@ -11,7 +11,7 @@
 //! `f(a, x)` into `f(a, a.len, x)`, so the native prologue reads the pointer
 //! and the length like any other two integer arguments.
 
-use crate::ast::{BinOp, Expr, ExprKind, Func, ParamTy, Program, Stmt, StmtKind, Ty, UnOp};
+use crate::ast::{BinOp, Expr, ExprKind, Func, ParamTy, Program, Stmt, StmtKind, StructDef, Ty, UnOp};
 use std::collections::HashMap;
 
 struct Emitter {
@@ -34,6 +34,11 @@ struct Emitter {
     array_len_slot: HashMap<String, i64>,
     /// Slots of arrays this function allocated and must free on return.
     owned: Vec<i64>,
+    /// Struct layouts by `Ty::Struct` index: (fields(name, ty, offset), size, align).
+    sdefs: Vec<(Vec<(String, Ty, i64)>, i64, i64)>,
+    structs_ast: Vec<StructDef>,
+    /// Inline struct locals: name -> (base offset, size).
+    struct_locs: HashMap<String, (i64, i64)>,
     frame: i64,
     ret_label: String,
     loops: Vec<(String, String)>,
@@ -67,6 +72,9 @@ impl Emitter {
             arrays: HashMap::new(),
             array_len_slot: HashMap::new(),
             owned: Vec::new(),
+            sdefs: Vec::new(),
+            structs_ast: Vec::new(),
+            struct_locs: HashMap::new(),
             frame: 0,
             ret_label: String::new(),
             loops: Vec::new(),
@@ -119,11 +127,133 @@ impl Emitter {
         label
     }
 
-    fn elem_size(ty: Ty) -> i64 {
+    fn build_sdefs(&mut self, prog: &Program) {
+        self.structs_ast = prog.structs.clone();
+        let defs = prog.structs.clone();
+        for st in &defs {
+            let mut offs = 0i64;
+            let mut align = 1i64;
+            let mut fields = Vec::new();
+            for (fname, fty) in &st.fields {
+                let a = crate::ty_align(*fty, &defs) as i64;
+                let sz = crate::ty_size(*fty, &defs) as i64;
+                align = align.max(a);
+                offs = (offs + a - 1) & !(a - 1);
+                fields.push((fname.clone(), *fty, offs));
+                offs += sz;
+            }
+            let size = (offs + align - 1) & !(align - 1);
+            self.sdefs.push((fields, size.max(1), align));
+        }
+    }
+
+    fn struct_index(&self, name: &str) -> Option<usize> {
+        self.structs_ast.iter().position(|s| s.name == name)
+    }
+
+    fn infer_ty(&self, e: &Expr, types: &HashMap<String, Ty>) -> Ty {
+        match &e.kind {
+            ExprKind::Int(v) => {
+                if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
+                    Ty::I32
+                } else {
+                    Ty::I64
+                }
+            }
+            ExprKind::Float(_) => Ty::F64,
+            ExprKind::Bool(_) => Ty::Bool,
+            ExprKind::Str(_) => Ty::Str,
+            ExprKind::Var(n) => types.get(n).copied().unwrap_or(Ty::I64),
+            ExprKind::StructLit { name, .. } => self
+                .struct_index(name)
+                .map(|i| Ty::Struct(i as u16))
+                .unwrap_or(Ty::I64),
+            ExprKind::Cast { ty, .. } => *ty,
+            ExprKind::Bin { op, l, r } => match op {
+                BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+                | BinOp::And | BinOp::Or => Ty::Bool,
+                _ => {
+                    let a = self.infer_ty(l, types);
+                    let b = self.infer_ty(r, types);
+                    if a == Ty::F64 || b == Ty::F64 {
+                        Ty::F64
+                    } else if a == Ty::I64 || b == Ty::I64 {
+                        Ty::I64
+                    } else {
+                        Ty::I32
+                    }
+                }
+            },
+            ExprKind::Un { op, e } => match op {
+                UnOp::Not => Ty::Bool,
+                UnOp::Neg => self.infer_ty(e, types),
+            },
+            ExprKind::Field { base, field } => {
+                if let Some(Ty::Struct(i)) = types.get(base) {
+                    if let Some((fields, _, _)) = self.sdefs.get(*i as usize) {
+                        for (fname, fty, _) in fields {
+                            if fname == field {
+                                return *fty;
+                            }
+                        }
+                    }
+                }
+                Ty::I64
+            }
+            ExprKind::Index { name, .. } => self
+                .arrays
+                .get(name)
+                .map(|(_, t, _)| *t)
+                .unwrap_or(Ty::I64),
+            ExprKind::Call { name, .. } => self.func_ret.get(name).copied().unwrap_or(Ty::I64),
+            _ => Ty::I64,
+        }
+    }
+
+    fn scan_bindings(
+        &self,
+        stmts: &[Stmt],
+        types: &mut HashMap<String, Ty>,
+        out: &mut Vec<(String, Ty)>,
+    ) {
+        for s in stmts {
+            match &s.kind {
+                StmtKind::Let { name, ty, init, .. } => {
+                    let t = ty.unwrap_or_else(|| self.infer_ty(init, types));
+                    out.push((name.clone(), t));
+                    types.insert(name.clone(), t);
+                }
+                StmtKind::For { var, body, .. } => {
+                    out.push((var.clone(), Ty::I32));
+                    types.insert(var.clone(), Ty::I32);
+                    self.scan_bindings(body, types, out);
+                }
+                StmtKind::If { then, els, .. } => {
+                    self.scan_bindings(then, types, out);
+                    self.scan_bindings(els, types, out);
+                }
+                StmtKind::While { body, .. } => self.scan_bindings(body, types, out),
+                StmtKind::Arena { body } => self.scan_bindings(body, types, out),
+                _ => {}
+            }
+        }
+    }
+
+    fn field_of(&self, ty: Ty, field: &str) -> Option<(Ty, i64)> {
+        let Ty::Struct(i) = ty else { return None };
+        let (fields, _, _) = self.sdefs.get(i as usize)?;
+        fields
+            .iter()
+            .find(|(n, _, _)| n == field)
+            .map(|(_, t, off)| (*t, *off))
+    }
+
+    fn elem_size(&self, ty: Ty) -> i64 {
         match ty {
             Ty::U8 | Ty::Bool => 1,
             Ty::I32 => 4,
             Ty::I64 | Ty::F64 => 8,
+            Ty::Struct(i) => self.sdefs.get(i as usize).map(|(_, size, _)| *size).unwrap_or(8),
             _ => 8,
         }
     }
@@ -230,13 +360,16 @@ impl Emitter {
         self.arrays.clear();
         self.array_len_slot.clear();
         self.owned.clear();
+        self.struct_locs.clear();
         let mut slot = 0i64;
+        let mut types: HashMap<String, Ty> = HashMap::new();
         for (name, pty) in &f.params {
             match pty {
                 ParamTy::Scalar(ty) => {
                     slot += 1;
                     self.locals.insert(name.clone(), 8 * slot);
                     self.local_ty.insert(name.clone(), *ty);
+                    types.insert(name.clone(), *ty);
                 }
                 ParamTy::Array(elem) => {
                     slot += 1;
@@ -252,13 +385,17 @@ impl Emitter {
                 }
             }
         }
-        let mut names = Vec::new();
-        Self::collect_locals(&f.body, &mut names);
-        let mut seen = std::collections::HashSet::new();
-        for n in names {
-            if seen.insert(n.clone()) {
+        let mut bindings = Vec::new();
+        self.scan_bindings(&f.body, &mut types, &mut bindings);
+        let mut struct_bindings: Vec<(String, i64)> = Vec::new();
+        for (name, t) in bindings {
+            self.local_ty.insert(name.clone(), t);
+            if let Ty::Struct(i) = t {
+                let size = self.sdefs.get(i as usize).map(|(_, s, _)| *s).unwrap_or(8);
+                struct_bindings.push((name, size));
+            } else {
                 slot += 1;
-                self.locals.insert(n, 8 * slot);
+                self.locals.insert(name, 8 * slot);
             }
         }
         let mut consts = HashMap::new();
@@ -269,6 +406,12 @@ impl Emitter {
             self.arrays.insert(name, (8 * slot, elem, len));
             self.owned.push(8 * slot);
         }
+        let mut struct_bytes = 0i64;
+        for (name, size) in struct_bindings {
+            struct_bytes += (size + 7) & !7;
+            let off = 8 * slot + struct_bytes;
+            self.struct_locs.insert(name, (off, size));
+        }
         self.argc_slot = None;
         self.argv_slot = None;
         if f.name == "main" {
@@ -277,7 +420,7 @@ impl Emitter {
             slot += 1;
             self.argv_slot = Some(8 * slot);
         }
-        self.frame = align16(8 * slot);
+        self.frame = align16(8 * slot + struct_bytes);
         Ok(())
     }
 
@@ -294,10 +437,22 @@ impl Emitter {
             ExprKind::Float(_) => Ty::F64,
             ExprKind::Str(_) => Ty::Str,
             ExprKind::Var(n) => self.local_ty.get(n).copied().unwrap_or(Ty::I64),
-            ExprKind::Bin { op, l, .. } => match op {
+            ExprKind::Field { base, field } => self
+                .local_ty
+                .get(base)
+                .and_then(|t| self.field_of(*t, field))
+                .map(|(t, _)| t)
+                .unwrap_or(Ty::I64),
+            ExprKind::IndexField { name, field, .. } => self
+                .arrays
+                .get(name)
+                .and_then(|(_, t, _)| self.field_of(*t, field))
+                .map(|(t, _)| t)
+                .unwrap_or(Ty::I64),
+            ExprKind::Bin { op, l, r } => match op {
                 BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
                 | BinOp::And | BinOp::Or => Ty::Bool,
-                _ => self.expr_ty(l),
+                _ => self.arith_ty(l, r),
             },
             ExprKind::Un { op, e } => match op {
                 UnOp::Not => Ty::Bool,
@@ -312,6 +467,32 @@ impl Emitter {
                 .unwrap_or(Ty::I64),
             ExprKind::Call { name, .. } => self.func_ret.get(name).copied().unwrap_or(Ty::I64),
             _ => Ty::I64,
+        }
+    }
+
+    /// C integer promotion: u8 and bool become int; i64 wins.
+    fn arith_ty(&self, l: &Expr, r: &Expr) -> Ty {
+        let a = self.expr_ty(l);
+        let b = self.expr_ty(r);
+        if a == Ty::I64 || b == Ty::I64 {
+            Ty::I64
+        } else {
+            Ty::I32
+        }
+    }
+
+    /// C's int32_t/uint8_t arithmetic wraps; native works in 64-bit registers,
+    /// so narrow the result after every operation that is typed narrower.
+    fn truncate(&mut self, ty: Ty) {
+        match ty {
+            Ty::I32 => self.line("    movslq %eax, %rax"),
+            Ty::U8 => self.line("    movzbq %al, %rax"),
+            Ty::Bool => {
+                self.line("    test %rax, %rax");
+                self.line("    setne %al");
+                self.line("    movzbq %al, %rax");
+            }
+            _ => {}
         }
     }
 
@@ -341,13 +522,47 @@ impl Emitter {
             }
             ExprKind::Var(n) => {
                 let ty = self.local_ty.get(n).copied().unwrap_or(Ty::I64);
-                let off = *self.locals.get(n).ok_or_else(|| {
-                    format!("native backend line {}: unknown float variable `{}`", e.line, n)
-                })?;
                 if ty == Ty::F64 {
+                    let off = *self.locals.get(n).ok_or_else(|| {
+                        format!("native backend line {}: unknown float variable `{}`", e.line, n)
+                    })?;
                     self.line(&format!("    movsd -{}(%rbp), %xmm0", off));
                 } else {
-                    self.line(&format!("    mov -{}(%rbp), %rax", off));
+                    self.expr(e)?;
+                    self.line("    cvtsi2sd %rax, %xmm0");
+                }
+            }
+            ExprKind::Field { base, field } => {
+                let bty = self.local_ty.get(base).copied().ok_or_else(|| {
+                    format!("native backend line {}: unknown struct `{}`", e.line, base)
+                })?;
+                let (fty, foff) = self.field_of(bty, field).ok_or_else(|| {
+                    format!("native backend line {}: unknown field `{}`", e.line, field)
+                })?;
+                let (boff, _) = self.struct_locs[base];
+                if fty == Ty::F64 {
+                    self.line(&format!("    movsd -{}(%rbp), %xmm0", boff - foff));
+                } else {
+                    self.expr(e)?;
+                    self.line("    cvtsi2sd %rax, %xmm0");
+                }
+            }
+            ExprKind::IndexField { name, index, field } => {
+                let (arr_off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("native backend line {}: unknown array `{}`", e.line, name)
+                })?;
+                let (fty, foff) = self.field_of(elem, field).ok_or_else(|| {
+                    format!("native backend line {}: unknown field `{}`", e.line, field)
+                })?;
+                let size = self.elem_size(elem);
+                self.expr(index)?;
+                self.bounds_check("%rax", name, e.line)?;
+                self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
+                self.line(&format!("    imul ${}, %rax, %rax", size));
+                if fty == Ty::F64 {
+                    self.line(&format!("    movsd {}(%r10,%rax), %xmm0", foff));
+                } else {
+                    self.line(&format!("    movq {}(%r10,%rax), %rax", foff));
                     self.line("    cvtsi2sd %rax, %xmm0");
                 }
             }
@@ -436,32 +651,6 @@ impl Emitter {
             }
         }
         Ok(())
-    }
-
-    /// C integer promotion: u8 and bool become int; i64 wins.
-    fn arith_ty(&self, l: &Expr, r: &Expr) -> Ty {
-        let a = self.expr_ty(l);
-        let b = self.expr_ty(r);
-        if a == Ty::I64 || b == Ty::I64 {
-            Ty::I64
-        } else {
-            Ty::I32
-        }
-    }
-
-    /// C's int32_t/uint8_t arithmetic wraps; native works in 64-bit registers,
-    /// so narrow the result after every operation that is typed narrower.
-    fn truncate(&mut self, ty: Ty) {
-        match ty {
-            Ty::I32 => self.line("    movslq %eax, %rax"),
-            Ty::U8 => self.line("    movzbq %al, %rax"),
-            Ty::Bool => {
-                self.line("    test %rax, %rax");
-                self.line("    setne %al");
-                self.line("    movzbq %al, %rax");
-            }
-            _ => {}
-        }
     }
 
     fn bounds_check(&mut self, idx: &str, name: &str, line: usize) -> Result<(), String> {
@@ -568,6 +757,133 @@ impl Emitter {
         Ok(true)
     }
 
+    fn struct_lit_local(
+        &mut self,
+        dest_off: i64,
+        sname: &str,
+        fields: &[(String, Expr)],
+        line: usize,
+    ) -> Result<(), String> {
+        let si = self
+            .struct_index(sname)
+            .ok_or_else(|| format!("native backend line {}: unknown struct `{}`", line, sname))?;
+        let (sfields, size, _) = self.sdefs[si].clone();
+        self.line(&format!("    lea -{}(%rbp), %rdi", dest_off));
+        self.line("    xor %esi, %esi");
+        self.line(&format!("    mov ${}, %edx", size));
+        self.call("memset@PLT");
+        for (fname, fty, foff) in sfields {
+            let ex = fields
+                .iter()
+                .find(|(n, _)| n == &fname)
+                .map(|(_, e)| e)
+                .ok_or_else(|| {
+                    format!("native backend line {}: missing field `{}`", line, fname)
+                })?;
+            let disp = dest_off - foff;
+            match fty {
+                Ty::F64 => {
+                    self.fexpr(ex)?;
+                    self.line(&format!("    movsd %xmm0, -{}(%rbp)", disp));
+                }
+                Ty::U8 | Ty::Bool => {
+                    self.expr(ex)?;
+                    self.truncate(fty);
+                    self.line(&format!("    movb %al, -{}(%rbp)", disp));
+                }
+                Ty::I32 => {
+                    self.expr(ex)?;
+                    self.truncate(fty);
+                    self.line(&format!("    movl %eax, -{}(%rbp)", disp));
+                }
+                _ => {
+                    self.expr(ex)?;
+                    self.line(&format!("    movq %rax, -{}(%rbp)", disp));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn array_let_struct(
+        &mut self,
+        name: &str,
+        off: i64,
+        si: usize,
+        len: i64,
+        value: &Expr,
+        line: usize,
+    ) -> Result<(), String> {
+        let ExprKind::StructLit { fields, .. } = &value.kind else {
+            return Err(format!(
+                "native backend line {}: struct arrays need a struct literal initializer",
+                line
+            ));
+        };
+        let (sfields, size, _) = self.sdefs[si].clone();
+        let bytes = size * len;
+        self.line(&format!("    mov ${}, %rdi", bytes));
+        self.call("malloc@PLT");
+        let ok = self.fresh("malloc");
+        self.line("    test %rax, %rax");
+        self.line(&format!("    jne {}", ok));
+        let msg = self.panic_msg(line, "out of memory");
+        self.line(&format!("    lea {}(%rip), %rdi", msg));
+        self.call(".Lmagic_panic");
+        self.line(&format!("{}:", ok));
+        self.line(&format!("    mov %rax, -{}(%rbp)", off));
+        for (fname, fty, foff) in sfields {
+            let ex = fields
+                .iter()
+                .find(|(n, _)| n == &fname)
+                .map(|(_, e)| e)
+                .ok_or_else(|| {
+                    format!("native backend line {}: missing field `{}`", line, fname)
+                })?;
+            let is_float = fty == Ty::F64;
+            if is_float {
+                self.fexpr(ex)?;
+                self.line("    sub $16, %rsp");
+                self.line("    movsd %xmm0, (%rsp)");
+            } else {
+                self.expr(ex)?;
+                self.truncate(fty);
+                self.push("%rax");
+            }
+            self.line(&format!("    mov -{}(%rbp), %r10", off));
+            self.line(&format!("    mov ${}, %rcx", len));
+            self.line("    mov $0, %r8");
+            let loop_l = self.fresh("sfill");
+            let done = self.fresh("sfdone");
+            self.line(&format!("{}:", loop_l));
+            self.line("    cmp %rcx, %r8");
+            self.line(&format!("    jge {}", done));
+            self.line(&format!("    imul ${}, %r8, %r9", size));
+            if is_float {
+                self.line("    movsd (%rsp), %xmm0");
+                self.line(&format!("    movsd %xmm0, {}(%r10,%r9)", foff));
+            } else {
+                self.line("    mov (%rsp), %rax");
+                match fty {
+                    Ty::U8 | Ty::Bool => {
+                        self.line(&format!("    movb %al, {}(%r10,%r9)", foff))
+                    }
+                    Ty::I32 => self.line(&format!("    movl %eax, {}(%r10,%r9)", foff)),
+                    _ => self.line(&format!("    movq %rax, {}(%r10,%r9)", foff)),
+                }
+            }
+            self.line("    add $1, %r8");
+            self.line(&format!("    jmp {}", loop_l));
+            self.line(&format!("{}:", done));
+            if is_float {
+                self.line("    add $16, %rsp");
+            } else {
+                self.pop("%rax");
+            }
+        }
+        Ok(())
+    }
+
     fn expr(&mut self, e: &Expr) -> Result<(), String> {
         match &e.kind {
             ExprKind::Int(v) => {
@@ -584,6 +900,10 @@ impl Emitter {
                 self.line(&format!("    lea {}(%rip), %rax", label));
             }
             ExprKind::Var(n) => {
+                if let Some((off, _)) = self.struct_locs.get(n) {
+                    self.line(&format!("    lea -{}(%rbp), %rax", *off));
+                    return Ok(());
+                }
                 let found = self
                     .subst
                     .iter()
@@ -613,6 +933,49 @@ impl Emitter {
                         "native backend line {}: unknown variable `{}`",
                         e.line, n
                     ));
+                }
+            }
+            ExprKind::Field { base, field } => {
+                let bty = self.local_ty.get(base).copied().ok_or_else(|| {
+                    format!("native backend line {}: unknown struct `{}`", e.line, base)
+                })?;
+                let (fty, foff) = self.field_of(bty, field).ok_or_else(|| {
+                    format!("native backend line {}: unknown field `{}`", e.line, field)
+                })?;
+                let (boff, _) = self.struct_locs[base];
+                let disp = boff - foff;
+                match fty {
+                    Ty::I32 => self.line(&format!("    movslq -{}(%rbp), %rax", disp)),
+                    Ty::U8 | Ty::Bool => self.line(&format!("    movzbq -{}(%rbp), %rax", disp)),
+                    Ty::F64 => {
+                        self.line(&format!("    movsd -{}(%rbp), %xmm0", disp));
+                        self.line("    movq %xmm0, %rax");
+                    }
+                    Ty::Struct(_) => self.line(&format!("    lea -{}(%rbp), %rax", disp)),
+                    _ => self.line(&format!("    mov -{}(%rbp), %rax", disp)),
+                }
+            }
+            ExprKind::IndexField { name, index, field } => {
+                let (arr_off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("native backend line {}: unknown array `{}`", e.line, name)
+                })?;
+                let (fty, foff) = self.field_of(elem, field).ok_or_else(|| {
+                    format!("native backend line {}: unknown field `{}`", e.line, field)
+                })?;
+                let size = self.elem_size(elem);
+                self.expr(index)?;
+                self.bounds_check("%rax", name, e.line)?;
+                self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
+                self.line(&format!("    imul ${}, %rax, %rax", size));
+                match fty {
+                    Ty::I32 => self.line(&format!("    movslq {}(%r10,%rax), %rax", foff)),
+                    Ty::U8 | Ty::Bool => self.line(&format!("    movzbq {}(%r10,%rax), %rax", foff)),
+                    Ty::F64 => {
+                        self.line(&format!("    movsd {}(%r10,%rax), %xmm0", foff));
+                        self.line("    movq %xmm0, %rax");
+                    }
+                    Ty::Struct(_) => self.line(&format!("    lea {}(%r10,%rax), %rax", foff)),
+                    _ => self.line(&format!("    mov {}(%r10,%rax), %rax", foff)),
                 }
             }
             ExprKind::Bin { op, l, r } => {
@@ -1362,6 +1725,36 @@ impl Emitter {
             StmtKind::Let { name, ty, init, .. } => {
                 let target = ty.unwrap_or_else(|| self.expr_ty(init));
                 self.local_ty.insert(name.clone(), target);
+                if let Ty::Struct(si) = target {
+                    let (dest_off, size) = *self.struct_locs.get(name).ok_or_else(|| {
+                        format!("native backend line {}: unknown struct `{}`", s.line, name)
+                    })?;
+                    match &init.kind {
+                        ExprKind::StructLit { name: sn, fields } => {
+                            let _ = si;
+                            self.struct_lit_local(dest_off, sn, fields, s.line)?;
+                        }
+                        ExprKind::Var(src) => {
+                            let (src_off, _) = *self.struct_locs.get(src).ok_or_else(|| {
+                                format!(
+                                    "native backend line {}: unknown struct `{}`",
+                                    s.line, src
+                                )
+                            })?;
+                            self.line(&format!("    lea -{}(%rbp), %rdi", dest_off));
+                            self.line(&format!("    lea -{}(%rbp), %rsi", src_off));
+                            self.line(&format!("    mov ${}, %edx", size));
+                            self.call("memcpy@PLT");
+                        }
+                        _ => {
+                            return Err(format!(
+                                "native backend line {}: unsupported struct initializer",
+                                s.line
+                            ))
+                        }
+                    }
+                    return Ok(());
+                }
                 let off = *self.locals.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown variable `{}`", s.line, name)
                 })?;
@@ -1386,6 +1779,93 @@ impl Emitter {
                     self.expr(value)?;
                     self.truncate(target);
                     self.line(&format!("    mov %rax, -{}(%rbp)", off));
+                }
+            }
+            StmtKind::FieldAssign { base, field, value } => {
+                let bty = self.local_ty.get(base).copied().ok_or_else(|| {
+                    format!("native backend line {}: unknown struct `{}`", s.line, base)
+                })?;
+                let (fty, foff) = self.field_of(bty, field).ok_or_else(|| {
+                    format!("native backend line {}: unknown field `{}`", s.line, field)
+                })?;
+                let (boff, _) = self.struct_locs[base];
+                let disp = boff - foff;
+                if fty == Ty::F64 {
+                    self.fexpr(value)?;
+                    self.line(&format!("    movsd %xmm0, -{}(%rbp)", disp));
+                } else {
+                    self.expr(value)?;
+                    self.truncate(fty);
+                    match fty {
+                        Ty::U8 | Ty::Bool => {
+                            self.line(&format!("    movb %al, -{}(%rbp)", disp))
+                        }
+                        Ty::I32 => self.line(&format!("    movl %eax, -{}(%rbp)", disp)),
+                        _ => self.line(&format!("    movq %rax, -{}(%rbp)", disp)),
+                    }
+                }
+            }
+            StmtKind::FieldPathAssign { base, path, value } => {
+                let mut ty = self.local_ty.get(base).copied().ok_or_else(|| {
+                    format!("native backend line {}: unknown struct `{}`", s.line, base)
+                })?;
+                let (boff, _) = self.struct_locs[base];
+                let mut foff = 0i64;
+                for seg in path {
+                    let (ft, off) = self.field_of(ty, seg).ok_or_else(|| {
+                        format!("native backend line {}: unknown field `{}`", s.line, seg)
+                    })?;
+                    foff += off;
+                    ty = ft;
+                }
+                let disp = boff - foff;
+                if ty == Ty::F64 {
+                    self.fexpr(value)?;
+                    self.line(&format!("    movsd %xmm0, -{}(%rbp)", disp));
+                } else {
+                    self.expr(value)?;
+                    self.truncate(ty);
+                    match ty {
+                        Ty::U8 | Ty::Bool => {
+                            self.line(&format!("    movb %al, -{}(%rbp)", disp))
+                        }
+                        Ty::I32 => self.line(&format!("    movl %eax, -{}(%rbp)", disp)),
+                        _ => self.line(&format!("    movq %rax, -{}(%rbp)", disp)),
+                    }
+                }
+            }
+            StmtKind::IndexFieldAssign { name, index, field, value } => {
+                let (arr_off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("native backend line {}: unknown array `{}`", s.line, name)
+                })?;
+                let (fty, foff) = self.field_of(elem, field).ok_or_else(|| {
+                    format!("native backend line {}: unknown field `{}`", s.line, field)
+                })?;
+                let size = self.elem_size(elem);
+                if fty == Ty::F64 {
+                    self.fexpr(value)?;
+                    self.line("    sub $16, %rsp");
+                    self.line("    movsd %xmm0, (%rsp)");
+                } else {
+                    self.expr(value)?;
+                    self.truncate(fty);
+                    self.push("%rax");
+                }
+                self.expr(index)?;
+                self.bounds_check("%rax", name, s.line)?;
+                if fty == Ty::F64 {
+                    self.line("    movsd (%rsp), %xmm0");
+                    self.line("    add $16, %rsp");
+                } else {
+                    self.pop("%rcx");
+                }
+                self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
+                self.line(&format!("    imul ${}, %rax, %rax", size));
+                match fty {
+                    Ty::U8 | Ty::Bool => self.line(&format!("    movb %cl, {}(%r10,%rax)", foff)),
+                    Ty::I32 => self.line(&format!("    movl %ecx, {}(%r10,%rax)", foff)),
+                    Ty::F64 => self.line(&format!("    movsd %xmm0, {}(%r10,%rax)", foff)),
+                    _ => self.line(&format!("    movq %rcx, {}(%r10,%rax)", foff)),
                 }
             }
             StmtKind::Print { value, ty } => {
@@ -1541,7 +2021,10 @@ impl Emitter {
                 let (off, elem, len) = *self.arrays.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown array `{}`", s.line, name)
                 })?;
-                if len < 0 || len > 1073741824 || (len as i64).checked_mul(Self::elem_size(elem)).is_none() {
+                if let Ty::Struct(si) = elem {
+                    return self.array_let_struct(name, off, si as usize, len, value, s.line);
+                }
+                if len < 0 || len > 1073741824 || (len as i64).checked_mul(self.elem_size(elem)).is_none() {
                     let msg = self.panic_msg(s.line, "bad array length");
                     self.line(&format!("    lea {}(%rip), %rdi", msg));
                     self.call(".Lmagic_panic");
@@ -1555,7 +2038,7 @@ impl Emitter {
                     self.expr(value)?;
                     self.push("%rax");
                 }
-                let size = Self::elem_size(elem) * len;
+                let size = self.elem_size(elem) * len;
                 self.line(&format!("    mov ${}, %rdi", size));
                 self.call("malloc@PLT");
                 let ok = self.fresh("malloc");
@@ -1656,6 +2139,20 @@ impl Emitter {
     }
 
     fn func(&mut self, f: &Func) -> Result<(), String> {
+        if let Ty::Struct(_) = f.ret {
+            return Err(format!(
+                "native backend: `{}` returns a struct, which is not supported yet",
+                f.name
+            ));
+        }
+        for (name, pty) in &f.params {
+            if let ParamTy::Scalar(Ty::Struct(_)) = pty {
+                return Err(format!(
+                    "native backend: `{}` takes struct parameter `{}`, which is not supported yet",
+                    f.name, name
+                ));
+            }
+        }
         self.assign_frame(f)?;
         self.cur_ret = f.ret;
         self.ret_label = self.fresh("ret");
@@ -1770,6 +2267,7 @@ impl Emitter {
 
 pub fn emit(prog: &Program) -> Result<String, String> {
     let mut e = Emitter::new();
+    e.build_sdefs(prog);
     e.inlinable = Emitter::collect_inlinable(prog);
     for f in &prog.funcs {
         e.func_ret.insert(f.name.clone(), f.ret);

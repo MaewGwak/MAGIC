@@ -76,7 +76,7 @@ fn align_up(n: u64, a: u64) -> u64 {
     }
 }
 
-fn ty_align(t: ast::Ty, structs: &[ast::StructDef]) -> u64 {
+pub fn ty_align(t: ast::Ty, structs: &[ast::StructDef]) -> u64 {
     use ast::Ty::*;
     match t {
         Bool | U8 => 1,
@@ -90,7 +90,7 @@ fn ty_align(t: ast::Ty, structs: &[ast::StructDef]) -> u64 {
     }
 }
 
-fn ty_size(t: ast::Ty, structs: &[ast::StructDef]) -> u64 {
+pub fn ty_size(t: ast::Ty, structs: &[ast::StructDef]) -> u64 {
     use ast::Ty::*;
     match t {
         Struct(i) => {

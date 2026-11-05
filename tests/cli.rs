@@ -1182,3 +1182,73 @@ fn native_prints_bools_as_true_and_false() {
     let run = Command::new(&exe).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "true\nfalse");
 }
+
+#[test]
+fn native_structs_match_the_c_backend() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("structs");
+    let src = dir.path().join("s.magic");
+    std::fs::write(
+        &src,
+        "struct Point { x: i32, y: i32 }\n\
+         fn main() {\n\
+         var p: Point = Point { x: 1, y: 2 };\n\
+         p.x = p.x + 10;\n\
+         print(p.x);\n\
+         print(p.y);\n\
+         }\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("s");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "11\n2");
+}
+
+#[test]
+fn native_struct_arrays_match_the_c_backend() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("structarr");
+    let src = dir.path().join("p.magic");
+    std::fs::write(
+        &src,
+        "struct Point { x: i32, y: i32 }\n\
+         fn main() {\n\
+         var pts: [Point] = [Point { x: 0, y: 0 }; 3];\n\
+         for i in 0..3 {\n\
+         pts[i].x = i * 10;\n\
+         pts[i].y = i * 10 + 1;\n\
+         }\n\
+         print(pts[0].x);\n\
+         print(pts[1].y);\n\
+         print(pts[2].x);\n\
+         }\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("p");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "0\n11\n20");
+}
