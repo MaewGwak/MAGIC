@@ -1,0 +1,10 @@
+// MAGIC bump arena: two arrays, one allocation, one free.
+fn main() {
+    arena {
+        var a: [i32] = [1; 4];
+        var b: [i32] = [2; 4];
+        a[0] = 7;
+        print(a[0]);
+        print(b[0]);
+    }
+}

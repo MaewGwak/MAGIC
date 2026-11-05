@@ -1,0 +1,14 @@
+# Build artifacts
+/target/
+*.exe
+*.o
+*.obj
+*.pdb
+*.flags
+
+# Generated C for examples and benchmarks
+/examples/*.c
+*_magic.c
+
+# Compile-speed scratch files
+/bench-compile/big.*

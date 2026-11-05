@@ -1,0 +1,18 @@
+[package]
+name = "magic"
+version = "0.4.0"
+edition = "2021"
+description = "MAGIC: a memory-aware systems language"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "magic"
+path = "src/lib.rs"
+
+[[bin]]
+name = "magicc"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

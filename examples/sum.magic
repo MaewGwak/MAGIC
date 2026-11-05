@@ -1,0 +1,10 @@
+// MAGIC v0 - loops and mutation
+fn main() {
+    var i: i64 = 0;
+    var total: i64 = 0;
+    while i < 1000000 {
+        total = total + i;
+        i = i + 1;
+    }
+    print(total);
+}

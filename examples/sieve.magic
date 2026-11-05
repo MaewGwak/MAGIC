@@ -1,0 +1,25 @@
+// MAGIC v0.1 - sieve of Eratosthenes (checked, owned array)
+fn main() {
+    let n = 10000000;
+    var is: [bool] = [true; n];
+    var i = 2;
+    while i * i < n {
+        if is[i] {
+            var j = i * i;
+            while j < n {
+                is[j] = false;
+                j = j + i;
+            }
+        }
+        i = i + 1;
+    }
+    var count = 0;
+    var k = 2;
+    while k < n {
+        if is[k] {
+            count = count + 1;
+        }
+        k = k + 1;
+    }
+    print(count);
+}

@@ -1,0 +1,31 @@
+// Open-addressing hash table: 1M inserts + 1M lookups.
+fn main() {
+    let size: i64 = 2097152;
+    let n: i64 = 1000000;
+
+    var keys: [i64] = [0; size];
+    var vals: [i64] = [0; size];
+
+    var i: i64 = 1;
+    while i <= n {
+        var slot = (i * 2654435761) % size;
+        while keys[slot] != 0 {
+            slot = (slot + 1) % size;
+        }
+        keys[slot] = i;
+        vals[slot] = i * 3;
+        i = i + 1;
+    }
+
+    var total: i64 = 0;
+    i = 1;
+    while i <= n {
+        var slot = (i * 2654435761) % size;
+        while keys[slot] != i {
+            slot = (slot + 1) % size;
+        }
+        total = total + vals[slot];
+        i = i + 1;
+    }
+    print(total);
+}

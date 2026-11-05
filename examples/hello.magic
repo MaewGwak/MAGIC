@@ -1,0 +1,4 @@
+// MAGIC v0 - hello
+fn main() {
+    print("Hello, MAGIC!");
+}

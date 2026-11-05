@@ -1,0 +1,13 @@
+// Growable arrays
+fn main() {
+    var v: [i32+] = [];
+    for i in 0..10 {
+        v.push(i * i);
+    }
+    var total = 0;
+    for i in 0..(len(v) as i32) {
+        total = total + v[i];
+    }
+    print(len(v));
+    print(total);
+}

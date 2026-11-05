@@ -1,0 +1,13 @@
+// Struct arrays: fill, write fields, read back.
+struct Point { x: i32, y: i32 }
+
+fn main() {
+    var pts: [Point] = [Point { x: 0, y: 0 }; 3];
+    for i in 0..3 {
+        pts[i].x = i * 10;
+        pts[i].y = i * 10 + 1;
+    }
+    print(pts[0].x);
+    print(pts[1].y);
+    print(pts[2].x);
+}

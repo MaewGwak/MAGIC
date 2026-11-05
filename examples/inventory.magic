@@ -1,0 +1,27 @@
+// Nested structs inside an array, a growable array, a cast, and an assert — together.
+struct Item { sku: i32, qty: i32 }
+struct Bin { item: Item, count: i32 }
+
+fn main() {
+    var bins: [Bin] = [Bin { item: Item { sku: 0, qty: 0 }, count: 0 }; 4];
+    for i in 0..4 {
+        bins[i].item.sku = 100 + i;
+        bins[i].item.qty = i * 5;
+        bins[i].count = 2;
+    }
+
+    var totals: [i32+] = [];
+    for i in 0..4 {
+        totals.push(bins[i].item.qty * bins[i].count);
+    }
+
+    var grand = 0;
+    for i in 0..(len(totals) as i32) {
+        grand = grand + totals[i];
+    }
+
+    print(bins[3].item.sku);
+    print(len(totals));
+    print(grand);
+    assert grand == 60;
+}

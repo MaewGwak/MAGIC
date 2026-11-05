@@ -1,0 +1,29 @@
+// Dynamic array of structs: push 500k, 50 steps, sum.
+struct P { x: f64, y: f64, vx: f64, vy: f64 }
+
+fn main() {
+    let n = 500000;
+    let steps = 50;
+
+    var ps: [P+] = [];
+    reserve(ps, n);
+
+    for i in 0..n {
+        ps.push(P { x: i as f64, y: i as f64 * 0.5, vx: 1.0, vy: 0.25 });
+    }
+
+    for s in 0..steps {
+        for i in 0..(len(ps) as i32) {
+            ps[i].x = ps[i].x + ps[i].vx;
+            ps[i].y = ps[i].y + ps[i].vy;
+            ps[i].vx = ps[i].vx * 0.999;
+            ps[i].vy = ps[i].vy * 0.999;
+        }
+    }
+
+    var total = 0.0;
+    for i in 0..(len(ps) as i32) {
+        total = total + ps[i].x;
+    }
+    print_prec(total, 3);
+}

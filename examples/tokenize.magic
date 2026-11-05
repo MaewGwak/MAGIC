@@ -1,0 +1,20 @@
+// Byte-level scanning: count letters and spaces in a string literal.
+fn main() {
+    let text = "the quick brown fox jumps over the lazy dog";
+    let n = str_len(text);
+
+    var spaces = 0;
+    var letters = 0;
+    for i in 0..(n as i32) {
+        let c = str_byte_n(text, i, n);
+        if c == 32 {
+            spaces = spaces + 1;
+        } else {
+            letters = letters + 1;
+        }
+    }
+
+    print(n);
+    print(spaces);
+    print(letters);
+}

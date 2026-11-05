@@ -1,0 +1,5 @@
+// MAGIC casts
+fn main() {
+    print(3.9 as i32);
+    print(7 as f64);
+}

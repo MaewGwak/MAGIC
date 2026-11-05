@@ -1,0 +1,25 @@
+// MAGIC sieve, N = 10,000,000. Expected: 664579.
+fn main() {
+    let n = 100000000;
+    var is: [bool] = [true; n];
+    var i = 2;
+    while i * i < n {
+        if is[i] {
+            var j = i * i;
+            while j < n {
+                is[j] = false;
+                j = j + i;
+            }
+        }
+        i = i + 1;
+    }
+    var count = 0;
+    var k = 2;
+    while k < n {
+        if is[k] {
+            count = count + 1;
+        }
+        k = k + 1;
+    }
+    print(count);
+}

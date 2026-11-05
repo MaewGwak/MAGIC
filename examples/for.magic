@@ -1,0 +1,8 @@
+// MAGIC for loops
+fn main() {
+    var total = 0;
+    for i in 0..10 {
+        total = total + i;
+    }
+    print(total);
+}

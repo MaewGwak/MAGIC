@@ -1,0 +1,42 @@
+// INTEGER matmul, N = 384.
+fn main() {
+    let n = 384;
+    var a: [i32] = [0; n * n];
+    var b: [i32] = [0; n * n];
+    var c: [i32] = [0; n * n];
+
+    var i = 0;
+    while i < n {
+        var j = 0;
+        while j < n {
+            a[i * n + j] = (i + j) % 10;
+            b[i * n + j] = (i * j) % 7;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    i = 0;
+    while i < n {
+        var j = 0;
+        while j < n {
+            var s = 0;
+            var k = 0;
+            while k < n {
+                s = s + a[i * n + k] * b[k * n + j];
+                k = k + 1;
+            }
+            c[i * n + j] = s;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    var total = 0;
+    i = 0;
+    while i < n * n {
+        total = total + c[i];
+        i = i + 2;
+    }
+    print(total);
+}

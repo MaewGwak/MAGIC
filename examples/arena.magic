@@ -1,0 +1,10 @@
+// MAGIC arena: arrays freed together at the closing brace.
+fn main() {
+    let n = 4;
+    arena {
+        var a: [i32] = [1; n];
+        a[0] = 5;
+        print(a[0]);
+    }
+    print("after");
+}

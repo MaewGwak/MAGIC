@@ -1,0 +1,47 @@
+// MAGIC binary-trees. Expected total: 568328208.
+fn build(left: [i32], right: [i32], depth: i32, next: [i32]) -> i32 {
+    var idx = next[0];
+    next[0] = idx + 1;
+    if depth > 0 {
+        left[idx] = build(left, right, depth - 1, next);
+        right[idx] = build(left, right, depth - 1, next);
+    } else {
+        left[idx] = -1;
+        right[idx] = -1;
+    }
+    return idx;
+}
+
+fn check(left: [i32], right: [i32], idx: i32) -> i32 {
+    if idx < 0 {
+        return 0;
+    }
+    return 1 + check(left, right, left[idx]) + check(left, right, right[idx]);
+}
+
+fn main() {
+    let max_nodes = 2097152;
+    var left: [i32] = [0; max_nodes];
+    var right: [i32] = [0; max_nodes];
+    var next: [i32] = [0; 1];
+
+    var total = 0;
+    var d = 4;
+    while d <= 20 {
+        var iters = 1;
+        var e = 0;
+        while e < 20 - d + 4 {
+            iters = iters * 2;
+            e = e + 1;
+        }
+        var i = 0;
+        while i < iters {
+            next[0] = 0;
+            var root = build(left, right, d, next);
+            total = total + check(left, right, root);
+            i = i + 1;
+        }
+        d = d + 1;
+    }
+    print(total);
+}

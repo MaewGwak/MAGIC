@@ -1,0 +1,71 @@
+// n-body, 4 bodies, 500k steps. Prints total energy.
+fn main() {
+    let nb = 4;
+    let steps = 10000000;
+    let dt = 0.001;
+
+    var x: [f64] = [0; 4];
+    var y: [f64] = [0; 4];
+    var z: [f64] = [0; 4];
+    var vx: [f64] = [0; 4];
+    var vy: [f64] = [0; 4];
+    var vz: [f64] = [0; 4];
+    var m: [f64] = [0; 4];
+
+    x[0] = 0.0;  y[0] = 0.0;  z[0] = 0.0;   vx[0] = 0.0;   vy[0] = 0.0;   vz[0] = 0.0;   m[0] = 100.0;
+    x[1] = 2.0;  y[1] = 1.0;  z[1] = 0.1;   vx[1] = 0.01;  vy[1] = 0.005; vz[1] = 0.001; m[1] = 0.5;
+    x[2] = 4.0;  y[2] = -1.0; z[2] = -0.1;  vx[2] = -0.01; vy[2] = -0.005; vz[2] = -0.001; m[2] = 0.3;
+    x[3] = 6.0;  y[3] = 0.5;  z[3] = 0.2;   vx[3] = 0.02;  vy[3] = 0.001; vz[3] = 0.0005; m[3] = 0.2;
+
+    var s = 0;
+    while s < steps {
+        var i = 0;
+        while i < nb {
+            var j = i + 1;
+            while j < nb {
+                var dx = x[i] - x[j];
+                var dy = y[i] - y[j];
+                var dz = z[i] - z[j];
+                var d2 = dx * dx + dy * dy + dz * dz;
+                var d = sqrt(d2);
+                var mag = dt / (d2 * d);
+                vx[i] = vx[i] - dx * m[j] * mag;
+                vy[i] = vy[i] - dy * m[j] * mag;
+                vz[i] = vz[i] - dz * m[j] * mag;
+                vx[j] = vx[j] + dx * m[i] * mag;
+                vy[j] = vy[j] + dy * m[i] * mag;
+                vz[j] = vz[j] + dz * m[i] * mag;
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        i = 0;
+        while i < nb {
+            x[i] = x[i] + dt * vx[i];
+            y[i] = y[i] + dt * vy[i];
+            z[i] = z[i] + dt * vz[i];
+            i = i + 1;
+        }
+        s = s + 1;
+    }
+
+    var e = 0.0;
+    var k = 0;
+    while k < nb {
+        e = e + 0.5 * m[k] * (vx[k] * vx[k] + vy[k] * vy[k] + vz[k] * vz[k]);
+        k = k + 1;
+    }
+    k = 0;
+    while k < nb {
+        var l = k + 1;
+        while l < nb {
+            var dx = x[k] - x[l];
+            var dy = y[k] - y[l];
+            var dz = z[k] - z[l];
+            e = e - m[k] * m[l] / sqrt(dx * dx + dy * dy + dz * dz);
+            l = l + 1;
+        }
+        k = k + 1;
+    }
+    print_prec(e, 9);
+}
