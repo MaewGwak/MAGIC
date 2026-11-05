@@ -50,6 +50,8 @@ $cases = @(
     @{ name = 'matmul C';            dir = 'bench-suite';    exe = 'matmul_c.exe';        src = 'matmul_c.c';        kind = 'c';    expect = '326316140' },
     @{ name = 'matmul Rust';         dir = 'bench-suite';    exe = 'matmul_rs.exe';       src = 'matmul_rs.rs';      kind = 'rust'; expect = '326316140' },
     @{ name = 'matmul MAGIC';         dir = 'bench-suite';    exe = 'matmul_magic.exe';     src = 'matmul_magic.magic';  kind = 'magic'; expect = '326316140' },
+    @{ name = 'matmul C++';          dir = 'bench-suite';    exe = 'matmul_cpp.exe';      src = 'matmul_cpp.cpp';    kind = 'cpp';  expect = '326316140' },
+    @{ name = 'matmul Go';           dir = 'bench-suite';    exe = 'matmul_go.exe';       src = 'matmul_go.go';      kind = 'go';   expect = '326316140' },
 
     @{ name = 'n-body C';            dir = 'bench-suite';    exe = 'nbody_c.exe';         src = 'nbody_c.c';         kind = 'c';    expect = '11211.531383831' },
     @{ name = 'n-body Rust';         dir = 'bench-suite';    exe = 'nbody_rs.exe';        src = 'nbody_rs.rs';       kind = 'rust'; expect = '11211.531383831' },
@@ -64,11 +66,15 @@ $cases = @(
     @{ name = 'hash Rust open';      dir = 'bench-suite';    exe = 'hash_rs_open.exe';    src = 'hash_rs_open.rs';   kind = 'rust'; expect = '1500001500000' },
     @{ name = 'hash Rust HashMap';   dir = 'bench-suite';    exe = 'hash_rs_hashmap.exe'; src = 'hash_rs_hashmap.rs'; kind = 'rust'; expect = '1500001500000' },
     @{ name = 'hash MAGIC';           dir = 'bench-suite';    exe = 'hash_magic.exe';       src = 'hash_magic.magic';    kind = 'magic'; expect = '1500001500000' },
+    @{ name = 'hash C++';            dir = 'bench-suite';    exe = 'hash_cpp.exe';        src = 'hash_cpp.cpp';      kind = 'cpp';  expect = '1500001500000' },
+    @{ name = 'hash Go';             dir = 'bench-suite';    exe = 'hash_go.exe';         src = 'hash_go.go';        kind = 'go';   expect = '1500001500000' },
 
     @{ name = 'particles C';         dir = 'bench-suite';    exe = 'particles_c.exe';     src = 'particles_c.c';     kind = 'c';    expect = '500094707846.643' },
     @{ name = 'particles Rust idx';  dir = 'bench-suite';    exe = 'particles_rs.exe';    src = 'particles_rs.rs';   kind = 'rust'; expect = '500094707846.643' },
     @{ name = 'particles Rust iter'; dir = 'bench-suite';    exe = 'particles_rs_iter.exe'; src = 'particles_rs_iter.rs'; kind = 'rust'; expect = '500094707846.643' },
     @{ name = 'particles MAGIC';      dir = 'bench-suite';    exe = 'particles_magic.exe';  src = 'particles_magic.magic'; kind = 'magic'; expect = '500094707846.643' },
+    @{ name = 'particles C++';       dir = 'bench-suite';    exe = 'particles_cpp.exe';   src = 'particles_cpp.cpp'; kind = 'cpp';  expect = '500094707846.643' },
+    @{ name = 'particles Go';        dir = 'bench-suite';    exe = 'particles_go.exe';    src = 'particles_go.go';   kind = 'go';   expect = '500094707846.643' },
 
     @{ name = 'binary trees Rust';   dir = 'bench-bt';       exe = 'bt_rust_flat_native.exe'; src = 'bt_rust_flat.rs'; kind = 'rust'; expect = '568328208' },
     @{ name = 'binary trees MAGIC';   dir = 'bench-bt';       exe = 'bt_magic.exe';         src = 'bt_magic.magic';      kind = 'magic'; expect = '568328208' }

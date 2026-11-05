@@ -122,14 +122,14 @@ Full tables and methodology: `BENCHMARKS.md`. Verify every checksum and get fres
 Run every gate with one command from this directory:
 
 ```powershell
-pwsh -File verify.ps1          # tests + doc counts + 31 benchmark cases + memory bounds
+pwsh -File verify.ps1          # tests + doc counts + 37 benchmark cases + memory bounds
 pwsh -File verify.ps1 -Fast    # tests + doc counts only (a few seconds)
 ```
 
 Or run them individually:
 
 ```powershell
-pwsh -File .\bench-all.ps1 -Rebuild   # 31 cases: checksums, time, memory
+pwsh -File .\bench-all.ps1 -Rebuild   # 37 cases: checksums, time, memory
 pwsh -File .\bench-memory.ps1         # --report bound vs measured peak RSS
 pwsh -File check-docs.ps1              # the numbers quoted in these docs still match the repo
 ```

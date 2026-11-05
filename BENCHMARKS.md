@@ -23,10 +23,15 @@ Other baselines (same build rules):
 
 | Workload | C++ | Go | Goose | MAGIC |
 |---|---:|---:|---:|---:|
-| sieve 100M | 412 | 459 | 429 | **412** |
-| fannkuch | 174 | — | 173 | **157** |
+| sieve 100M | 413 | 457 | 430 | **412** |
+| fannkuch | 175 | — | 175 | **155** |
+| matmul 384 | 31 | 60 | — | **31** |
+| hash 1M | 47 | 46 | — | 47 |
+| particles 1M × 100 | 79 | 157 | — | **78** |
 
-MAGIC is fastest or tied in both, with the lowest memory (99.5 MB and 4.1 MB).
+MAGIC is fastest or tied everywhere except hash, where Go edges it by 1 ms (46 vs 47) while using
+more memory (39.5 vs 36.1 MB). Go is 1.6–1.9x slower on compute-bound loops and 2x slower on the
+struct-array workload.
 
 ## 7. Hash table — 1M inserts + 1M lookups
 
