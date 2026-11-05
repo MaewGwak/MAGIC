@@ -1,7 +1,8 @@
 //! End-to-end: MAGIC source -> C -> gcc -> executable -> stdout.
 //! Skipped when no C compiler is on PATH.
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
 use std::process::{Command, Stdio};
 
 fn cc() -> Option<String> {
@@ -800,4 +801,46 @@ fn main() {
     if let Some(out) = build_and_run_stdin("stdin", src, "hello") {
         assert_eq!(out, "5\n104");
     }
+}
+
+#[test]
+fn tcp_roundtrip() {
+    let Some(cc) = cc() else { return };
+    let dir = std::env::temp_dir().join(format!("magic_e2e_{}_tcp", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let src = r#"
+fn main() {
+    var lfd = net_listen(0);
+    print(net_port(lfd));
+    flush();
+    var cfd = net_accept(lfd);
+    var buf: [u8] = [0; 16];
+    var n = net_read(cfd, buf, 4);
+    print(n);
+    var out: [u8] = [0; 4];
+    out[0] = 112; out[1] = 111; out[2] = 110; out[3] = 103;
+    net_write(cfd, out, 4);
+    net_close(cfd);
+    net_close(lfd);
+}
+"#;
+    let c = magic::compile_to_c(src).expect("compile");
+    let c_path = dir.join("t.c");
+    let exe = dir.join(if cfg!(windows) { "t.exe" } else { "t" });
+    std::fs::write(&c_path, c).expect("write C");
+    let status = Command::new(&cc).arg("-O1").arg("-o").arg(&exe).arg(&c_path).status().expect("cc");
+    assert!(status.success(), "C compilation failed");
+    let mut child = Command::new(&exe).stdout(Stdio::piped()).spawn().expect("spawn server");
+    let stdout = child.stdout.take().expect("stdout");
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read port");
+    let port: u16 = line.trim().parse().expect("port number");
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    stream.write_all(b"ping").expect("send");
+    let mut buf = [0u8; 4];
+    stream.read_exact(&mut buf).expect("recv");
+    assert_eq!(&buf, b"pong");
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
 }

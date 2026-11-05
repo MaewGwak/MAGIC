@@ -713,6 +713,57 @@ impl Checker {
                     self.check_expr(&args[1], Some(Ty::Str), scopes)?;
                     return Ok(Ty::Bool);
                 }
+                if name == "flush" {
+                    if !args.is_empty() {
+                        return Err(format!("{}: flush takes no arguments", e.line));
+                    }
+                    return Ok(Ty::Void);
+                }
+                if name == "net_listen" || name == "net_port" || name == "net_accept" || name == "net_close" {
+                    if args.len() != 1 {
+                        return Err(format!("{}: {} takes 1 argument", e.line, name));
+                    }
+                    let t = self.check_expr(&args[0], None, scopes)?;
+                    if !t.is_numeric() {
+                        return Err(format!("{}: {} needs a socket handle or port", e.line, name));
+                    }
+                    return Ok(Ty::I32);
+                }
+                if name == "net_connect" {
+                    if args.len() != 2 {
+                        return Err(format!("{}: net_connect takes 2 arguments", e.line));
+                    }
+                    self.check_expr(&args[0], Some(Ty::Str), scopes)?;
+                    let t = self.check_expr(&args[1], None, scopes)?;
+                    if !t.is_numeric() {
+                        return Err(format!("{}: net_connect port must be an integer", e.line));
+                    }
+                    return Ok(Ty::I32);
+                }
+                if name == "net_read" || name == "net_write" {
+                    if args.len() != 3 {
+                        return Err(format!("{}: {} takes 3 arguments", e.line, name));
+                    }
+                    let t = self.check_expr(&args[0], None, scopes)?;
+                    if !t.is_numeric() {
+                        return Err(format!("{}: {} needs a socket handle", e.line, name));
+                    }
+                    let ok = match &args[1].kind {
+                        ExprKind::Var(n) => lookup_array(scopes, n) == Some(Ty::U8),
+                        _ => false,
+                    };
+                    if !ok {
+                        return Err(format!(
+                            "{}: {} needs a [u8] array variable as its second argument",
+                            e.line, name
+                        ));
+                    }
+                    let lt = self.check_expr(&args[2], None, scopes)?;
+                    if !lt.is_numeric() {
+                        return Err(format!("{}: {} length must be an integer", e.line, name));
+                    }
+                    return Ok(Ty::I32);
+                }
                 if name == "input_read" {
                     if args.len() != 2 {
                         return Err(format!("{}: input_read takes 2 arguments", e.line));

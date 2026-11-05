@@ -104,6 +104,14 @@ primary    := int | float | string | "true" | "false"
 | `env(name)` | `str` → `str` | environment variable, or `""` when unset |
 | `print_bytes(a)` | `[u8]` or `[u8+]` → void | writes the bytes to stdout with no newline |
 | `input_read(buf, n)` | `[u8]`, integer → `i32` | reads up to `n` bytes from stdin into the array |
+| `flush()` | → void | flushes stdout, for servers and pipelines |
+| `net_listen(port)` | integer → `i32` | binds and listens on all interfaces; port 0 picks a free port |
+| `net_port(fd)` | `i32` → `i32` | the local port of a listening socket |
+| `net_accept(fd)` | `i32` → `i32` | blocks until a client connects; returns its socket |
+| `net_connect(host, port)` | `str`, integer → `i32` | connects to an IPv4 literal |
+| `net_read(fd, buf, n)` | `i32`, `[u8]`, integer → `i32` | reads up to `n` bytes |
+| `net_write(fd, buf, n)` | `i32`, `[u8]`, integer → `i32` | writes `n` bytes |
+| `net_close(fd)` | `i32` → `i32` | closes a socket |
 
 No other builtins. A user function cannot shadow `sqrt`; the checker resolves it first.
 

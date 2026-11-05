@@ -12,6 +12,8 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - `print_bytes(a)` writes a `[u8]` array or `[u8+]` vec to stdout without adding a newline, so a
   program can build output byte by byte.
 - `input_read(buf, n)` reads stdin into a `[u8]` array, so a program can be a filter or a REPL.
+- TCP sockets: `net_listen`, `net_port`, `net_accept`, `net_connect`, `net_read`, `net_write`,
+  `net_close`, plus `flush()`. A MAGIC server and client exchange a request and reply on loopback.
 
 
 **Tooling**

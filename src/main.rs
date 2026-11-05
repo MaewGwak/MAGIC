@@ -179,6 +179,9 @@ fn run() -> Result<(), String> {
                     if needs_omp {
                         cmd.arg("-fopenmp");
                     }
+                    if cfg!(windows) {
+                        cmd.arg("-lws2_32");
+                    }
                     if native {
                         cmd.arg("-march=native");
                     }
@@ -252,6 +255,9 @@ fn run() -> Result<(), String> {
                     let mut link = cc_command(&cc);
                     if needs_omp {
                         link.arg("-fopenmp");
+                    }
+                    if cfg!(windows) {
+                        link.arg("-lws2_32");
                     }
                     link.arg("-o").arg(&exe_path);
                     for o in &objs {
