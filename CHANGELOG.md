@@ -14,6 +14,8 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
   so the checksum is unchanged.
 - Direct-map hash (dense keys 1..1M): 10 ms vs 33 ms for the C hash table, and 4.6 MB vs 36.1 MB.
   Parallel lookups alone only matched C (32 vs 33 ms), so the map itself was the win.
+- C port of the binary-trees workload (flat arena, same shape): 735 ms vs MAGIC 725 ms and
+  Rust 1346 ms — the five-language matrix is complete for this workload.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
