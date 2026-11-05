@@ -197,11 +197,11 @@ all five baselines:
 | sieve 100M | 502 | 497 | 516 | 572 | 537 | 25 | 20x |
 | particles 1M × 100 | 151 | 151 | 157 | 215 | 145 | 4 | 37x |
 | hash 1M | 38 | 37 | 36 | 36 | 35 | 6 | 6x |
-| ray tracer 1536² | 86 | 89 | **77** | - | - | 13 | 5.9x |
+| ray tracer 1536² | 86 | 89 | **77** | - | 90 | 13 | 5.9x |
 | binary trees | 1647 | - | 3077 | - | 1899 | 108 | 15x |
 | matmul 384 | 31 | 27 | 92 | 106 | 87 | 6 | 4.5x |
 | fannkuch | 383 | 392 | 364 | - | 405 | 40 | 9.6x |
-| n-body 10M | 724 | 728 | **523** | 920 | - | 450 | 1.16x |
+| n-body 10M | 724 | 728 | **523** | 920 | 720 | 450 | 1.16x |
 
 The sieve row uses 2.3 MB instead of 95 MB. The n-body row uses clang with `-march=x86-64-v3` and the matmul row clang with `-march=native`;
 without clang the n-body build is 605 ms (gcc). Goose builds from source with CMake on Linux and
@@ -214,7 +214,7 @@ cmake -S ~/tools/goose -B ~/tools/goose/build -DCMAKE_BUILD_TYPE=Release
 cmake --build ~/tools/goose/build -j
 ```
  `./verify.sh` runs the tests, the doc counts and this matrix;
-`./bench-linux.sh` alone runs 61 cases across C, C++, Rust, Go, Goose and MAGIC.
+`./bench-linux.sh` alone runs 63 cases across C, C++, Rust, Go, Goose and MAGIC.
 
 
 n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms

@@ -116,6 +116,7 @@ median "$OUT/n_c" 11211.531383831 'n-body C'
 median "$OUT/n_rs" 11211.531383831 'n-body Rust'
 if [ -n "$CXX" ]; then build_cpp nbody_cpp.cpp n_cpp; median "$OUT/n_cpp" 11211.531383831 'n-body C++'; fi
 if [ -n "$GO" ]; then build_go nbody_go.go n_go; median "$OUT/n_go" 11211.531383831 'n-body Go'; fi
+if [ -n "$GOOSE" ]; then build_goose nbody_goose.goose n_goose; median "$OUT/n_goose" 11211.531383831 'n-body Goose'; fi
 median "$OUT/n_u" 11211.531383831 'n-body MAGIC unrolled'
 build_magic nbody_magic.magic n_loop; median "$OUT/n_loop" 11211.531383831 'n-body MAGIC loop'
 if [ -n "$CLANG" ]; then
@@ -129,6 +130,7 @@ build_magic raytrace_magic.magic r_m; build_magic raytrace_magic_par.magic r_p
 median "$OUT/r_c" 336141.941 'ray C'
 median "$OUT/r_rs" 336141.941 'ray Rust'
 if [ -n "$CXX" ]; then build_cpp raytrace_cpp.cpp r_cpp; median "$OUT/r_cpp" 336141.941 'ray C++'; fi
+if [ -n "$GOOSE" ]; then build_goose raytrace_goose.goose r_goose; median "$OUT/r_goose" 336141.941 'ray Goose'; fi
 median "$OUT/r_m" 336141.941 'ray MAGIC'
 median "$OUT/r_p" 336141.941 'ray MAGIC par'
 

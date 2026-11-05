@@ -192,11 +192,11 @@ ray generation, sphere intersection, shading — not a microbenchmark, and MAGIC
 | sieve 100M | 502 | 497 | 516 | 572 | 537 | 25 (odd-only blocks, `par for`, 2.3 MB) |
 | particles 1M × 100 | 151 | 151 | 157 | 215 | 145 | 4 (closed form) |
 | hash 1M | 38 | 37 | 36 | 36 | 35 | 6 (direct map) |
-| ray tracer 1536² | 86 | 89 | 77 | - | - | 13 (`par for`) |
+| ray tracer 1536² | 86 | 89 | 77 | - | 90 | 13 (`par for`) |
 | binary trees | 1647 | - | 3077 | - | 1899 | 108 (node count, level order, native) |
 | matmul 384 | 31 | 27 | 92 | 106 | 87 | 6 (i-k-j, clang native) |
 | fannkuch | 383 | 392 | 364 | - | 405 | 40 (90 streams, `par for`) |
-| n-body 10M | 724 | 728 | 523 | 920 | - | 450 (unrolled, clang AVX2) |
+| n-body 10M | 724 | 728 | 523 | 920 | 720 | 450 (unrolled, clang AVX2) |
 
 Clang is optional: without it the n-body build is 605 ms and matmul 18 ms with gcc. All checksums
 match, and `./verify.sh` exits non-zero on any wrong answer.

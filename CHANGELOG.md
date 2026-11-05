@@ -94,6 +94,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - Goose ports of matmul (87 ms), hash (32 ms), particles (148 ms) and binary trees (1907 ms) join
   sieve (542 ms) and fannkuch (400 ms) in the Linux matrix; all six match their checksums, so the
   five-language comparison now covers six of the eight workloads on Linux.
+- Goose ports of n-body (720 ms) and the ray tracer (90 ms) complete the set: all eight workloads now
+  have a Goose program whose checksum matches the C and MAGIC ones, so the five-language matrix runs
+  end to end on Linux (63 cases).
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
