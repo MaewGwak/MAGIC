@@ -160,7 +160,7 @@ there is no port for that language yet. These are run times, not compile times.
 | ray tracer 1536² | 42 | 41 | **38** | - | - | 43 |
 | hash table 1M | **33** | 34 | 35 | 37 | - | **33** |
 | particles 1M × 100 | 73 | **68** | 135 | 146 | - | 73 |
-| binary trees | - | - | 1341 | - | - | **724** |
+| binary trees | 735 | - | 1346 | - | - | **725** |
 
 Peak memory, **MB** for the whole process (includes ~4 MB of runtime overhead):
 
@@ -173,15 +173,15 @@ Peak memory, **MB** for the whole process (includes ~4 MB of runtime overhead):
 | ray tracer 1536² | 4.7 | 4.2 | 4.7 | - | - | **4.3** |
 | hash table 1M | **36.1** | 36.2 | 36.7 | 39.5 | - | **36.1** |
 | particles 1M × 100 | **34.7** | **34.7** | 35.2 | 37.8 | - | **34.7** |
-| binary trees | - | - | 20.7 | - | - | **20.2** |
+| binary trees | 20.1 | - | 20.7 | - | - | **20.2** |
 
 MAGIC is at, or within 0.6 MB of, the lowest peak memory on every workload (n-body's 4.7 MB is
 0.6 MB over C, and fannkuch's 4.6 MB is 0.5 MB over C).
 
 MAGIC also ships optimized implementations, each a different algorithm with the same answer:
 an odd-only sieve (173 ms, 2.3x), a parallel odd-only sieve (86 ms, **4.6x**), an i-k-j matmul
-(14 ms, 1.4x), closed-form particles (8 ms, **9x**, and 15x less memory), a parallel ray tracer
-(16 ms, **2.6x**), and a direct-map hash (10 ms, **3.3x**, and 7.8x less memory). Times are
+(14 ms, 1.4x), closed-form particles (8 ms, **9x**, using a few MB instead of 35 MB), a parallel ray tracer
+(16 ms, **2.6x**), a direct-map hash (10 ms, **3.3x**, and 7.8x less memory), and flat-arena binary trees (725 ms vs 735 ms for C and 1346 ms for Rust). Times are
 medians of five interleaved runs; the harness now times with a precise wall clock, so sub-15 ms
 readings are real rather than timer ticks.
 
@@ -189,14 +189,14 @@ n-body in loop form is the one workload where MAGIC trails; writing the six pair
 with gcc, and `--unroll` with clang/zig gives 205–236 ms. The harness verifies every checksum:
 
 ```powershell
-pwsh -File verify.ps1          # tests + doc counts + 49 cases (48 without Zig) + memory bounds
+pwsh -File verify.ps1          # tests + doc counts + 48 cases (46 without Zig) + memory bounds
 pwsh -File verify.ps1 -Fast    # tests + doc counts only (a few seconds)
 ```
 
 Run the pieces individually:
 
 ```powershell
-pwsh -File .\bench-all.ps1 -Rebuild   # 49 cases (48 without Zig): checksums, time, memory
+pwsh -File .\bench-all.ps1 -Rebuild   # 48 cases (46 without Zig): checksums, time, memory
 pwsh -File .\bench-memory.ps1         # --report bound vs measured peak RSS
 pwsh -File check-docs.ps1             # the numbers quoted here still match the repo
 ```

@@ -113,6 +113,7 @@ $cases = @(
     @{ name = 'particles C++';       dir = 'bench-suite';    exe = 'particles_cpp.exe';   src = 'particles_cpp.cpp'; kind = 'cpp';  expect = '500094707846.643' },
     @{ name = 'particles Go';        dir = 'bench-suite';    exe = 'particles_go.exe';    src = 'particles_go.go';   kind = 'go';   expect = '500094707846.643' },
 
+    @{ name = 'binary trees C'; dir = 'bench-bt'; exe = 'bt_c.exe'; src = 'bt_c.c'; kind = 'c'; expect = '568328208' },
     @{ name = 'binary trees Rust';   dir = 'bench-bt';       exe = 'bt_rust_flat_native.exe'; src = 'bt_rust_flat.rs'; kind = 'rust'; expect = '568328208' },
     @{ name = 'binary trees MAGIC';   dir = 'bench-bt';       exe = 'bt_magic.exe';         src = 'bt_magic.magic';      kind = 'magic'; expect = '568328208' }
 )

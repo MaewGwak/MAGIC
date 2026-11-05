@@ -66,7 +66,7 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 
 **Verification**
 - 124 tests: 44 unit, 22 CLI, 15 integration, 43 end-to-end.
-- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (49 cases, 48 without Zig), `bench-memory.ps1`.
+- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (48 cases, 46 without Zig), `bench-memory.ps1`.
 
 ## v0.3 — the memory model
 
