@@ -5,7 +5,7 @@ cd "$(dirname "$0")" || exit 2
 export PATH="${HOME}/.cargo/bin:${PATH}"
 
 fail=0
-tests=$(cargo test --lib --test emit --test e2e --test cli -- --list 2>/dev/null | grep -c ': test$')
+tests=$(cargo test --lib --test emit --test e2e --test cli --test native_diff -- --list 2>/dev/null | grep -c ': test$')
 examples=$(find examples -maxdepth 1 -name '*.magic' | wc -l | tr -d ' ')
 
 matrix_tests=$(grep -oE '[0-9]+ tests, all green' TEST-MATRIX.md | head -1 | grep -oE '^[0-9]+')
