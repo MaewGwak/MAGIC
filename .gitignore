@@ -71,3 +71,5 @@
 /bench-db/bufpool_magic
 /bench-db/bufpool_magic.c
 /bench-db/pages.dat
+/bench-db/pgserver_magic
+/bench-db/pgserver_magic.c
