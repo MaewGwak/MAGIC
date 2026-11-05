@@ -672,7 +672,10 @@ fn emit_stmt(
             par,
         } => {
             if *par {
-                out.push_str(&format!("{}#pragma omp parallel for\n", pad(indent)));
+                out.push_str(&format!(
+                    "{}#pragma omp parallel for schedule(dynamic, 1)\n",
+                    pad(indent)
+                ));
             }
             // Small counted loops are fully unrolled: LLVM only vectorises straight-line
             // code, and neither gcc nor clang will unroll a loop nest like n-body's.

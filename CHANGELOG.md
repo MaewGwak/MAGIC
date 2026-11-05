@@ -11,10 +11,12 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
   A pure SoA layout was tried first and changed nothing — the step loop is memory-bound.
 - Parallel ray tracer (`par for` over rows): 13 ms vs 40 ms, with row sums added in the same order
   so the checksum is unchanged.
+- Parallel odd-only sieve (`par for` over primes): 85 ms vs 397 ms for the classic C sieve, and
+  2x faster than the serial odd-only sieve.
 
 **Language**
 - `par for i in a..b { ... }`: iterations must be independent; the compiler emits an OpenMP
-  parallel loop and adds `-fopenmp` automatically.
+  parallel loop with dynamic scheduling and adds `-fopenmp` automatically.
 
 **Toolchain**
 - One-command installers (`install.ps1`, `install.sh`) that build from source and put `magic` and
@@ -61,7 +63,7 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 
 **Verification**
 - 124 tests: 44 unit, 22 CLI, 15 integration, 43 end-to-end.
-- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (46 cases, 45 without Zig), `bench-memory.ps1`.
+- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (47 cases, 46 without Zig), `bench-memory.ps1`.
 
 ## v0.3 — the memory model
 

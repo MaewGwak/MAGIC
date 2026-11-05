@@ -1,0 +1,29 @@
+// Odd-only sieve with the marking loop parallel. Every write is `true`, so
+// concurrent marks are idempotent and the final array is the same.
+fn main() {
+    let n = 100000000;
+    let half = n / 2;
+    let root = 10000;
+    var composite: [bool] = [false; half];
+
+    par for i in 1..root / 2 {
+        if !composite[i] {
+            let p = 2 * i + 1;
+            var j = (p * p) / 2;
+            while j < half {
+                composite[j] = true;
+                j = j + p;
+            }
+        }
+    }
+
+    var count = 1;
+    var k = 1;
+    while k < half {
+        if !composite[k] {
+            count = count + 1;
+        }
+        k = k + 1;
+    }
+    print(count);
+}
