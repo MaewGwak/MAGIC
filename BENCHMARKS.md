@@ -17,8 +17,9 @@
 MAGIC is first or tied on seven of eight workloads and is never meaningfully slower than C. The one
 loss is n-body: Rust ~220 ms vs ~300 ms for both GCC and clang/LLVM (`zig cc`) on the identical C.
 It is **not** a GCC-vs-LLVM gap, and `-fno-math-errno`, `-ffast-math`, `__builtin_sqrt`, constant
-loop bounds and `-funroll-loops` do not close it. Cause open. Memory is lowest or tied-lowest in
-most workloads.
+loop bounds and `-funroll-loops` do not close it. The Rust binary uses packed `sqrtpd`; `restrict`
+gives C only partial `sqrtpd` and no speedup, and `-march=native` is slower. Cause open. Memory is
+lowest or tied-lowest in most workloads.
 
 ## 7. Hash table — 1M inserts + 1M lookups
 

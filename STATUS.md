@@ -29,7 +29,8 @@ Reproduce with `pwsh -File .\bench-all.ps1 -Rebuild`; it exits non-zero on a wro
 - n-body is a real loss: Rust ~220 ms vs ~300 ms for C and for MAGIC. This is **not** GCC vs LLVM:
   `zig cc` (clang/LLVM) on the identical C also measures ~300 ms, and `-fno-math-errno`,
   `-ffast-math`, `__builtin_sqrt`, constant loop bounds and `-funroll-loops` change nothing.
-  The earlier "LLVM backend" explanation was wrong; the cause is still open.
+  The Rust binary uses packed `sqrtpd` (LLVM vectorises the array math); `restrict` gets gcc/zig
+  only partial `sqrtpd` and no speedup, and `-march=native` is slower (346 ms). Cause still open.
 
 ## Compile speed
 

@@ -1,4 +1,4 @@
-# Build artifacts
+﻿# Build artifacts
 /target/
 *.exe
 *.o
@@ -12,3 +12,4 @@
 
 # Compile-speed scratch files
 /bench-compile/big.*
+*.s
