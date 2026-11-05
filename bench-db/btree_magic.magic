@@ -1,0 +1,165 @@
+// In-memory B+tree over i64 keys, MAXK keys per node. Insert N unique keys,
+// then look them up and checksum the values. Same algorithm as btree_c.c.
+fn bisect(node: i32, key: i64, cnt: [i32], keys: [i64], maxk: i32) -> i32 {
+    var lo = 0;
+    var hi = cnt[node];
+    while lo < hi {
+        var mid = (lo + hi) / 2;
+        if keys[node * maxk + mid] < key {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+fn main() {
+    let MAXK = 64;
+    let N = 200000;
+    var cnt: [i32] = [0; 20000];
+    var leaf: [u8] = [0; 20000];
+    var next: [i32] = [0; 20000];
+    var keys: [i64] = [0; 1280000];
+    var vals: [i64] = [0; 1280000];
+    var ch: [i32] = [0; 1300000];
+    var path_node: [i32] = [0; 32];
+    var path_idx: [i32] = [0; 32];
+
+    var nodes = 1;
+    var root = 0;
+    leaf[0] = 1;
+    next[0] = -1;
+
+    var i: i64 = 0;
+    while i < N {
+        var key = (i * 2654435761) % 1000000007;
+        var val = key * 3;
+
+        // descend
+        var node = root;
+        var depth = 0;
+        while leaf[node] == 0 {
+            var idx = bisect(node, key, cnt, keys, MAXK);
+            path_node[depth] = node;
+            path_idx[depth] = idx;
+            depth = depth + 1;
+            node = ch[node * (MAXK + 1) + idx];
+        }
+
+        var pos = bisect(node, key, cnt, keys, MAXK);
+        var dup = pos < cnt[node] && keys[node * MAXK + pos] == key;
+        if !dup {
+            var j = cnt[node];
+            while j > pos {
+                keys[node * MAXK + j] = keys[node * MAXK + j - 1];
+                vals[node * MAXK + j] = vals[node * MAXK + j - 1];
+                j = j - 1;
+            }
+            keys[node * MAXK + pos] = key;
+            vals[node * MAXK + pos] = val;
+            cnt[node] = cnt[node] + 1;
+
+            var sep: i64 = 0;
+            var new_child: i32 = -1;
+            var split = false;
+            if cnt[node] > MAXK {
+                var nn = nodes;
+                nodes = nodes + 1;
+                leaf[nn] = 1;
+                var mid = MAXK / 2;
+                var m = mid;
+                var t = 0;
+                while m < cnt[node] {
+                    keys[nn * MAXK + t] = keys[node * MAXK + m];
+                    vals[nn * MAXK + t] = vals[node * MAXK + m];
+                    t = t + 1;
+                    m = m + 1;
+                }
+                cnt[nn] = t;
+                cnt[node] = mid;
+                next[nn] = next[node];
+                next[node] = nn;
+                sep = keys[nn * MAXK];
+                new_child = nn;
+                split = true;
+            }
+
+            while split && depth > 0 {
+                depth = depth - 1;
+                var pnode = path_node[depth];
+                var pidx = path_idx[depth];
+                var j2 = cnt[pnode];
+                while j2 > pidx {
+                    keys[pnode * MAXK + j2] = keys[pnode * MAXK + j2 - 1];
+                    j2 = j2 - 1;
+                }
+                keys[pnode * MAXK + pidx] = sep;
+                var c2 = cnt[pnode] + 1;
+                while c2 > pidx + 1 {
+                    ch[pnode * (MAXK + 1) + c2] = ch[pnode * (MAXK + 1) + c2 - 1];
+                    c2 = c2 - 1;
+                }
+                ch[pnode * (MAXK + 1) + pidx + 1] = new_child;
+                cnt[pnode] = cnt[pnode] + 1;
+                if cnt[pnode] <= MAXK {
+                    split = false;
+                } else {
+                    var nn2 = nodes;
+                    nodes = nodes + 1;
+                    leaf[nn2] = 0;
+                    var mid2 = MAXK / 2;
+                    var mm = mid2 + 1;
+                    var tt = 0;
+                    var med = keys[pnode * MAXK + mid2];
+                    while mm < cnt[pnode] {
+                        keys[nn2 * MAXK + tt] = keys[pnode * MAXK + mm];
+                        tt = tt + 1;
+                        mm = mm + 1;
+                    }
+                    var cc = mid2 + 1;
+                    var tc = 0;
+                    while cc <= cnt[pnode] {
+                        ch[nn2 * (MAXK + 1) + tc] = ch[pnode * (MAXK + 1) + cc];
+                        tc = tc + 1;
+                        cc = cc + 1;
+                    }
+                    cnt[nn2] = tt;
+                    cnt[pnode] = mid2;
+                    sep = med;
+                    new_child = nn2;
+                }
+            }
+
+            if split {
+                var nr = nodes;
+                nodes = nodes + 1;
+                leaf[nr] = 0;
+                keys[nr * MAXK] = sep;
+                ch[nr * (MAXK + 1)] = root;
+                ch[nr * (MAXK + 1) + 1] = new_child;
+                cnt[nr] = 1;
+                root = nr;
+            }
+        }
+        i = i + 1;
+    }
+
+    var total: i64 = 0;
+    i = 0;
+    while i < N {
+        var key = (i * 2654435761) % 1000000007;
+        var node = root;
+        while leaf[node] == 0 {
+            var idx = bisect(node, key, cnt, keys, MAXK);
+            node = ch[node * (MAXK + 1) + idx];
+        }
+        var pos = bisect(node, key, cnt, keys, MAXK);
+        if pos < cnt[node] && keys[node * MAXK + pos] == key {
+            total = total + vals[node * MAXK + pos];
+        }
+        i = i + 1;
+    }
+    print(total);
+    print(nodes);
+}

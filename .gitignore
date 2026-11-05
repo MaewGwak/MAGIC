@@ -45,3 +45,6 @@
 /bench-db/pageio_c
 /bench-db/pageio_magic
 /bench-db/pageio_magic.c
+/bench-db/btree_c
+/bench-db/btree_magic
+/bench-db/btree_magic.c
