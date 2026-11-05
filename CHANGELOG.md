@@ -19,6 +19,8 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - Binary trees with a node-count check (a perfect tree's size is its allocation counter):
   427 ms vs 745 ms C (1.74x) and 1349 ms Rust. Storing both children side by side was slower
   (852 ms), and struct arrays cannot be passed as parameters yet.
+- n-body with AVX2 (`-march=x86_64_v3` through zig cc): 189 ms vs 218 ms Rust and 301 ms C.
+  This target needs AVX2; the portable builds stay at 254 ms (gcc, unrolled) and 206 ms (zig).
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
@@ -71,7 +73,7 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 
 **Verification**
 - 124 tests: 44 unit, 22 CLI, 15 integration, 43 end-to-end.
-- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (49 cases, 47 without Zig), `bench-memory.ps1`.
+- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (52 cases, 49 without Zig), `bench-memory.ps1`.
 
 ## v0.3 — the memory model
 

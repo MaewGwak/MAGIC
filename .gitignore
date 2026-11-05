@@ -32,3 +32,4 @@
 /bench-suite/hash_magic_par.c
 /bench-suite/hash_magic_direct.c
 /bench-bt/bt_magic_count.c
+/bench-suite/nbody_v3.c

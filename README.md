@@ -181,8 +181,9 @@ MAGIC is at, or within 0.6 MB of, the lowest peak memory on every workload (n-bo
 MAGIC also ships optimized implementations, each a different algorithm with the same answer:
 an odd-only sieve (173 ms, 2.3x), a parallel odd-only sieve (86 ms, **4.6x**), an i-k-j matmul
 (14 ms, 1.4x), closed-form particles (8 ms, **9x**, using a few MB instead of 35 MB), a parallel ray tracer
-(16 ms, **2.6x**), a direct-map hash (10 ms, **3.3x**, and 7.8x less memory), and node-count binary
-trees (427 ms vs 745 ms for C — **1.74x** — and 1349 ms for Rust). Times are
+(16 ms, **2.6x**), a direct-map hash (10 ms, **3.3x**, and 7.8x less memory), node-count binary
+trees (427 ms vs 745 ms for C — **1.74x** — and 1349 ms for Rust), and n-body with AVX2
+(`-march=x86_64_v3`: 189 ms vs 217 ms for Rust and 301 ms for C; needs AVX2). Times are
 medians of five interleaved runs; the harness now times with a precise wall clock, so sub-15 ms
 readings are real rather than timer ticks.
 
@@ -190,14 +191,14 @@ n-body in loop form is the one workload where MAGIC trails; writing the six pair
 with gcc, and `--unroll` with clang/zig gives 205–236 ms. The harness verifies every checksum:
 
 ```powershell
-pwsh -File verify.ps1          # tests + doc counts + 49 cases (47 without Zig) + memory bounds
+pwsh -File verify.ps1          # tests + doc counts + 52 cases (49 without Zig) + memory bounds
 pwsh -File verify.ps1 -Fast    # tests + doc counts only (a few seconds)
 ```
 
 Run the pieces individually:
 
 ```powershell
-pwsh -File .\bench-all.ps1 -Rebuild   # 49 cases (47 without Zig): checksums, time, memory
+pwsh -File .\bench-all.ps1 -Rebuild   # 52 cases (49 without Zig): checksums, time, memory
 pwsh -File .\bench-memory.ps1         # --report bound vs measured peak RSS
 pwsh -File check-docs.ps1             # the numbers quoted here still match the repo
 ```

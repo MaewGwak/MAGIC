@@ -133,6 +133,12 @@ if ($zig) {
         kind = 'magic'; cc = "$($zig.FullName) cc"; out = 'nbody_auto_zig.exe'
         unroll = $true; expect = '11211.531383844'
     }
+    $cases += @{
+        name = 'n-body AVX2 MAGIC (zig)'; dir = 'bench-suite'
+        exe = 'nbody_v3.exe'; src = 'nbody_unrolled.magic'
+        kind = 'magic'; cc = "$($zig.FullName) cc -march=x86_64_v3"; out = 'nbody_v3.exe'
+        expect = '11211.531383844'
+    }
 }
 
 if ($Rebuild) {
