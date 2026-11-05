@@ -24,6 +24,12 @@ counter change moved medians by <5% and scalar promotion miscompiled the scanner
 stays on the v0.8.8 codegen until the typed IR and its differential harness land
 (see `NATIVE-BACKEND.md`).
 
+### Native differential harness
+
+`tests/native_diff.rs` runs 27 programs (examples, float/struct/vector benchmarks, DB components)
+through both backends and requires identical stdout and exit status, with timeouts; any native
+optimisation must pass it before being enabled.
+
 ## v0.8.8 — calloc fast path and native strength reduction (2026-11-06)
 
 - Zero-initialised arrays (`[0; n]`, `[false; n]`, `[0.0; n]`) now use `calloc` on both backends

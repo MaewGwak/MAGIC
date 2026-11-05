@@ -87,6 +87,13 @@ Four independent reviews (performance, language features, release gates, adversa
 - **Honesty rules**: do not call this "self-hosted" (the compiler is Rust); say "no-C native
   backend". Native tests must not silently pass when `as`/`ld` are missing: the gate script fails.
 
+## Differential harness
+
+`tests/native_diff.rs` builds a 27-program corpus (all examples, the integer/float/struct/vector
+benchmarks and the database components) with both backends, runs them from the repository root and
+requires identical stdout and exit status, with per-program timeouts. It is the gate every native
+optimisation must pass; a mismatch fails the test with the program names. Current runtime: ~25 s.
+
 ## Register-allocation experiments (v0.8.8 → v0.8.9)
 
 Two ad-hoc register experiments were attempted on the AST emitter and **both were reverted**; the
