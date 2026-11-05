@@ -1,0 +1,31 @@
+// MAGIC sieve, odd-only: index k represents 2k+1, so the array is half the
+// size and no even composite is touched. Same answer as the classic sieve.
+fn main() {
+    let n = 100000000;
+    let half = n / 2;
+    let root = 10000; // floor(sqrt(n))
+    var composite: [bool] = [false; half];
+
+    var i = 1;
+    while i <= root / 2 {
+        let p = 2 * i + 1;
+        if !composite[i] {
+            var j = (p * p) / 2;
+            while j < half {
+                composite[j] = true;
+                j = j + p;
+            }
+        }
+        i = i + 1;
+    }
+
+    var count = 1; // the prime 2
+    var k = 1;
+    while k < half {
+        if !composite[k] {
+            count = count + 1;
+        }
+        k = k + 1;
+    }
+    print(count);
+}

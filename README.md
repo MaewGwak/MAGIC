@@ -178,18 +178,21 @@ Peak memory, **MB** for the whole process (includes ~4 MB of runtime overhead):
 MAGIC is at, or within 0.1 MB of, the lowest peak memory on every workload; Goose is slightly lower
 on fannkuch (4.3 vs 4.4 MB).
 
+MAGIC also ships an odd-only sieve — a different algorithm with the same answer — at 190 ms and
+51.8 MB peak: 2.3x faster and 1.9x smaller than the classic sieve above.
+
 n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms
 with gcc, and `--unroll` with clang/zig gives 205–236 ms. The harness verifies every checksum:
 
 ```powershell
-pwsh -File verify.ps1          # tests + doc counts + 42 cases (41 without Zig) + memory bounds
+pwsh -File verify.ps1          # tests + doc counts + 43 cases (42 without Zig) + memory bounds
 pwsh -File verify.ps1 -Fast    # tests + doc counts only (a few seconds)
 ```
 
 Run the pieces individually:
 
 ```powershell
-pwsh -File .\bench-all.ps1 -Rebuild   # 42 cases (41 without Zig): checksums, time, memory
+pwsh -File .\bench-all.ps1 -Rebuild   # 43 cases (42 without Zig): checksums, time, memory
 pwsh -File .\bench-memory.ps1         # --report bound vs measured peak RSS
 pwsh -File check-docs.ps1             # the numbers quoted here still match the repo
 ```

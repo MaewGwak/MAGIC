@@ -37,6 +37,7 @@ $cases = @(
     @{ name = 'sieve 100M C';        dir = 'bench-suite';    exe = 'sieve_c.exe';         src = 'sieve_c.c';         kind = 'c';    expect = '5761455' },
     @{ name = 'sieve 100M Rust';     dir = 'bench-suite';    exe = 'sieve_rs.exe';        src = 'sieve_rs.rs';       kind = 'rust'; expect = '5761455' },
     @{ name = 'sieve 100M MAGIC';     dir = 'bench-suite';    exe = 'sieve_magic.exe';      src = 'sieve_magic.magic';   kind = 'magic'; expect = '5761455' },
+    @{ name = 'sieve 100M MAGIC odd-only'; dir = 'bench-suite'; exe = 'sieve_magic_odd.exe'; src = 'sieve_magic_odd.magic'; kind = 'magic'; expect = '5761455' },
     @{ name = 'sieve 100M C++';      dir = 'bench-suite';    exe = 'sieve_cpp.exe';       src = 'sieve_cpp.cpp';     kind = 'cpp';  expect = '5761455' },
     @{ name = 'sieve 100M Go';       dir = 'bench-suite';    exe = 'sieve_go.exe';        src = 'sieve_go.go';       kind = 'go';   expect = '5761455' },
     @{ name = 'sieve 100M Goose';    dir = 'bench-suite';    exe = 'sieve_goose.exe';     src = 'sieve_goose.goose'; kind = 'goose'; expect = '5761455' },
