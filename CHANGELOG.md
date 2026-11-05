@@ -45,6 +45,10 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - Fannkuch dead ends: 720 streams (three fixed positions) tied the 90-stream version at 40 ms, so
   the simpler 90-stream build stays. A segmented parallel sieve (each thread marking its own chunk)
   was 344 ms vs 132 ms for the odd-only `par for` sieve, so it was dropped.
+- Portable n-body stays GCC-bound on Linux: `-fno-math-errno`, `-march=znver5`, `-march=x86-64-v4`,
+  restrict-qualified local arrays and array-packed pair loops all landed at 592-642 ms, against
+  452 ms for clang AVX2 and 521 ms for Rust. GCC only packs two of the six square roots, so the
+  n-body win on Linux needs an LLVM backend (clang or zig).
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
