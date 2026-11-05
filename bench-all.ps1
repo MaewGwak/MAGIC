@@ -78,6 +78,7 @@ $cases = @(
     @{ name = 'particles Rust idx';  dir = 'bench-suite';    exe = 'particles_rs.exe';    src = 'particles_rs.rs';   kind = 'rust'; expect = '500094707846.643' },
     @{ name = 'particles Rust iter'; dir = 'bench-suite';    exe = 'particles_rs_iter.exe'; src = 'particles_rs_iter.rs'; kind = 'rust'; expect = '500094707846.643' },
     @{ name = 'particles MAGIC';      dir = 'bench-suite';    exe = 'particles_magic.exe';  src = 'particles_magic.magic'; kind = 'magic'; expect = '500094707846.643' },
+    @{ name = 'particles 1M x 100 MAGIC closed-form'; dir = 'bench-suite'; exe = 'particles_magic_closed.exe'; src = 'particles_magic_closed.magic'; kind = 'magic'; expect = '500094707846.643' },
     @{ name = 'particles C++';       dir = 'bench-suite';    exe = 'particles_cpp.exe';   src = 'particles_cpp.cpp'; kind = 'cpp';  expect = '500094707846.643' },
     @{ name = 'particles Go';        dir = 'bench-suite';    exe = 'particles_go.exe';    src = 'particles_go.go';   kind = 'go';   expect = '500094707846.643' },
 

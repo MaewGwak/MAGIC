@@ -1,0 +1,24 @@
+// Particles with a constant velocity decay: after 100 steps each x is
+// x0 + (1 + r + r^2 + ... + r^99), so the whole integration is one O(N) pass.
+fn main() {
+    let n = 1000000;
+    let steps = 100;
+    let r = 0.999;
+
+    var ssum = 0.0;
+    var p = 1.0;
+    var k = 0;
+    while k < steps {
+        ssum = ssum + p;
+        p = p * r;
+        k = k + 1;
+    }
+
+    var total = 0.0;
+    var i = 0;
+    while i < n {
+        total = total + ((i as f64) + ssum);
+        i = i + 1;
+    }
+    print_prec(total, 3);
+}

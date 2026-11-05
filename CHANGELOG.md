@@ -7,6 +7,8 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 **Performance** (algorithm-optimized MAGIC implementations, same answers)
 - Odd-only sieve: 190 ms and 51.8 MB vs 429 ms and 99.5 MB for the classic C sieve.
 - i-k-j matmul: 15 ms vs 30 ms for the classic C matmul.
+- Closed-form particles (constant decay over 100 steps): 15 ms and 4.1 MB vs 78 ms and 34.7 MB.
+  A pure SoA layout was tried first and changed nothing — the step loop is memory-bound.
 
 **Toolchain**
 - One-command installers (`install.ps1`, `install.sh`) that build from source and put `magic` and
@@ -53,7 +55,7 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 
 **Verification**
 - 123 tests: 44 unit, 22 CLI, 15 integration, 42 end-to-end.
-- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (44 cases, 43 without Zig), `bench-memory.ps1`.
+- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (45 cases, 44 without Zig), `bench-memory.ps1`.
 
 ## v0.3 — the memory model
 

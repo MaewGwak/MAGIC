@@ -19,3 +19,4 @@
 /bench-suite/odd_small.c
 /bench-suite/sieve_magic_odd.c
 /bench-suite/matmul_magic_ikj.c
+/bench-suite/particles_magic_closed.c
