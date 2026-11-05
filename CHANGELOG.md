@@ -21,6 +21,10 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
   (852 ms), and struct arrays cannot be passed as parameters yet.
 - n-body with AVX2 (`-march=x86_64_v3` through zig cc): 189 ms vs 218 ms Rust and 301 ms C.
   This target needs AVX2; the portable builds stay at 254 ms (gcc, unrolled) and 206 ms (zig).
+- fannkuch dead ends: splitting the permutation space by first element into 10 `par for` chunks
+  changed the checksum, because the reference enumeration order is not lexicographic (max 38 was
+  right, checksum was not). zig (158 ms), `-funroll-loops` (142 ms) and `-march=x86-64-v3`
+  (142 ms) gave no gain over the 143 ms gcc build.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
