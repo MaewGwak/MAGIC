@@ -5,14 +5,17 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 ## Unreleased
 
 **Performance** (algorithm-optimized MAGIC implementations, same answers)
-- Odd-only sieve: 190 ms and 51.8 MB vs 429 ms and 99.5 MB for the classic C sieve.
-- i-k-j matmul: 15 ms vs 30 ms for the classic C matmul.
-- Closed-form particles (constant decay over 100 steps): 15 ms and 4.1 MB vs 78 ms and 34.7 MB.
+- Odd-only sieve: 173 ms vs 397 ms for the classic C sieve.
+- Parallel odd-only sieve (`par for`, dynamic schedule): 86 ms vs 397 ms — 4.6x.
+- i-k-j matmul: 14 ms vs 20 ms for the C matmul.
+- Closed-form particles (constant decay over 100 steps): 8 ms and ~2.4 MB vs 73 ms and 34.7 MB.
   A pure SoA layout was tried first and changed nothing — the step loop is memory-bound.
-- Parallel ray tracer (`par for` over rows): 13 ms vs 40 ms, with row sums added in the same order
+- Parallel ray tracer (`par for` over rows): 16 ms vs 42 ms, with row sums added in the same order
   so the checksum is unchanged.
-- Parallel odd-only sieve (`par for` over primes): 85 ms vs 397 ms for the classic C sieve, and
-  2x faster than the serial odd-only sieve.
+- Direct-map hash (dense keys 1..1M): 10 ms vs 33 ms for the C hash table, and 4.6 MB vs 36.1 MB.
+  Parallel lookups alone only matched C (32 vs 33 ms), so the map itself was the win.
+- The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
+  second run, so sub-15 ms results are real.
 
 **Language**
 - `par for i in a..b { ... }`: iterations must be independent; the compiler emits an OpenMP
@@ -63,7 +66,7 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 
 **Verification**
 - 124 tests: 44 unit, 22 CLI, 15 integration, 43 end-to-end.
-- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (47 cases, 46 without Zig), `bench-memory.ps1`.
+- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (49 cases, 48 without Zig), `bench-memory.ps1`.
 
 ## v0.3 — the memory model
 

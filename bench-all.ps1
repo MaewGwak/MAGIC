@@ -27,22 +27,36 @@ if ($env:OS -eq 'Windows_NT') {
 }
 
 function Run-Once([string]$Exe) {
+    # Run 1: precise wall time (WaitForExit, no polling).
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = (Resolve-Path -LiteralPath $Exe).Path
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $p = [System.Diagnostics.Process]::Start($psi)
-    $peak = 0
-    while (-not $p.HasExited) {
-        try { $p.Refresh(); if ($p.WorkingSet64 -gt $peak) { $peak = $p.WorkingSet64 } } catch {}
-        Start-Sleep -Milliseconds 2
-    }
+    $p.WaitForExit()
     $sw.Stop()
+    $ms = [int]$sw.Elapsed.TotalMilliseconds
+    $outText = ($p.StandardOutput.ReadToEnd() -replace "`r`n", "`n").Trim()
+
+    # Run 2: peak memory (polling; its timing is not used).
+    $psi2 = New-Object System.Diagnostics.ProcessStartInfo
+    $psi2.FileName = $psi.FileName
+    $psi2.UseShellExecute = $false
+    $psi2.RedirectStandardOutput = $true
+    $p2 = [System.Diagnostics.Process]::Start($psi2)
+    $peak = 0
+    while (-not $p2.HasExited) {
+        try { $p2.Refresh(); if ($p2.WorkingSet64 -gt $peak) { $peak = $p2.WorkingSet64 } } catch {}
+        Start-Sleep -Milliseconds 1
+    }
+    $p2.WaitForExit()
+    $p2.StandardOutput.ReadToEnd() | Out-Null
+
     [pscustomobject]@{
-        Ms     = [int]$sw.Elapsed.TotalMilliseconds
+        Ms     = $ms
         PeakMB = [math]::Round($peak / 1MB, 1)
-        Out    = ($p.StandardOutput.ReadToEnd() -replace "`r`n", "`n").Trim()
+        Out    = $outText
     }
 }
 
@@ -86,6 +100,8 @@ $cases = @(
     @{ name = 'hash Rust open';      dir = 'bench-suite';    exe = 'hash_rs_open.exe';    src = 'hash_rs_open.rs';   kind = 'rust'; expect = '1500001500000' },
     @{ name = 'hash Rust HashMap';   dir = 'bench-suite';    exe = 'hash_rs_hashmap.exe'; src = 'hash_rs_hashmap.rs'; kind = 'rust'; expect = '1500001500000' },
     @{ name = 'hash MAGIC';           dir = 'bench-suite';    exe = 'hash_magic.exe';       src = 'hash_magic.magic';    kind = 'magic'; expect = '1500001500000' },
+    @{ name = 'hash 1M MAGIC par'; dir = 'bench-suite'; exe = 'hash_magic_par.exe'; src = 'hash_magic_par.magic'; kind = 'magic'; expect = '1500001500000' },
+    @{ name = 'hash 1M MAGIC direct'; dir = 'bench-suite'; exe = 'hash_magic_direct.exe'; src = 'hash_magic_direct.magic'; kind = 'magic'; expect = '1500001500000' },
     @{ name = 'hash C++';            dir = 'bench-suite';    exe = 'hash_cpp.exe';        src = 'hash_cpp.cpp';      kind = 'cpp';  expect = '1500001500000' },
     @{ name = 'hash Go';             dir = 'bench-suite';    exe = 'hash_go.exe';         src = 'hash_go.go';        kind = 'go';   expect = '1500001500000' },
 

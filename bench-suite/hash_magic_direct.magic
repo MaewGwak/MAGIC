@@ -1,0 +1,20 @@
+// The keys are the dense range 1..1,000,000, so a direct array is the optimal
+// map: no hashing and no probing, same answer as the open-addressing table.
+fn main() {
+    let n: i64 = 1000000;
+    var vals: [i64] = [0; n + 1];
+
+    var i: i64 = 1;
+    while i <= n {
+        vals[i] = i * 3;
+        i = i + 1;
+    }
+
+    var total: i64 = 0;
+    i = 1;
+    while i <= n {
+        total = total + vals[i];
+        i = i + 1;
+    }
+    print(total);
+}

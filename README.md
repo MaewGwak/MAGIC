@@ -153,51 +153,50 @@ there is no port for that language yet. These are run times, not compile times.
 
 | Workload | C | C++ | Rust | Go | Goose | MAGIC |
 |---|---:|---:|---:|---:|---:|---:|
-| sieve 100M | 414 | 428 | 429 | 441 | 443 | 429 |
-| fannkuch n=10 | 175 | 174 | 174 | - | 174 | **158** |
-| matmul 384 | 31 | 31 | 46 | 61 | - | **30** |
-| n-body 10M | 302 | 303 | **221** | 399 | - | 317 |
-| ray tracer 1536² | 47 | 47 | **46** | - | - | **46** |
-| hash table 1M | 46 | 47 | 46 | 46 | - | 47 |
-| particles 1M × 100 | 78 | 78 | 158 | 157 | - | **78** |
-| binary trees | - | - | 1371 | - | - | **731** |
+| sieve 100M | 397 | 403 | 408 | 438 | 423 | **388** |
+| fannkuch n=10 | 163 | 169 | 160 | - | 174 | **143** |
+| matmul 384 | 20 | 20 | 44 | 48 | - | **18** |
+| n-body 10M | **301** | **301** | **219** | 385 | - | 308 |
+| ray tracer 1536² | 42 | 41 | **38** | - | - | 43 |
+| hash table 1M | **33** | 34 | 35 | 37 | - | **33** |
+| particles 1M × 100 | 73 | **68** | 135 | 146 | - | 73 |
+| binary trees | - | - | 1341 | - | - | **724** |
 
 Peak memory, **MB** for the whole process (includes ~4 MB of runtime overhead):
 
 | Workload | C | C++ | Rust | Go | Goose | MAGIC |
 |---|---:|---:|---:|---:|---:|---:|
-| sieve 100M | 99.5 | 100.0 | 100.1 | 102.7 | 99.7 | **99.5** |
-| fannkuch n=10 | 4.6 | 4.6 | 5.3 | - | **4.3** | 4.4 |
-| matmul 384 | 5.8 | 5.8 | 6.4 | 8.0 | - | **5.8** |
-| n-body 10M | 4.7 | 4.7 | 4.7 | 6.2 | - | **4.7** |
-| ray tracer 1536² | 4.1 | 4.1 | 4.9 | - | - | **4.1** |
-| hash table 1M | 36.1 | 36.1 | 36.7 | 39.7 | - | **36.1** |
-| particles 1M × 100 | 34.7 | 34.7 | 35.2 | 37.8 | - | **34.7** |
+| sieve 100M | 99.5 | 100.0 | 100.1 | 102.6 | 99.7 | **99.5** |
+| fannkuch n=10 | **4.1** | 4.6 | 4.7 | - | 4.3 | 4.6 |
+| matmul 384 | 5.8 | 5.8 | 6.4 | 7.8 | - | **5.8** |
+| n-body 10M | **4.1** | **4.1** | 4.7 | 6.2 | - | 4.7 |
+| ray tracer 1536² | 4.7 | 4.2 | 4.7 | - | - | **4.3** |
+| hash table 1M | **36.1** | 36.2 | 36.7 | 39.5 | - | **36.1** |
+| particles 1M × 100 | **34.7** | **34.7** | 35.2 | 37.8 | - | **34.7** |
 | binary trees | - | - | 20.7 | - | - | **20.2** |
 
-MAGIC is at, or within 0.1 MB of, the lowest peak memory on every workload; Goose is slightly lower
-on fannkuch (4.3 vs 4.4 MB).
+MAGIC is at, or within 0.6 MB of, the lowest peak memory on every workload (n-body's 4.7 MB is
+0.6 MB over C, and fannkuch's 4.6 MB is 0.5 MB over C).
 
-MAGIC also ships an odd-only sieve — a different algorithm with the same answer — at 190 ms and
-51.8 MB peak: 2.3x faster and 1.9x smaller than the classic sieve above. Its i-k-j matmul runs at
-15 ms and 5.8 MB: 2x faster than the classic C matmul above. Its closed-form particles run at
-15 ms and 4.1 MB: 5.2x faster and 8x smaller than the classic step loop. Its parallel ray tracer
-runs at 13 ms: 3.1x faster than the classic ray tracer above. Its parallel odd-only sieve runs at
-85 ms: 4.6x faster than the classic sieve above. (At ~15 ms these are within one Windows timer
-tick, so read 15 vs 30 ms as one tick apart.)
+MAGIC also ships optimized implementations, each a different algorithm with the same answer:
+an odd-only sieve (173 ms, 2.3x), a parallel odd-only sieve (86 ms, **4.6x**), an i-k-j matmul
+(14 ms, 1.4x), closed-form particles (8 ms, **9x**, and 15x less memory), a parallel ray tracer
+(16 ms, **2.6x**), and a direct-map hash (10 ms, **3.3x**, and 7.8x less memory). Times are
+medians of five interleaved runs; the harness now times with a precise wall clock, so sub-15 ms
+readings are real rather than timer ticks.
 
 n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms
 with gcc, and `--unroll` with clang/zig gives 205–236 ms. The harness verifies every checksum:
 
 ```powershell
-pwsh -File verify.ps1          # tests + doc counts + 47 cases (46 without Zig) + memory bounds
+pwsh -File verify.ps1          # tests + doc counts + 49 cases (48 without Zig) + memory bounds
 pwsh -File verify.ps1 -Fast    # tests + doc counts only (a few seconds)
 ```
 
 Run the pieces individually:
 
 ```powershell
-pwsh -File .\bench-all.ps1 -Rebuild   # 47 cases (46 without Zig): checksums, time, memory
+pwsh -File .\bench-all.ps1 -Rebuild   # 49 cases (48 without Zig): checksums, time, memory
 pwsh -File .\bench-memory.ps1         # --report bound vs measured peak RSS
 pwsh -File check-docs.ps1             # the numbers quoted here still match the repo
 ```

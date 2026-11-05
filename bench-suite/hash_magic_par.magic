@@ -1,0 +1,48 @@
+// Open-addressing hash table: 1M inserts (serial) + 1M lookups (parallel).
+// Lookups only read the table, so they run in 16 independent chunks whose
+// integer sums are exact.
+fn main() {
+    let size: i64 = 2097152;
+    let n: i64 = 1000000;
+    let parts: i64 = 16;
+    let chunk: i64 = n / parts;
+
+    var keys: [i64] = [0; size];
+    var vals: [i64] = [0; size];
+
+    var i: i64 = 1;
+    while i <= n {
+        var slot = (i * 2654435761) % size;
+        while keys[slot] != 0 {
+            slot = (slot + 1) % size;
+        }
+        keys[slot] = i;
+        vals[slot] = i * 3;
+        i = i + 1;
+    }
+
+    var partials: [i64] = [0; parts];
+    par for t in 0..parts {
+        var lo: i64 = (t as i64) * chunk + 1;
+        var hi: i64 = lo + chunk;
+        var s: i64 = 0;
+        var k: i64 = lo;
+        while k < hi {
+            var slot = (k * 2654435761) % size;
+            while keys[slot] != k {
+                slot = (slot + 1) % size;
+            }
+            s = s + vals[slot];
+            k = k + 1;
+        }
+        partials[t] = s;
+    }
+
+    var total: i64 = 0;
+    var u: i64 = 0;
+    while u < parts {
+        total = total + partials[u];
+        u = u + 1;
+    }
+    print(total);
+}

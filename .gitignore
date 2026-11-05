@@ -29,3 +29,5 @@
 /bench-suite/rdyn.c
 /bench-suite/mstat.c
 /bench-suite/rstat.c
+/bench-suite/hash_magic_par.c
+/bench-suite/hash_magic_direct.c
