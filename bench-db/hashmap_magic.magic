@@ -1,0 +1,40 @@
+// 1M inserts and 1M lookups in an open-addressing i64 -> i64 map.
+fn map_put(keys: [i64], vals: [i64], cap: i64, k: i64, v: i64) {
+    var h = (k * 2654435761) % cap;
+    while keys[h] != 0 {
+        h = (h + 1) % cap;
+    }
+    keys[h] = k;
+    vals[h] = v;
+}
+
+fn map_get(keys: [i64], vals: [i64], cap: i64, k: i64) -> i64 {
+    var h = (k * 2654435761) % cap;
+    while keys[h] != 0 {
+        if keys[h] == k {
+            return vals[h];
+        }
+        h = (h + 1) % cap;
+    }
+    return 0;
+}
+
+fn main() {
+    let N = 1000000;
+    let CAP = 2097152;
+    var keys: [i64] = [0; 2097152];
+    var vals: [i64] = [0; 2097152];
+
+    var i = 1;
+    while i <= N {
+        map_put(keys, vals, CAP, i, i * 3);
+        i = i + 1;
+    }
+    var total: i64 = 0;
+    i = 1;
+    while i <= N {
+        total = total + map_get(keys, vals, CAP, i);
+        i = i + 1;
+    }
+    print(total);
+}

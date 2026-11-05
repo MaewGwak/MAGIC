@@ -60,6 +60,18 @@ Run it as `./sqldb_magic scan` (heap scan) or `./sqldb_magic index` (B+tree inde
 The index makes point lookups 17x faster, and MAGIC matches C in both modes (1.7% slower on the
 scan, parity on the index).
 
+## Collections
+
+`hashmap`: open addressing over two `i64` arrays, 1,000,000 inserts and lookups.
+
+| | C | MAGIC |
+|---|---:|---:|
+| time | 37 ms | 38 ms |
+| checksum | 1500001500000 | 1500001500000 |
+
+The same map lives in `examples/hashmap.magic` as the language's collections pattern (no builtin
+container type is needed).
+
 ## Persistence
 
 `dbload` parses the INSERT file once and writes 16-byte `(key, value)` records to `heap.dat` behind

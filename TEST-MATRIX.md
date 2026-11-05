@@ -43,8 +43,8 @@ what it proves, so the docs can link straight to it.
 | `reports_struct_array_sizes` | `tests/emit.rs` | `[P; 10]` with two i32 fields → 80 bytes |
 | `reports_nested_struct_sizes` | `tests/emit.rs` | `Outer { Inner, i64 }` → 160 bytes for 10 |
 | `reports_struct_padding` | `tests/emit.rs` | `{ u8, i64 }` pads to 16 bytes |
-| `all_examples_compile` | `tests/emit.rs` | every one of the 14 examples still compiles |
-| `examples_produce_expected_output` | `tests/e2e.rs` | all 14 examples run and print the documented output |
+| `all_examples_compile` | `tests/emit.rs` | every one of the 15 examples still compiles |
+| `examples_produce_expected_output` | `tests/e2e.rs` | all 15 examples run and print the documented output |
 
 `arena_frees_at_block_end` now asserts the bump path (constant-folded `let n`).
 

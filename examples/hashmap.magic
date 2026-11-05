@@ -1,0 +1,41 @@
+// A hash map from i64 to i64 in the language itself: open addressing with
+// linear probing over two arrays. Arrays are owned locals, so a map is just
+// data plus the two functions below.
+fn map_put(keys: [i64], vals: [i64], cap: i64, k: i64, v: i64) {
+    var h = (k * 2654435761) % cap;
+    while keys[h] != 0 {
+        if keys[h] == k {
+            vals[h] = v;
+            return;
+        }
+        h = (h + 1) % cap;
+    }
+    keys[h] = k;
+    vals[h] = v;
+}
+
+fn map_get(keys: [i64], vals: [i64], cap: i64, k: i64) -> i64 {
+    var h = (k * 2654435761) % cap;
+    while keys[h] != 0 {
+        if keys[h] == k {
+            return vals[h];
+        }
+        h = (h + 1) % cap;
+    }
+    return -1;
+}
+
+fn main() {
+    let cap = 4096;
+    var keys: [i64] = [0; 4096];
+    var vals: [i64] = [0; 4096];
+
+    var i = 1;
+    while i <= 1000 {
+        map_put(keys, vals, cap, i, i * i);
+        i = i + 1;
+    }
+    print(map_get(keys, vals, cap, 50));
+    print(map_get(keys, vals, cap, 1000));
+    print(map_get(keys, vals, cap, 1001));
+}

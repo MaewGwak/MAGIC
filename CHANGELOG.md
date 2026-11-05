@@ -130,6 +130,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
   sends AuthenticationOk/ReadyForQuery, and serves SimpleQuery against the heap file: `SELECT 1`,
   `COUNT(*)`, `SUM(value)` and `WHERE id = k` through the B+tree, with RowDescription, DataRow and
   CommandComplete. An e2e test builds a three-row heap and checks every answer.
+- Collections pattern: `examples/hashmap.magic` is an open-addressing i64 map over arrays, and the
+  same code benchmarked at 1,000,000 inserts plus lookups runs in 38 ms against C's 37 ms with an
+  identical checksum.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 

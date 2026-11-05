@@ -14,6 +14,8 @@ check → C11 → native binary.
 - **File I/O, arguments and sockets built into the language**: `file_open`, `file_read`, `file_write`,
   `file_seek`, `file_size`, `argc`, `arg`, `env`, `input_read`, and `net_listen`/`net_accept`/
   `net_connect`/`net_read`/`net_write`, with the same bounds checking as arrays.
+- **Collections are data plus functions**: `examples/hashmap.magic` is an open-addressing map over two
+  arrays; 1,000,000 inserts and lookups take 38 ms against C's 37 ms with the same checksum.
 - **Flat data is the easy path**: arrays and structs are contiguous and pointers are explicit, so
   pointer-heavy code stays predictable.
 - **Compiles fast**: on a 2,000-function project a one-function rebuild is ~195 ms (rustc: ~215 ms)
