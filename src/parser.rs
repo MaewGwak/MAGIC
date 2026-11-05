@@ -136,6 +136,7 @@ impl Parser {
     }
 
     fn parse_func(&mut self) -> Result<Func, String> {
+        let line = self.cur_line();
         self.expect(Tok::Fn, "'fn'")?;
         let name = self.expect_ident()?;
         self.expect(Tok::LParen, "'('")?;
@@ -177,6 +178,7 @@ impl Parser {
             params,
             ret,
             body,
+            line,
         })
     }
 

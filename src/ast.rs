@@ -234,6 +234,8 @@ pub struct Func {
     pub params: Vec<(String, ParamTy)>,
     pub ret: Ty,
     pub body: Vec<Stmt>,
+    /// 1-based line in the concatenated source, used for diagnostics.
+    pub line: usize,
 }
 
 #[derive(Debug, Clone)]

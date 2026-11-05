@@ -323,6 +323,37 @@ fn errors_point_at_the_imported_file() {
 }
 
 #[test]
+fn duplicate_function_names_the_file() {
+    let dir = TempDir::new("dup");
+    std::fs::write(
+        dir.path().join("a.magic"),
+        "fn helper() -> i32 { return 1; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("b.magic"),
+        "fn helper() -> i32 { return 2; }\n",
+    )
+    .unwrap();
+    let main = dir.path().join("main.magic");
+    std::fs::write(
+        &main,
+        "import \"a.magic\";\nimport \"b.magic\";\nfn main() { print(helper()); }\n",
+    )
+    .unwrap();
+    let out = Command::new(magicc())
+        .args(["build", main.to_str().unwrap()])
+        .output()
+        .expect("run magicc");
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("b.magic:1: duplicate function 'helper'"),
+        "stderr: {err}"
+    );
+}
+
+#[test]
 fn output_flag_names_the_binary() {
     if !has_compiler() {
         return;

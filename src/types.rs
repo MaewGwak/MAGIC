@@ -26,7 +26,7 @@ impl Checker {
         let mut funcs: HashMap<String, (Vec<ParamTy>, Ty)> = HashMap::new();
         for f in &prog.funcs {
             if funcs.contains_key(&f.name) {
-                return Err(format!("duplicate function '{}'", f.name));
+                return Err(format!("{}: duplicate function '{}'", f.line, f.name));
             }
             let params = f.params.iter().map(|(_, t)| *t).collect();
             funcs.insert(f.name.clone(), (params, f.ret));
