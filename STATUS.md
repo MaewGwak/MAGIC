@@ -26,11 +26,10 @@ Reproduce with `pwsh -File .\bench-all.ps1 -Rebuild`; it exits non-zero on a wro
 - Particles: MAGIC ties C and is ~1.8x faster than Rust (indexed and `iter_mut`). The cause of
   Rust's slower codegen here is not isolated.
 - The pointer-shaped workload (binary trees) is the big win: 1.85x over optimized Rust.
-- n-body is a real loss: Rust ~220 ms vs ~300 ms for C and for MAGIC. This is **not** GCC vs LLVM:
-  `zig cc` (clang/LLVM) on the identical C also measures ~300 ms, and `-fno-math-errno`,
-  `-ffast-math`, `__builtin_sqrt`, constant loop bounds and `-funroll-loops` change nothing.
-  The Rust binary uses packed `sqrtpd` (LLVM vectorises the array math); `restrict` gets gcc/zig
-  only partial `sqrtpd` and no speedup, and `-march=native` is slower (346 ms). Cause still open.
+- n-body gap is **closed by unrolling + an LLVM compiler**: with the six pairs written out,
+  `zig cc` gives 206–222 ms (Rust 219–221) and gcc 253 ms; the loop form is 300–315 ms everywhere.
+  LLVM vectorises the unrolled straight-line code (`sqrtpd`) but does not unroll the loop nest
+  itself. `$CC` may now carry arguments (`zig cc`).
 
 ## Compile speed
 
@@ -46,8 +45,9 @@ functions + ~70 ms link.
 
 ## Tests
 
-112 tests, all green (`cargo test`): 44 unit (lexer, parser, checker, codegen) + 12 CLI (the real
-`magicc` binary: check/emit/build/run, cache, `--report`, `--version`, `--help`, multi-file) + 15 integration
+113 tests, all green (`cargo test`): 44 unit (lexer, parser, checker, codegen) + 13 CLI (the real
+`magicc` binary: check/emit/build/run, cache, `--report`, `--version`, `--help`, multi-file, `$CC`
+with arguments) + 15 integration
 (`tests/emit.rs`, including all 14 examples compiling) + 41 end-to-end (`tests/e2e.rs`: compile with
 gcc, run, compare stdout and exit codes, including every example's exact output).
 

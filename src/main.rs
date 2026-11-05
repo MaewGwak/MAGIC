@@ -124,7 +124,7 @@ fn run() -> Result<(), String> {
                 } else {
                     fs::write(&c_path, &chunks[0])
                         .map_err(|e| format!("cannot write {}: {}", c_path.display(), e))?;
-                    let mut cmd = Command::new(&cc);
+                    let mut cmd = cc_command(&cc);
                     cmd.arg(if dev { "-O0" } else { "-O3" })
                         .arg("-std=c11")
                         .arg("-fno-asynchronous-unwind-tables")
@@ -173,7 +173,7 @@ fn run() -> Result<(), String> {
                         let cc2 = cc.clone();
                         let native2 = native;
                         handles.push(std::thread::spawn(move || {
-                            let mut cmd = Command::new(&cc2);
+                            let mut cmd = cc_command(&cc2);
                             cmd.arg(if dev { "-O0" } else { "-O3" })
                                 .arg("-std=c11")
                                 .arg("-fno-asynchronous-unwind-tables")
@@ -196,7 +196,7 @@ fn run() -> Result<(), String> {
                             return Err("C compilation failed".to_string());
                         }
                     }
-                    let mut link = Command::new(&cc);
+                    let mut link = cc_command(&cc);
                     link.arg("-o").arg(&exe_path);
                     for o in &objs {
                         link.arg(o);
@@ -250,6 +250,17 @@ fn with_ext(path: &Path, ext: &str) -> PathBuf {
     let mut p = path.to_path_buf();
     p.set_extension(ext);
     p
+}
+
+fn cc_command(cc: &str) -> Command {
+    // $CC may carry arguments, e.g. "zig cc" or "clang --target=x86_64-pc-windows-gnu".
+    let mut parts = cc.split_whitespace();
+    let prog = parts.next().unwrap_or("cc");
+    let mut cmd = Command::new(prog);
+    for a in parts {
+        cmd.arg(a);
+    }
+    cmd
 }
 
 fn find_cc() -> Option<String> {

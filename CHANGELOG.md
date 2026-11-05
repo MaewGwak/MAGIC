@@ -19,6 +19,8 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 
 **Toolchain**
 - Several source files compile as one program: `magicc build main.magic lib.magic`.
+- `$CC` may carry arguments, e.g. `zig cc`; the unrolled n-body reaches 206–222 ms under LLVM
+  (Rust 219–221) and 253 ms under GCC.
 - `magicc --version`, `--help`; the usage line reads the crate version.
 - `--report` sizes array counts written as expressions (`n * n`) and struct elements (C layout, including padding).
 - `-fno-asynchronous-unwind-tables -fno-ident` by default: `big.exe` 201,673 → 167,105 bytes, one-function rebuild 280 → 271 ms.

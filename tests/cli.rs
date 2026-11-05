@@ -249,3 +249,30 @@ fn dev_flag_builds() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn cc_env_may_include_arguments() {
+    if !has_compiler() {
+        return;
+    }
+    let dir = TempDir::new("ccargs");
+    let src = dir.path().join("a.magic");
+    std::fs::write(&src, "fn main() { print(6 * 7); }\n").unwrap();
+    let out = Command::new(magicc())
+        .args(["build", src.to_str().unwrap()])
+        .env("CC", "gcc -O1")
+        .output()
+        .expect("run magicc");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let exe = if cfg!(windows) {
+        dir.path().join("a.exe")
+    } else {
+        dir.path().join("a.bin")
+    };
+    let run = Command::new(&exe).output().expect("run built program");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
+}

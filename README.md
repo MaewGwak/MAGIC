@@ -2,7 +2,7 @@
 
 A small systems language that compiles to C11 and runs anywhere a C compiler does.
 
-**Status: v0.4** — 112 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.4** — 113 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is ~2.5k lines of dependency-free Rust; programs go source → tokens → AST → type
 check → C11 → native binary.
 
@@ -23,7 +23,8 @@ against C, Rust, C++, Goose and Go; the target is to keep closing gaps and never
 
 ## Build
 
-Needs Rust and, to run programs, a C compiler (`gcc`, `clang`, `cc`).
+Needs Rust and, to run programs, a C compiler (`gcc`, `clang`, `cc`). `$env:CC` may include
+arguments, e.g. `zig cc` or `clang --target=x86_64-pc-windows-gnu`.
 
 ```powershell
 $gccDir = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter gcc.exe -ErrorAction SilentlyContinue | Select-Object -First 1).Directory.FullName
