@@ -147,8 +147,9 @@ rejected. Integer overflow is not trapped.
 
 ## Benchmarks
 
-Eight workloads, medians of five interleaved runs on one Windows machine, all at `-O3` with no
-`-march=native`. Times move ±5% between runs; `-` means there is no port for that language yet.
+Run time of the compiled programs, wall-clock **milliseconds**, medians of five interleaved runs on
+one Windows machine, all at `-O3` with no `-march=native`. Times move ±5% between runs; `-` means
+there is no port for that language yet. These are run times, not compile times.
 
 | Workload | C | C++ | Rust | Go | Goose | MAGIC |
 |---|---:|---:|---:|---:|---:|---:|
@@ -160,6 +161,22 @@ Eight workloads, medians of five interleaved runs on one Windows machine, all at
 | hash table 1M | 46 | 47 | 46 | 46 | - | 47 |
 | particles 1M × 100 | 78 | 78 | 158 | 157 | - | **78** |
 | binary trees | - | - | 1371 | - | - | **731** |
+
+Peak memory, **MB** for the whole process (includes ~4 MB of runtime overhead):
+
+| Workload | C | C++ | Rust | Go | Goose | MAGIC |
+|---|---:|---:|---:|---:|---:|---:|
+| sieve 100M | 99.5 | 100.0 | 100.1 | 102.7 | 99.7 | **99.5** |
+| fannkuch n=10 | 4.6 | 4.6 | 5.3 | - | **4.3** | 4.4 |
+| matmul 384 | 5.8 | 5.8 | 6.4 | 8.0 | - | **5.8** |
+| n-body 10M | 4.7 | 4.7 | 4.7 | 6.2 | - | **4.7** |
+| ray tracer 1536² | 4.1 | 4.1 | 4.9 | - | - | **4.1** |
+| hash table 1M | 36.1 | 36.1 | 36.7 | 39.7 | - | **36.1** |
+| particles 1M × 100 | 34.7 | 34.7 | 35.2 | 37.8 | - | **34.7** |
+| binary trees | - | - | 20.7 | - | - | **20.2** |
+
+MAGIC is at, or within 0.1 MB of, the lowest peak memory on every workload; Goose is slightly lower
+on fannkuch (4.3 vs 4.4 MB).
 
 n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms
 with gcc, and `--unroll` with clang/zig gives 205–236 ms. The harness verifies every checksum:
