@@ -88,6 +88,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - Goose runs on Linux: built from source with CMake (`github.com/aardappel/goose`, C++20, TinyCC
   backend) and the shipped `sieve_goose.goose`/`fannkuch_goose.goose` programs pass their checksums
   at 537 ms and 405 ms; `bench-linux.sh` picks the compiler up from PATH or ~/tools/goose/build.
+- Chunk-count tuning: 16 chunks keeps the best one-function edit (120 ms with clang, 145 ms at 8,
+  191 ms at 4); 8 chunks saves 14 ms on a cold clang build (166 vs 180 ms) but loses more on edits.
+  `-freciprocal-math` on n-body kept the checksum but was slower (gcc 627 ms).
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 

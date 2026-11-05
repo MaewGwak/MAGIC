@@ -58,7 +58,24 @@ n-body is the only workload without a large margin: with gcc alone the unrolled 
 loses to Rust, and the 450 ms win needs clang (or zig) for the LLVM backend. Every other category
 beats all four baselines by at least 4.5x.
 
+## Compile speed (Linux)
+
+2,000 functions (~90 KB), three runs each, milliseconds:
+
+| Compiler | Cold build | One-function edit |
+|---|---:|---:|
+| gcc (default) | 315-356 | 193 |
+| gcc + `lld` | 289-303 | 210 |
+| clang | 176-185 | 120-154 |
+| `rustc -O` | 215-217 | 217 (full) |
+
+So a cold build beats rustc when the C compiler is clang (`CC=clang magicc build`), and an
+incremental edit beats it with either compiler. Chunk count was measured too: 16 chunks is the best
+for edits (120 ms with clang vs 145 ms at 8 and 191 ms at 4), while 8 chunks saved 14 ms on a cold
+clang build (166 vs 180 ms); the default stays at 16 because iteration latency matters more.
+
 ## Compile speed
+
 
 
 | Metric | MAGIC | rustc |
