@@ -40,3 +40,4 @@
 /bench-fannkuch/fannkuch_magic_blocks.c
 /bench-suite/sieve_magic_segodd.c
 /bench-suite/sieve_magic_block.c
+/bench-suite/sieve_magic_blockodd.c

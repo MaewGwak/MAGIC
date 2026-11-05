@@ -58,6 +58,7 @@ build_magic sieve_magic.magic s_m; build_magic sieve_magic_odd.magic s_o
 build_magic sieve_magic_odd_par.magic s_p
 build_magic sieve_magic_segodd.magic s_s
 build_magic sieve_magic_block.magic s_b
+build_magic sieve_magic_blockodd.magic s_bo
 median "$OUT/s_c" 5761455 'sieve C'
 median "$OUT/s_rs" 5761455 'sieve Rust'
 if [ -n "$CXX" ]; then build_cpp sieve_cpp.cpp s_cpp; median "$OUT/s_cpp" 5761455 'sieve C++'; fi
@@ -67,6 +68,7 @@ median "$OUT/s_o" 5761455 'sieve MAGIC odd'
 median "$OUT/s_p" 5761455 'sieve MAGIC odd par'
 median "$OUT/s_s" 5761455 'sieve MAGIC seg odd'
 median "$OUT/s_b" 5761455 'sieve MAGIC blocked'
+median "$OUT/s_bo" 5761455 'sieve MAGIC block odd'
 
 echo "== fannkuch n=10"
 cd "$ROOT/bench-fannkuch" || exit 2

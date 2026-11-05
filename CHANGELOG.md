@@ -65,6 +65,8 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
   9.4x). The previous odd-only segment version was 86 ms.
 - gcc -march=native vectorises the level-order tree stores: 108 ms vs 1647 ms C (15x), down from
   397 ms for the default build. The stores were the whole cost; AVX2/AVX-512 writes 4.5 GB in 108 ms.
+- Odd-only blocked sieve: blocks of 128 KB of odd slots, so half the writes and half the counting
+  pass of the byte-wide version. 25 ms vs 497 ms C++ (20x) and 2.3 MB RSS instead of 95 MB.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 

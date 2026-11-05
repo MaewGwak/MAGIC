@@ -1,0 +1,96 @@
+// Blocked segmented sieve over the odd numbers only: the buffer holds odd
+// slots (n = 2*slot+1), so half the writes and half the counting pass. Blocks
+// stay in L2, each thread owns its range.
+fn main() {
+    let limit = 100000000;
+    let root = 10000;
+    let parts = 16;
+    let bsize = 131072;
+    let slots = bsize / 2;
+    let range = limit / parts;
+
+    var small: [u8] = [0; 5001];
+    var primes: [i32] = [0; 1300];
+    var np = 0;
+    var i = 1;
+    while i < 5000 {
+        if small[i] == 0 {
+            var p = 2 * i + 1;
+            primes[np] = p;
+            np = np + 1;
+            var j = i + p;
+            while j < 5000 {
+                small[j] = 1;
+                j = j + p;
+            }
+        }
+        i = i + 1;
+    }
+
+    var bufs: [u8] = [0; parts * slots];
+    var sums: [i64] = [0; 16];
+
+    par for t in 0..parts {
+        var base = t * slots;
+        var start = t * range;
+        var end = start + range;
+        if end > limit {
+            end = limit;
+        }
+        var c: i64 = 0;
+        var lo = start;
+        while lo < end {
+            var hi = lo + bsize;
+            if hi > end {
+                hi = end;
+            }
+            var nslots = (hi - lo) / 2;
+            var z = 0;
+            while z < nslots {
+                bufs[base + z] = 0;
+                z = z + 1;
+            }
+            var first = lo + 1;
+            var k = 0;
+            while k < np {
+                var p = primes[k];
+                if p * p >= hi {
+                    k = np;
+                } else {
+                    var m = p * p;
+                    if m < first {
+                        var q = (first + p - 1) / p;
+                        m = q * p;
+                        if m % 2 == 0 {
+                            m = m + p;
+                        }
+                    }
+                    var idx = (m - first) / 2;
+                    while idx < nslots {
+                        bufs[base + idx] = 1;
+                        idx = idx + p;
+                    }
+                    k = k + 1;
+                }
+            }
+            var x = 0;
+            while x < nslots {
+                if bufs[base + x] == 0 {
+                    c = c + 1;
+                }
+                x = x + 1;
+            }
+            lo = hi;
+        }
+        sums[t] = c;
+    }
+
+    var total: i64 = 0;
+    var t2 = 0;
+    while t2 < parts {
+        total = total + sums[t2];
+        t2 = t2 + 1;
+    }
+    // slots counted "1" (not prime) and omit "2" (prime): net zero
+    print(total);
+}

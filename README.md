@@ -193,7 +193,7 @@ all five baselines:
 
 | Workload | C | C++ | Rust | Go | MAGIC optimized | margin |
 |---|---:|---:|---:|---:|---:|---:|
-| sieve 100M | 502 | 497 | 516 | 572 | 53 | 9.4x |
+| sieve 100M | 502 | 497 | 516 | 572 | 25 | 20x |
 | particles 1M × 100 | 151 | 151 | 157 | 215 | 4 | 37x |
 | hash 1M | 38 | 37 | 36 | 36 | 6 | 6x |
 | ray tracer 1536² | 86 | 89 | **77** | - | 13 | 5.9x |
@@ -202,7 +202,7 @@ all five baselines:
 | fannkuch | 383 | 392 | 364 | - | 40 | 9.6x |
 | n-body 10M | 724 | 728 | **523** | 920 | 450 | 1.16x |
 
-The n-body row uses clang with `-march=x86-64-v3` and the matmul row clang with `-march=native`;
+The sieve row uses 2.3 MB instead of 95 MB. The n-body row uses clang with `-march=x86-64-v3` and the matmul row clang with `-march=native`;
 without clang the n-body build is 605 ms (gcc). `./verify.sh` runs the tests, the doc counts and this matrix; `./bench-linux.sh` alone runs 39
 cases across C, C++, Rust, Go and MAGIC.
 

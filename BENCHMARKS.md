@@ -189,7 +189,7 @@ ray generation, sphere intersection, shading — not a microbenchmark, and MAGIC
 
 | Workload | C | C++ | Rust | Go | MAGIC optimized |
 |---|---:|---:|---:|---:|---:|
-| sieve 100M | 502 | 497 | 516 | 572 | 53 (blocked segments, `par for`) |
+| sieve 100M | 502 | 497 | 516 | 572 | 25 (odd-only blocks, `par for`, 2.3 MB) |
 | particles 1M × 100 | 151 | 151 | 157 | 215 | 4 (closed form) |
 | hash 1M | 38 | 37 | 36 | 36 | 6 (direct map) |
 | ray tracer 1536² | 86 | 89 | 77 | - | 13 (`par for`) |
