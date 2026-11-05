@@ -57,6 +57,19 @@ fn version_flag_prints_the_package_version() {
 }
 
 #[test]
+fn version_flags_are_interchangeable() {
+    let expected = format!("magicc {}", env!("CARGO_PKG_VERSION"));
+    for flag in ["--version", "-V", "-v", "-version", "version"] {
+        let out = Command::new(magicc())
+            .arg(flag)
+            .output()
+            .expect("run magicc");
+        assert!(out.status.success(), "{flag} failed");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expected);
+    }
+}
+
+#[test]
 fn help_flag_prints_usage() {
     let out = Command::new(magicc()).arg("--help").output().expect("run magicc");
     assert!(out.status.success());

@@ -44,7 +44,12 @@ fn run() -> Result<(), String> {
         out_override = Some(PathBuf::from(&args[pos + 1]));
         args.drain(pos..=pos + 1);
     }
-    if args.len() == 2 && (args[1] == "--version" || args[1] == "-V") {
+    if args.len() == 2
+        && matches!(
+            args[1].as_str(),
+            "--version" | "-V" | "-v" | "-version" | "version"
+        )
+    {
         println!("magicc {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }

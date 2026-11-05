@@ -3,7 +3,7 @@
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language that
 compiles to C11 and runs anywhere a C compiler does.
 
-**Status: v0.4** — 122 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.4** — 123 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is ~2.5k lines of dependency-free Rust; programs go source → tokens → AST → type
 check → C11 → native binary.
 
@@ -21,6 +21,36 @@ It does not beat C on codegen, and never claims to. It emits C and lets GCC do t
 
 MAGIC is not trying to be the fastest language in the world. The benchmarks are a scoreboard
 against C, Rust, C++, Goose and Go; the target is to keep closing gaps and never regress.
+
+## Install (one command)
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/MaewGwak/MAGIC/main/install.ps1 | iex
+```
+
+Linux / macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MaewGwak/MAGIC/main/install.sh | sh
+```
+
+Then check it:
+
+```powershell
+magic -v        # same as: --version, -version, -V
+```
+
+Requires Rust and a C compiler. On Windows, download the script and add `-WithToolchain` to install
+both with winget:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 -WithToolchain
+```
+
+The installer builds from source, copies `magicc` and `magic` into `%LOCALAPPDATA%\MAGIC\bin`
+(or `~/.local/bin`), and adds that directory to the user PATH.
 
 ## Build
 
