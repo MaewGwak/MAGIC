@@ -11,6 +11,15 @@ The native backend now maps `file_open`, `file_close`, `file_read`, `file_write`
 builds are slower for now (pageio 685 ms vs 329 ms with gcc); performance work comes after feature
 parity.
 
+## v0.8.1 — native backend links with `ld`, no C compiler (2026-11-06)
+
+`--backend native` now builds through GNU `as` and `ld` only: `build_native` finds `crt1.o`,
+`crti.o`, `crtn.o` and the dynamic linker, links against glibc, and never executes `cc`, `gcc`,
+`clang`, `cc1`, `collect2` or the C compiler driver. `verify-native.sh` proves it: it builds a
+19-program corpus with a PATH that contains only `as` and `ld`, compares every stdout against the C
+backend, checks the ELF header, and requires the out-of-bounds diagnostic to exit 1. The gate runs as
+part of `verify.sh`.
+
 ## v0.8.0 — native backend: array parameters, casts and strings (2026-11-06)
 
 Array parameters work natively: the checker's existing rewrite (pointer plus length) is honoured by

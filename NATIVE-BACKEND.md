@@ -42,8 +42,8 @@ the existing 132-test suite runs against both.
    or MAGIC itself.
 4. **Driver**: `magicc build --backend native`; default stays `c` until the native path passes the
    whole suite. `--emit asm` and `--emit obj` for debugging.
-5. **Assembling/linking**: start with `as` + `cc` as the linker driver, then `as` + `ld`, then a
-   direct ELF writer if the dependency must go.
+5. **Assembling/linking** ✅: `as` + `ld` with discovered crt objects and glibc; no C compiler or
+   driver. A direct ELF writer is not needed for 0.9.0.
 
 ## Milestones
 
@@ -60,6 +60,26 @@ Versioning follows the requested scheme: `0.<feature round>.<fix>`.
 | **0.8.x** | performance: register allocation quality, inlining, direct syscalls for file I/O | native runtime within 10% of the C backend |
 | **0.9.0** | self-hosting gate: the native backend compiles the whole test suite and the mini-PostgreSQL programs without invoking a C compiler | `cc` absent from PATH, all gates pass |
 | **1.0.0** | Linux x86-64 release; Windows keeps the C backend; honest documentation of the libc dependency | no C compiler for the native path |
+
+## Debate outcome (round 2): what we do next
+
+Four independent reviews (performance, language features, release gates, adversarial) converged on:
+
+- **Toolchain first, and it is done in 0.8.1**: link with `as` + `ld` and discovered crt objects, not
+  a C compiler driver. `verify-native.sh` builds a 19-program corpus with a PATH that contains only
+  `as` and `ld`, compares stdout to the C backend and checks the ELF header; `verify.sh` runs it.
+- **Correctness before features**: the native codegen currently computes in 64-bit and never
+  truncates to `i32`/`u8`, so results can diverge from the C backend. Fix width semantics and add a
+  differential stage before adding structs/floats.
+- **Features in this order**: structs (0.8.2), then f64/SSE2 (0.8.3), then vectors, args/env/
+  input_read/print_bytes, and sequential `par for` (0.8.4). Native sockets stay on the C backend for
+  0.9.0. Structs always have addresses; use a private pointer/sret convention rather than full SysV
+  classification.
+- **Performance after parity**: replace the stack-machine expression spine with a two-register
+  spine, keep induction variables in registers, constant-fold and strength-reduce division by
+  constants. Gate on medians and on push/pop counts in the generated assembly, not on anecdotes.
+- **Honesty rules**: do not call this "self-hosted" (the compiler is Rust); say "no-C native
+  backend". Native tests must not silently pass when `as`/`ld` are missing: the gate script fails.
 
 ## Risks
 

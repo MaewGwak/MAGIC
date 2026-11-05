@@ -371,17 +371,55 @@ fn build_native(
     if !status.success() {
         return Err(format!("{} failed while assembling {}", as_cmd, asm_path.display()));
     }
-    let cc = cc_override
-        .map(|s| s.to_string())
-        .or_else(find_cc)
-        .ok_or("no linker driver found (tried $CC, gcc, clang, cc)")?;
-    let mut link = cc_command(&cc);
-    link.arg(&obj_path).arg("-o").arg(&exe_path);
+    // Link with `ld` directly: the native path must not execute a C compiler
+    // or compiler driver. crt objects and the dynamic linker are discovered in
+    // the usual multiarch locations, and can be overridden with MAGIC_CRT_DIR
+    // and MAGIC_LDSO.
+    let dirs: Vec<PathBuf> = if let Ok(d) = env::var("MAGIC_CRT_DIR") {
+        vec![PathBuf::from(d)]
+    } else {
+        ["/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/lib64", "/usr/lib", "/lib"]
+            .iter()
+            .map(PathBuf::from)
+            .collect()
+    };
+    let find = |name: &str| -> Option<PathBuf> {
+        dirs.iter().map(|d| d.join(name)).find(|p| p.exists())
+    };
+    let crt1 = find("crt1.o").ok_or_else(|| {
+        "native backend: cannot find crt1.o (set MAGIC_CRT_DIR); use the C backend"
+            .to_string()
+    })?;
+    let crti = find("crti.o");
+    let crtn = find("crtn.o");
+    let ldso = env::var("MAGIC_LDSO").unwrap_or_else(|_| {
+        ["/lib64/ld-linux-x86-64.so.2", "/lib/ld-linux-x86-64.so.2"]
+            .iter()
+            .find(|p| Path::new(p).exists())
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "/lib64/ld-linux-x86-64.so.2".to_string())
+    });
+    let ld_cmd = env::var("LD").unwrap_or_else(|_| "ld".to_string());
+    let mut link = Command::new(&ld_cmd);
+    link.arg("-o").arg(&exe_path).arg(&crt1);
+    if let Some(c) = &crti {
+        link.arg(c);
+    }
+    link.arg(&obj_path);
+    if let Some(c) = &crtn {
+        link.arg(c);
+    }
+    link.arg("-lc")
+        .arg("-dynamic-linker")
+        .arg(&ldso);
+    for d in &dirs {
+        link.arg(format!("-L{}", d.display()));
+    }
     let status = link
         .status()
-        .map_err(|e| format!("failed to run {}: {}", cc, e))?;
+        .map_err(|e| format!("failed to run {}: {}", ld_cmd, e))?;
     if !status.success() {
-        return Err(format!("{} failed while linking {}", cc, exe_path.display()));
+        return Err(format!("{} failed while linking {}", ld_cmd, exe_path.display()));
     }
     println!("\u{1F52E} built {} (native)", exe_path.display());
     if run {

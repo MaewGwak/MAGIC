@@ -10,6 +10,12 @@ echo "== cargo test =="
 cargo test || fail=1
 echo "== check-docs =="
 ./check-docs.sh || fail=1
+echo "== native gate =="
+if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ]; then
+  ./verify-native.sh || fail=1
+else
+  echo "native gate skipped (Linux x86-64 only)"
+fi
 if [ "${1:-}" != "-Fast" ]; then
   echo "== bench-linux =="
   ./bench-linux.sh || fail=1

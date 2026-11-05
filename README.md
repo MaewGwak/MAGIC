@@ -17,8 +17,7 @@ check → C11 → native binary.
 - **Collections are data plus functions**: `examples/hashmap.magic` is an open-addressing map over two
   arrays; 1,000,000 inserts and lookups take 38 ms against C's 37 ms with the same checksum.
 - **Native x86-64 backend (experimental)**: `magicc build app.magic --backend native` emits GNU
-  assembler directly for integer functions, control flow, calls and `print` — no C compiler in the
-  path. It builds `sieve`, `hashmap` (array parameters, seven-argument calls) and the
+  assembler directly and links with `ld` — no C compiler in the path. It builds `sieve`, `hashmap` (array parameters, seven-argument calls) and the
   2,000-function test in 41 ms against the C backend's 96 ms, Goose's 120 ms and
   rustc's 223 ms. Arrays, structs, floats and sockets still use the C backend.
 - **Flat data is the easy path**: arrays and structs are contiguous and pointers are explicit, so
