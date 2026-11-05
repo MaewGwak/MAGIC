@@ -87,6 +87,24 @@ Four independent reviews (performance, language features, release gates, adversa
 - **Honesty rules**: do not call this "self-hosted" (the compiler is Rust); say "no-C native
   backend". Native tests must not silently pass when `as`/`ld` are missing: the gate script fails.
 
+## Register-allocation experiments (v0.8.8 → v0.8.9)
+
+Two ad-hoc register experiments were attempted on the AST emitter and **both were reverted**; the
+lesson is that register allocation needs a typed IR and differential tests, not string-level patches.
+
+1. **Callee-saved induction counters** (`for i in ...` kept in `%rbx/%r12-%r15`): passed the native
+   gate but changed timings by <5% (particles 1010→1011 ms, vecpart 292→274 ms, raytrace 464→469 ms),
+   because the hot loops are bound by memory accesses, not by the counter.
+2. **Scalar promotion** (params/locals held in callee-saved registers for their lifetime): the
+   scanner benchmark miscompiled (one loop iteration, wrong branch) while `struct`/`points` and the
+   DB benchmarks stayed correct. A minimal `a[n] + n` case also failed until the prologue was fixed;
+   after that, `sqlscan` still diverged, so the whole change was reverted rather than shipped.
+
+The current tree (v0.8.8) is green: 156 tests, native gate 28 programs, no promotion, no induction
+registers. The next performance step is a real IR (`src/ir.rs`) with three-address code, explicit
+bounds-check pseudo-ops, linear-scan allocation, and a differential harness that runs every e2e
+source through both backends before any flag flips.
+
 ## Security hardening
 
 The native path passes absolute paths to `as`/`ld`, refuses to write through symlinks, checks every

@@ -17,6 +17,13 @@ Native arithmetic now narrows after every operation to the declared type, matchi
 `int32_t`/`uint8_t` wrapping: `2147483647 + 1` prints `-2147483648` and a `u8` at 255 wraps to 0.
 A regression test builds both cases natively and checks the output.
 
+### Reverted: register-allocation experiments
+
+Callee-saved induction counters and scalar promotion were prototyped, measured and reverted: the
+counter change moved medians by <5% and scalar promotion miscompiled the scanner benchmark. The tree
+stays on the v0.8.8 codegen until the typed IR and its differential harness land
+(see `NATIVE-BACKEND.md`).
+
 ## v0.8.8 — calloc fast path and native strength reduction (2026-11-06)
 
 - Zero-initialised arrays (`[0; n]`, `[false; n]`, `[0.0; n]`) now use `calloc` on both backends
