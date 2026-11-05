@@ -57,10 +57,13 @@ $cases = @(
     @{ name = 'n-body Rust';         dir = 'bench-suite';    exe = 'nbody_rs.exe';        src = 'nbody_rs.rs';       kind = 'rust'; expect = '11211.531383831' },
     @{ name = 'n-body MAGIC';         dir = 'bench-suite';    exe = 'nbody_magic.exe';      src = 'nbody_magic.magic';   kind = 'magic'; expect = '11211.531383831' },
     @{ name = 'n-body unrolled MAGIC'; dir = 'bench-suite';    exe = 'nbody_unrolled.exe'; src = 'nbody_unrolled.magic'; kind = 'magic'; expect = '11211.531383831' },
+    @{ name = 'n-body C++';          dir = 'bench-suite';    exe = 'nbody_cpp.exe';       src = 'nbody_cpp.cpp';     kind = 'cpp';  expect = '11211.531383831' },
+    @{ name = 'n-body Go';           dir = 'bench-suite';    exe = 'nbody_go.exe';        src = 'nbody_go.go';       kind = 'go';   expect = '11211.531383831' },
 
     @{ name = 'ray tracer C';        dir = 'bench-suite';    exe = 'raytrace_c.exe';      src = 'raytrace_c.c';      kind = 'c';    expect = '336141.941' },
     @{ name = 'ray tracer Rust';     dir = 'bench-suite';    exe = 'raytrace_rs.exe';     src = 'raytrace_rs.rs';    kind = 'rust'; expect = '336141.941' },
     @{ name = 'ray tracer MAGIC';     dir = 'bench-suite';    exe = 'raytrace_magic.exe';   src = 'raytrace_magic.magic'; kind = 'magic'; expect = '336141.941' },
+    @{ name = 'ray tracer C++';      dir = 'bench-suite';    exe = 'raytrace_cpp.exe';    src = 'raytrace_cpp.cpp';  kind = 'cpp';  expect = '336141.941' },
 
     @{ name = 'hash C';              dir = 'bench-suite';    exe = 'hash_c.exe';          src = 'hash_c.c';          kind = 'c';    expect = '1500001500000' },
     @{ name = 'hash Rust open';      dir = 'bench-suite';    exe = 'hash_rs_open.exe';    src = 'hash_rs_open.rs';   kind = 'rust'; expect = '1500001500000' },

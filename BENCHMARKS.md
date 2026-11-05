@@ -25,15 +25,17 @@ Other baselines (same build rules):
 
 | Workload | C++ | Go | Goose | MAGIC |
 |---|---:|---:|---:|---:|
-| sieve 100M | 413 | 457 | 430 | **412** |
-| fannkuch | 175 | — | 175 | **155** |
-| matmul 384 | 31 | 60 | — | **31** |
-| hash 1M | 47 | 46 | — | 47 |
-| particles 1M × 100 | 79 | 157 | — | **78** |
+| sieve 100M | 428 | 441 | 458 | **413** |
+| fannkuch | 174 | — | 174 | **157** |
+| matmul 384 | 31 | 61 | — | **31** |
+| n-body 10M | 316 | 392 | — | 317 (unrolled 269; +zig 206) |
+| ray tracer | 47 | — | — | **46** |
+| hash 1M | 47 | 46 | — | 46 |
+| particles 1M × 100 | 78 | 157 | — | **78** |
 
-MAGIC is fastest or tied everywhere except hash, where Go edges it by 1 ms (46 vs 47) while using
-more memory (39.5 vs 36.1 MB). Go is 1.6–1.9x slower on compute-bound loops and 2x slower on the
-struct-array workload.
+MAGIC is fastest or tied everywhere except the loop-form n-body (Rust 222, C++/C 316, MAGIC 317),
+and hash, where Go edges it by 1 ms (46 vs 46 on this run) while using more memory (39.7 vs 36.1 MB).
+Writing the n-body pairs out drops MAGIC to 269 ms (gcc) or 206 ms (`zig cc`).
 
 ## 7. Hash table — 1M inserts + 1M lookups
 
