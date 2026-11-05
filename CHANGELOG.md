@@ -25,6 +25,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
   (…067 / …974) while running slower (241 / 279 ms), and staging all six d² before the sqrt/div
   chain was 269 ms (gcc), 204 ms (zig) and 203 ms (AVX2) — the CPU already overlaps the independent
   pairs, so the 188 ms unrolled AVX2 build stays. GCC with the same AVX2 target is 258 ms.
+  The emitted AVX2 assembly already has 5 packed `vsqrtpd` and 5 `vdivpd` in the hot code, so the
+  loop is vectorised and 188 ms is its sqrt/div throughput; anything faster needs different
+  floating-point semantics, which change the checksum.
 - fannkuch dead ends: splitting the permutation space by first element into 10 `par for` chunks
   changed the checksum, because the reference enumeration order is not lexicographic (max 38 was
   right, checksum was not). zig (158 ms), `-funroll-loops` (142 ms) and `-march=x86-64-v3`
