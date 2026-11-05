@@ -31,10 +31,12 @@ compare against a C implementation of the same design.
 
 | Program | Median | Result | Nodes |
 |---|---:|---:|---:|
-| C | 98 ms | 232236827703744 | 4716 |
-| MAGIC | **102 ms** | 232236827703744 | 4716 |
+| C | 98 ms | 300002416362516 | 4213 |
+| MAGIC | **102 ms** | 300002416362516 | 4213 |
 
 The B+tree is within 4% of C on the same algorithm, with identical checksums and node counts.
+A sequential-key check (`0..99999`, expected `14999850000`) fails on trees that descend with a
+lower bound or index a node at the wrong stride; both are covered by the shipped code.
 
 `sqlscan`: tokenize 100,000 `INSERT` statements (3.77 MB) into identifiers, numbers and punctuation.
 
@@ -46,15 +48,17 @@ The B+tree is within 4% of C on the same algorithm, with identical checksums and
 The byte-level lexer is at C parity; mutable byte strings are `[u8+]` vecs plus `print_bytes`.
 
 `sqldb`: parse and execute a SQL file: 100,000 `INSERT INTO t VALUES (k, v);`, then
-`SELECT COUNT(*)`, `SELECT SUM(value)`, and 1,000 `SELECT value FROM t WHERE id = k;` point queries.
+`SELECT COUNT(*)`, `SELECT SUM(value)`, and 10,000 `SELECT value FROM t WHERE id = k;` point queries.
+Run it as `./sqldb_magic scan` (heap scan) or `./sqldb_magic index` (B+tree index).
 
-| Program | Median | Rows | Checksum |
-|---|---:|---:|---:|
-| C | 74 ms | 100,000 | 35348633500 |
-| MAGIC | **76 ms** | 100,000 | 35348633500 |
+| Mode | C | MAGIC | Rows | Checksum |
+|---|---:|---:|---:|---:|
+| heap scan | 542 ms | 551 ms | 100,000 | 38498385000 |
+| B+tree index | **32 ms** | **32 ms** | 100,000 | 38498385000 |
+| index speedup | 17x | 17x | | |
 
-Tokenizer, recursive-descent parser and heap-scan executor together are within 3% of C. Point
-lookups still scan the heap, so a B+tree index is the next step.
+The index makes point lookups 17x faster, and MAGIC matches C in both modes (1.7% slower on the
+scan, parity on the index).
 
 Build and run:
 

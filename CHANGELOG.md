@@ -106,6 +106,11 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - Goose ports of n-body (720 ms) and the ray tracer (90 ms) complete the set: all eight workloads now
   have a Goose program whose checksum matches the C and MAGIC ones, so the five-language matrix runs
   end to end on Linux (63 cases).
+- mini-PostgreSQL milestone: the SQL engine now has a B+tree index (`SELECT ... WHERE id = k`),
+  17x faster than the heap scan (32 ms vs 542 ms for 10,000 point queries over 100,000 rows),
+  matching C in both modes. Two real B+tree bugs were found by a sequential-key test: the internal
+  descent used a lower bound where an upper bound is needed, and node arrays were one element too
+  narrow, so a full leaf wrote into the next node. Both are fixed in the MAGIC and C versions.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
