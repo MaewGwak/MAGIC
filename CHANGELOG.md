@@ -55,6 +55,8 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
   452 ms for clang AVX2 and 521 ms for Rust. GCC only packs two of the six square roots, so the
   n-body win on Linux needs an LLVM backend (clang or zig). A scalar version (24 local doubles,
   no arrays) was 472 ms with clang AVX2 and 496 ms with AVX-512, so the array form stays.
+  PGO (501 ms), literal masses instead of the mass array (511 ms) and `-Ofast` (449 ms, identical
+  checksum) did not beat the plain 450 ms build either.
 - Segmented odd-only sieve: every thread marks only its own 50M/16 slot range, so no cache line is
   shared between threads. 82 ms vs 497 ms C++ and 132 ms for the shared odd-only `par for` sieve.
 - Matmul with `clang -march=native`: 6 ms vs 27 ms C++ (4.5x). The portable AVX2 build is 8 ms.
