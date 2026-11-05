@@ -6,6 +6,12 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 M="$ROOT/target/release/magicc"
 cd "$ROOT" || exit 2
 [ -x "$M" ] || { echo "build magicc first"; exit 2; }
+CLANG=""
+if command -v clang >/dev/null 2>&1; then CLANG=$(command -v clang)
+elif [ -x "$HOME/tools/clangroot/usr/bin/clang" ]; then
+  CLANG="$HOME/tools/clangroot/usr/bin/clang"
+  export LD_LIBRARY_PATH="$HOME/tools/clangroot/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 command -v rustc >/dev/null || { echo "rustc not found"; exit 2; }
 
 build() { # name source compiler...
@@ -27,6 +33,13 @@ rustc -C opt-level=3 -o bench-db/bufpool_rs bench-db/bufpool_rs.rs
 gcc -O3 -o bench-db/hashmap_c bench-db/hashmap_c.c
 rustc -C opt-level=3 -o bench-db/hashmap_rs bench-db/hashmap_rs.rs
 "$M" build bench-db/hashmap_magic.magic -o bench-db/hashmap_magic >/dev/null
+"$M" build bench-db/hashmap_magic_fast.magic -o bench-db/hashmap_magic_fast >/dev/null
+"$M" build bench-db/sqlscan_table.magic -o bench-db/sqlscan_table >/dev/null
+"$M" build bench-db/bufpool_magic_fast3.magic -o bench-db/bufpool_magic_fast3 >/dev/null
+"$M" build bench-db/btree_magic_fast.magic -o bench-db/btree_magic_fast >/dev/null
+if [ -n "$CLANG" ]; then
+  "$M" build bench-db/btree_magic_fast.magic --cc "$CLANG -march=native" -o bench-db/btree_magic_fast_clang >/dev/null
+fi
 
 median() { # label expected binary
   local label=$1 expect=$2 bin=$3 vals=() out
@@ -54,3 +67,9 @@ median "bufpool MAGIC"   $'24997\n175003\n25510321' ./bench-db/bufpool_magic
 median "hashmap C"       "1500001500000"           ./bench-db/hashmap_c
 median "hashmap Rust"    "1500001500000"           ./bench-db/hashmap_rs
 median "hashmap MAGIC"   "1500001500000"           ./bench-db/hashmap_magic
+median "hashmap MAGIC fast" "1500001500000"        ./bench-db/hashmap_magic_fast
+median "sqlscan MAGIC table" $'1000000\n39999600000' ./bench-db/sqlscan_table
+median "bufpool MAGIC fast" $'24997\n175003\n25510321' ./bench-db/bufpool_magic_fast3
+if [ -x bench-db/btree_magic_fast_clang ]; then
+  median "btree MAGIC fast" $'300002416362516\n4213' ./bench-db/btree_magic_fast_clang
+fi

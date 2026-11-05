@@ -86,3 +86,16 @@
 /bench-db/bufpool_rs.rs
 /bench-db/pageio_magic_fast
 /bench-db/pageio_magic_fast.c
+/bench-db/btree_magic_fast
+/bench-db/btree_magic_fast.c
+/bench-db/btree_magic_fast_clang
+/bench-db/sqlscan_table
+/bench-db/sqlscan_table.c
+/bench-db/bufpool_magic_fast2
+/bench-db/bufpool_magic_fast2.c
+/bench-db/bufpool_magic_fast3
+/bench-db/bufpool_magic_fast3.c
+/bench-db/hashmap_magic_fast
+/bench-db/hashmap_magic_fast.c
+/bench-db/sqlscan_magic_fast
+/bench-db/sqlscan_magic_fast.c

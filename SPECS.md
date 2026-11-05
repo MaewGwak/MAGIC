@@ -99,6 +99,8 @@ primary    := int | float | string | "true" | "false"
 | `file_size(fd)` | `i32` → `i64` | size in bytes, leaving the position unchanged |
 | `file_read_at(fd, buf, off, n)` | `i32`, `[u8]`, integer, integer → `i32` | reads into `buf[off..off+n]`, so a pool can fill a frame without a copy |
 | `file_write_at(fd, buf, off, n)` | `i32`, `[u8]`, integer, integer → `i32` | writes `buf[off..off+n]` |
+| `file_pread(fd, buf, n, off)` | `i32`, `[u8]`, integer, integer → `i32` | reads at a file offset without moving the position |
+| `file_pread_at(fd, buf, boff, n, off)` | `i32`, `[u8]`, integer, integer, integer → `i32` | reads into `buf[boff..boff+n]` at a file offset |
 | `argc()` | → `i32` | number of command-line arguments, including the program name |
 | `arg(i)` | integer → `str` | argument `i`, or `""` when out of range |
 | `env(name)` | `str` → `str` | environment variable, or `""` when unset |

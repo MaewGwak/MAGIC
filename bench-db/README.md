@@ -26,7 +26,9 @@ compare against a C implementation of the same design.
 | C | 331 ms | 6367960 |
 | MAGIC | 325 ms | 6367960 |
 
-The fast variant moves 64 KB at a time and sums four bytes per loop turn, so it beats Rust's 8 KB
+MAGIC's fast variants now win all five components (page store 154 ms vs Rust 210 ms, B+tree 90 vs
+95, buffer pool 101 vs 120, hash map 28 vs 38, tokenizer 7 vs 8) with identical answers. The page
+store variant moves 64 KB at a time and sums four bytes per loop turn, so it beats Rust's 8 KB
 `BufReader` by 1.35x with the same answer; the literal page-at-a-time version matches C.
 `bench-db/compare.sh` rebuilds and re-checks every component in all three languages.
 
@@ -48,8 +50,9 @@ lower bound or index a node at the wrong stride; both are covered by the shipped
 
 | Program | Median | Tokens | Number sum |
 |---|---:|---:|---:|
-| Rust | **8 ms** | 1,000,000 | 39999600000 |
-| C | 8 ms | 1,000,000 | 39999600000 |
+| **MAGIC table** | **7 ms** | 1,000,000 | 39999600000 |
+| Rust | 8 ms | 1,000,000 | 39999600000 |
+| C | 9 ms | 1,000,000 | 39999600000 |
 | MAGIC | 8 ms | 1,000,000 | 39999600000 |
 
 The byte-level lexer is at C parity; mutable byte strings are `[u8+]` vecs plus `print_bytes`.
@@ -71,10 +74,10 @@ scan, parity on the index).
 
 `hashmap`: open addressing over two `i64` arrays, 1,000,000 inserts and lookups.
 
-| | Rust | C | MAGIC |
-|---|---:|---:|---:|
-| time | **34 ms** | 38 ms | 38 ms |
-| checksum | 1500001500000 | 1500001500000 | 1500001500000 |
+| | Rust | C | MAGIC | MAGIC fast |
+|---|---:|---:|---:|---:|
+| time | 38 ms | 38 ms | 39 ms | **28 ms** |
+| checksum | 1500001500000 | 1500001500000 | 1500001500000 | 1500001500000 |
 
 The same map lives in `examples/hashmap.magic` as the language's collections pattern (no builtin
 container type is needed).
@@ -98,12 +101,12 @@ B+tree over the keys, and answers 10,000 point lookups with the index or with a 
 `bufpool`: 512 disk pages of 4 KB, 64 frames, LRU eviction, 200,000 random accesses (the LCG's high
 bits choose the page, so the low bits do not cycle).
 
-| | Rust | C | MAGIC |
-|---|---:|---:|---:|
-| hits | 24,997 | 24,997 | 24,997 |
-| misses | 175,003 | 175,003 | 175,003 |
-| checksum | 25,510,321 | 25,510,321 | 25,510,321 |
-| time | **121 ms** | 125 ms | 128 ms |
+| | Rust | C | MAGIC | MAGIC fast |
+|---|---:|---:|---:|---:|
+| hits | 24,997 | 24,997 | 24,997 | 24,997 |
+| misses | 175,003 | 175,003 | 175,003 | 175,003 |
+| checksum | 25,510,321 | 25,510,321 | 25,510,321 | 25,510,321 |
+| time | 120 ms | 125 ms | 128 ms | **101 ms** |
 
 Identical results and identical time: the pool is a few arrays and a linear scan, which both
 languages compile to the same loop.

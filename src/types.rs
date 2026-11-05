@@ -867,6 +867,58 @@ impl Checker {
                     }
                     return Ok(if name == "file_close" { Ty::I32 } else { Ty::I64 });
                 }
+                if name == "file_pread_at" {
+                    if args.len() != 5 {
+                        return Err(format!("{}: file_pread_at takes 5 arguments", e.line));
+                    }
+                    let t = self.check_expr(&args[0], None, scopes)?;
+                    if !t.is_numeric() {
+                        return Err(format!("{}: file_pread_at needs a file handle", e.line));
+                    }
+                    let ok = match &args[1].kind {
+                        ExprKind::Var(n) => lookup_array(scopes, n) == Some(Ty::U8),
+                        _ => false,
+                    };
+                    if !ok {
+                        return Err(format!(
+                            "{}: file_pread_at needs a [u8] array as its second argument",
+                            e.line
+                        ));
+                    }
+                    for a in &args[2..] {
+                        let t = self.check_expr(a, None, scopes)?;
+                        if !t.is_numeric() {
+                            return Err(format!("{}: file_pread_at numbers must be integers", e.line));
+                        }
+                    }
+                    return Ok(Ty::I32);
+                }
+                if name == "file_pread" {
+                    if args.len() != 4 {
+                        return Err(format!("{}: file_pread takes 4 arguments", e.line));
+                    }
+                    let t = self.check_expr(&args[0], None, scopes)?;
+                    if !t.is_numeric() {
+                        return Err(format!("{}: file_pread needs a file handle", e.line));
+                    }
+                    let ok = match &args[1].kind {
+                        ExprKind::Var(n) => lookup_array(scopes, n) == Some(Ty::U8),
+                        _ => false,
+                    };
+                    if !ok {
+                        return Err(format!(
+                            "{}: file_pread needs a [u8] array as its second argument",
+                            e.line
+                        ));
+                    }
+                    for a in &args[2..] {
+                        let t = self.check_expr(a, None, scopes)?;
+                        if !t.is_numeric() {
+                            return Err(format!("{}: file_pread length/offset must be integers", e.line));
+                        }
+                    }
+                    return Ok(Ty::I32);
+                }
                 if name == "file_read_at" || name == "file_write_at" {
                     if args.len() != 4 {
                         return Err(format!("{}: {} takes 4 arguments", e.line, name));

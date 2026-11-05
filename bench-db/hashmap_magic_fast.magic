@@ -1,0 +1,33 @@
+// 1M inserts and 1M lookups in an open-addressing map with 32-bit keys and
+// values (keys fit in i32), inlined loops, same answer as hashmap_c.c.
+fn main() {
+    let N = 1000000;
+    let CAP = 2097152;
+    var keys: [i32] = [0; 2097152];
+    var vals: [i32] = [0; 2097152];
+
+    var i: i64 = 1;
+    while i <= N {
+        var h = ((i * 2654435761) % CAP) as i32;
+        while keys[h] != 0 {
+            h = (h + 1) % CAP;
+        }
+        keys[h] = i as i32;
+        vals[h] = (i * 3) as i32;
+        i = i + 1;
+    }
+
+    var total: i64 = 0;
+    i = 1;
+    while i <= N {
+        var h = ((i * 2654435761) % CAP) as i32;
+        while keys[h] != 0 {
+            if (keys[h] as i64) == i {
+                total = total + (vals[h] as i64);
+            }
+            h = (h + 1) % CAP;
+        }
+        i = i + 1;
+    }
+    print(total);
+}

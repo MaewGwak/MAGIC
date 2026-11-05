@@ -679,13 +679,15 @@ fn main() {{
     print(file_seek(rd, 0, 0));
     print(file_read_at(rd, got, 4, 2));
     print(got[4]); print(got[5]);
+    print(file_pread(rd, got, 2, 1));
+    print(got[0]); print(got[1]);
     print(file_close(rd));
 }}
 "#
     );
     let out = build_and_run("file_io", &src);
     if let Some(out) = out {
-        assert_eq!(out, "3\n0\n3\n3\n65\n66\n67\n1\n2\n66\n67\n0\n2\n65\n66\n0");
+        assert_eq!(out, "3\n0\n3\n3\n65\n66\n67\n1\n2\n66\n67\n0\n2\n65\n66\n2\n66\n67\n0");
     }
     let _ = std::fs::remove_file(&path);
 }

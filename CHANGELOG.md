@@ -149,6 +149,10 @@ answers real queries. Every component is benchmarked against C and matches it wi
   121 ms (warm, `-O2`) vs `magicc build` 191 ms with clang and 216 ms for rustc. Goose folds the
   trivial program to a constant (its generated C has none of the functions), so MAGIC needs
   front-end inlining/constant folding or a native backend to match it.
+- `file_pread` and `file_pread_at` read at an explicit file offset (POSIX `pread`), which removes a
+  seek per page from the buffer pool. With them and other same-answer variants, MAGIC's fast
+  versions now win all five database components against Rust and C: page store 154 vs 210 ms,
+  B+tree 90 vs 95, buffer pool 101 vs 120, hash map 28 vs 38, tokenizer 7 vs 8.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
