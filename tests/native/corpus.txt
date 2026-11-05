@@ -17,3 +17,5 @@ bench-db/sqlscan_magic.magic
 bench-db/btree_magic.magic
 bench-db/bufpool_magic.magic
 bench-db/hashmap_magic.magic
+bench-suite/raytrace_magic.magic
+bench-suite/nbody_magic.magic

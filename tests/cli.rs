@@ -1117,3 +1117,68 @@ fn native_null_env_and_arg_are_safe() {
     assert!(run.status.success(), "null string crashed");
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "0\n0");
 }
+
+#[test]
+fn native_floats_match_the_c_backend() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("floats");
+    let src = dir.path().join("f.magic");
+    std::fs::write(
+        &src,
+        "fn main() {\n\
+         var x = 1.5;\n\
+         var y = 2.0;\n\
+         print(x + y);\n\
+         print(x < y);\n\
+         print(sqrt(16.0));\n\
+         print_prec(x * y, 2);\n\
+         print(-x);\n\
+         var a: [f64] = [0.0; 2];\n\
+         a[0] = 0.5;\n\
+         a[1] = a[0] * 4.0;\n\
+         print(a[1]);\n\
+         }\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("f");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout).trim(),
+        "3.5\ntrue\n4\n3.00\n-1.5\n2"
+    );
+}
+
+#[test]
+fn native_prints_bools_as_true_and_false() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("boolp");
+    let src = dir.path().join("b.magic");
+    std::fs::write(&src, "fn main() { print(1 < 2); print(2 < 1); }\n").unwrap();
+    let exe = dir.path().join("b");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "true\nfalse");
+}

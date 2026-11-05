@@ -17,6 +17,14 @@ Native arithmetic now narrows after every operation to the declared type, matchi
 `int32_t`/`uint8_t` wrapping: `2147483647 + 1` prints `-2147483648` and a `u8` at 255 wraps to 0.
 A regression test builds both cases natively and checks the output.
 
+## v0.8.4 — native floats and SSE2 (2026-11-06)
+
+The native backend now supports `f64`: literals, `+ - * /`, signed negation, comparisons (NaN-safe
+via `ucomisd` + `setnp`), `sqrt` (`sqrtsd`, no libm), casts between integers and floats, `f64` arrays
+with bounds checks, `print` (`%g`) and `print_prec` (`%.*f`). `raytrace` prints 336141.941 and
+`n_body` prints 11211.531383831 natively, byte-identical to the C backend. Integer and boolean
+printing was also aligned with C (`%d`, `%u`, `true`/`false`).
+
 ## v0.8.3 — security hardening (2026-11-06)
 
 Two independent security reviews of the compiler and the native backend produced concrete exploits;

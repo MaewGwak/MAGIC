@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Compares each benchmark's compiler-reported static memory bound with peak RSS.
-# Exits 1 if a program's peak RSS is below its reported bound (a broken bound).
+# Exits 1 if a program's peak RSS exceeds its reported static bound.
 set -u
 ROOT=$(cd "$(dirname "$0")" && pwd)
 M="$ROOT/target/release/magicc"
@@ -19,7 +19,17 @@ CASES=(
   "binary trees|bench-bt|bt_magic.magic"
 )
 
-printf '%-16s %10s %8s %10s %s\n' Benchmark ReportedMB PeakMB Overhead OK
+# Measure the dynamic-loader/libc floor once, so the gate compares the program's
+# own allocations with the compiler's reported bound rather than process startup.
+printf 'fn main() { print(0); }\n' > "$OUT/mem-floor.magic"
+"$M" build "$OUT/mem-floor.magic" -o "$OUT/mem-floor" >/dev/null 2>&1
+/usr/bin/time -v "$OUT/mem-floor" >/dev/null 2>/tmp/memfloor.$$
+floorkb=$(grep 'Maximum resident set size' /tmp/memfloor.$$ | grep -oE '[0-9]+')
+rm -f /tmp/memfloor.$$
+floormb=$(awk -v k="$floorkb" 'BEGIN { printf "%.1f", k / 1024 }')
+echo "runtime floor: ${floormb} MB (dynamic libc + loader)"
+
+printf '%-16s %10s %8s %10s %8s %s\n' Benchmark ReportedMB PeakMB Effective Overhead OK
 fail=0
 for spec in "${CASES[@]}"; do
   IFS='|' read -r name dir src <<< "$spec"
@@ -38,10 +48,11 @@ for spec in "${CASES[@]}"; do
   rm -f /tmp/memtime.$$
   boundmb=$(awk -v b="$bound" 'BEGIN { printf "%.1f", b / 1048576 }')
   peakmb=$(awk -v k="$peakkb" 'BEGIN { printf "%.1f", k / 1024 }')
-  overhead=$(awk -v p="$peakmb" -v b="$boundmb" 'BEGIN { printf "%.1f", p - b }')
-  ok=$(awk -v p="$peakmb" -v b="$boundmb" 'BEGIN { print (p >= b * 0.95) ? "ok" : "PEAK < BOUND" }')
+  effmb=$(awk -v p="$peakmb" -v f="$floormb" 'BEGIN { printf "%.1f", p - f }')
+  overhead=$(awk -v e="$effmb" -v b="$boundmb" 'BEGIN { printf "%.1f", e - b }')
+  ok=$(awk -v e="$effmb" -v b="$boundmb" 'BEGIN { print (e <= b * 1.10 + 0.5) ? "ok" : "BOUND < PEAK" }')
   [ "$ok" = ok ] || fail=$((fail + 1))
-  printf '%-16s %10s %8s %10s %s\n' "$name" "$boundmb" "$peakmb" "$overhead" "$ok"
+  printf '%-16s %10s %8s %10s %8s %s\n' "$name" "$boundmb" "$peakmb" "$effmb" "$overhead" "$ok"
 done
 
 echo
@@ -49,4 +60,4 @@ if [ "$fail" -ne 0 ]; then
   echo "$fail case(s) failed"
   exit 1
 fi
-echo 'every reported bound is <= measured peak RSS'
+echo 'every program allocation fits its reported bound (peak minus runtime floor)'

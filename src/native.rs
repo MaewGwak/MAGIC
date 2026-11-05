@@ -17,6 +17,7 @@ use std::collections::HashMap;
 struct Emitter {
     out: String,
     rodata: Vec<(String, String)>,
+    doubles: Vec<(String, u64)>,
     label: usize,
     /// 8-byte temporaries currently pushed; used for 16-byte call alignment.
     depth: usize,
@@ -54,6 +55,7 @@ impl Emitter {
         Emitter {
             out: String::new(),
             rodata: Vec::new(),
+            doubles: Vec::new(),
             label: 0,
             depth: 0,
             locals: HashMap::new(),
@@ -313,6 +315,129 @@ impl Emitter {
         }
     }
 
+    fn is_float(&self, e: &Expr) -> bool {
+        self.expr_ty(e) == Ty::F64
+    }
+
+    fn double_label(&mut self, v: f64) -> String {
+        let label = format!(".Ldbl{}", self.doubles.len());
+        self.doubles.push((label.clone(), v.to_bits()));
+        label
+    }
+
+    fn fexpr(&mut self, e: &Expr) -> Result<(), String> {
+        match &e.kind {
+            ExprKind::Float(v) => {
+                let label = self.double_label(*v);
+                self.line(&format!("    movsd {}(%rip), %xmm0", label));
+            }
+            ExprKind::Int(v) => {
+                if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
+                    self.line(&format!("    mov ${}, %rax", v));
+                } else {
+                    self.line(&format!("    movabs ${}, %rax", v));
+                }
+                self.line("    cvtsi2sd %rax, %xmm0");
+            }
+            ExprKind::Var(n) => {
+                let ty = self.local_ty.get(n).copied().unwrap_or(Ty::I64);
+                let off = *self.locals.get(n).ok_or_else(|| {
+                    format!("native backend line {}: unknown float variable `{}`", e.line, n)
+                })?;
+                if ty == Ty::F64 {
+                    self.line(&format!("    movsd -{}(%rbp), %xmm0", off));
+                } else {
+                    self.line(&format!("    mov -{}(%rbp), %rax", off));
+                    self.line("    cvtsi2sd %rax, %xmm0");
+                }
+            }
+            ExprKind::Bin { op, l, r } => {
+                self.fexpr(l)?;
+                self.line("    sub $16, %rsp");
+                self.line("    movsd %xmm0, (%rsp)");
+                self.fexpr(r)?;
+                self.line("    movsd (%rsp), %xmm1");
+                self.line("    add $16, %rsp");
+                match op {
+                    BinOp::Add => self.line("    addsd %xmm1, %xmm0"),
+                    BinOp::Sub => {
+                        self.line("    subsd %xmm0, %xmm1");
+                        self.line("    movapd %xmm1, %xmm0");
+                    }
+                    BinOp::Mul => self.line("    mulsd %xmm1, %xmm0"),
+                    BinOp::Div => {
+                        self.line("    divsd %xmm0, %xmm1");
+                        self.line("    movapd %xmm1, %xmm0");
+                    }
+                    other => {
+                        return Err(format!(
+                            "native backend line {}: float operator {:?} is not supported",
+                            e.line, other
+                        ))
+                    }
+                }
+            }
+            ExprKind::Un { op: UnOp::Neg, e } => {
+                self.fexpr(e)?;
+                let label = format!(".Ldbl{}", self.doubles.len());
+                self.doubles.push((label.clone(), 0x8000_0000_0000_0000));
+                self.line(&format!("    movsd {}(%rip), %xmm1", label));
+                self.line("    xorpd %xmm1, %xmm0");
+            }
+            ExprKind::Cast { e, ty } => {
+                if *ty == Ty::F64 {
+                    if self.is_float(e) {
+                        self.fexpr(e)?;
+                    } else {
+                        self.expr(e)?;
+                        self.line("    cvtsi2sd %rax, %xmm0");
+                    }
+                } else {
+                    self.fexpr(e)?;
+                    self.line("    cvttsd2si %xmm0, %rax");
+                    self.truncate(*ty);
+                }
+            }
+            ExprKind::Call { name, args } => {
+                if name == "sqrt" && args.len() == 1 {
+                    self.fexpr(&args[0])?;
+                    self.line("    sqrtsd %xmm0, %xmm0");
+                } else {
+                    return Err(format!(
+                        "native backend line {}: float function `{}` is not supported yet",
+                        e.line, name
+                    ));
+                }
+            }
+            ExprKind::Index { name, index } => {
+                let (off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("native backend line {}: unknown array `{}`", e.line, name)
+                })?;
+                if elem != Ty::F64 {
+                    self.expr(e)?;
+                    self.line("    cvtsi2sd %rax, %xmm0");
+                } else {
+                    self.expr(index)?;
+                    self.bounds_check("%rax", name, e.line)?;
+                    self.line(&format!("    mov -{}(%rbp), %r10", off));
+                    self.line("    movsd (%r10,%rax,8), %xmm0");
+                }
+            }
+            ExprKind::ArrayLen(name) => {
+                self.expr(e)?;
+                self.line("    cvtsi2sd %rax, %xmm0");
+                let _ = name;
+            }
+            other => {
+                return Err(format!(
+                    "native backend line {}: float expression not supported yet ({:?})",
+                    e.line, other
+                ))
+            }
+        }
+        Ok(())
+    }
+
     /// C integer promotion: u8 and bool become int; i64 wins.
     fn arith_ty(&self, l: &Expr, r: &Expr) -> Ty {
         let a = self.expr_ty(l);
@@ -491,6 +616,56 @@ impl Emitter {
                 }
             }
             ExprKind::Bin { op, l, r } => {
+                if self.is_float(l) || self.is_float(r) {
+                    match op {
+                        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                            self.fexpr(e)?;
+                            return Ok(());
+                        }
+                        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                            self.fexpr(l)?;
+                            self.line("    sub $16, %rsp");
+                            self.line("    movsd %xmm0, (%rsp)");
+                            self.fexpr(r)?;
+                            self.line("    movsd (%rsp), %xmm1");
+                            self.line("    add $16, %rsp");
+                            self.line("    ucomisd %xmm0, %xmm1");
+                            match op {
+                                BinOp::Eq => {
+                                    self.line("    sete %al");
+                                    self.line("    setnp %cl");
+                                    self.line("    and %cl, %al");
+                                }
+                                BinOp::Ne => {
+                                    self.line("    setne %al");
+                                    self.line("    setp %cl");
+                                    self.line("    or %cl, %al");
+                                }
+                                BinOp::Lt => {
+                                    self.line("    setb %al");
+                                    self.line("    setnp %cl");
+                                    self.line("    and %cl, %al");
+                                }
+                                BinOp::Le => {
+                                    self.line("    setbe %al");
+                                    self.line("    setnp %cl");
+                                    self.line("    and %cl, %al");
+                                }
+                                BinOp::Gt => self.line("    seta %al"),
+                                BinOp::Ge => self.line("    setae %al"),
+                                _ => unreachable!(),
+                            }
+                            self.line("    movzbq %al, %rax");
+                            return Ok(());
+                        }
+                        other => {
+                            return Err(format!(
+                                "native backend line {}: float operator {:?} is not supported",
+                                e.line, other
+                            ))
+                        }
+                    }
+                }
                 self.expr(l)?;
                 if !self.simple_into(r, "%rcx")? {
                     self.push("%rax");
@@ -967,6 +1142,16 @@ impl Emitter {
             self.call("fflush@PLT");
             return Ok(());
         }
+        if name == "print_prec" && args.len() == 2 {
+            self.expr(&args[1])?;
+            self.push("%rax");
+            self.fexpr(&args[0])?;
+            self.pop("%rsi");
+            self.line("    lea .Lfmt_pf(%rip), %rdi");
+            self.line("    mov $1, %eax");
+            self.call("printf@PLT");
+            return Ok(());
+        }
         if name == "str_len" && args.len() == 1 {
             self.expr(&args[0])?;
             let done = self.fresh("sllen");
@@ -1175,37 +1360,84 @@ impl Emitter {
     fn stmt(&mut self, s: &Stmt) -> Result<(), String> {
         match &s.kind {
             StmtKind::Let { name, ty, init, .. } => {
-                self.expr(init)?;
                 let target = ty.unwrap_or_else(|| self.expr_ty(init));
                 self.local_ty.insert(name.clone(), target);
-                self.truncate(target);
                 let off = *self.locals.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown variable `{}`", s.line, name)
                 })?;
-                self.line(&format!("    mov %rax, -{}(%rbp)", off));
+                if target == Ty::F64 {
+                    self.fexpr(init)?;
+                    self.line(&format!("    movsd %xmm0, -{}(%rbp)", off));
+                } else {
+                    self.expr(init)?;
+                    self.truncate(target);
+                    self.line(&format!("    mov %rax, -{}(%rbp)", off));
+                }
             }
             StmtKind::Assign { name, value } => {
-                self.expr(value)?;
                 let target = self.local_ty.get(name).copied().unwrap_or(Ty::I64);
-                self.truncate(target);
                 let off = *self.locals.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown variable `{}`", s.line, name)
                 })?;
-                self.line(&format!("    mov %rax, -{}(%rbp)", off));
+                if target == Ty::F64 {
+                    self.fexpr(value)?;
+                    self.line(&format!("    movsd %xmm0, -{}(%rbp)", off));
+                } else {
+                    self.expr(value)?;
+                    self.truncate(target);
+                    self.line(&format!("    mov %rax, -{}(%rbp)", off));
+                }
             }
             StmtKind::Print { value, ty } => {
-                let as_str = matches!(value.kind, ExprKind::Str(_)) || matches!(ty, Some(Ty::Str));
-                self.expr(value)?;
-                let _pty = ty.unwrap_or_else(|| self.expr_ty(value));
-                if as_str {
-                    self.line("    mov %rax, %rsi");
-                    self.line("    lea .Lfmt_s(%rip), %rdi");
-                } else {
-                    self.line("    mov %rax, %rsi");
-                    self.line("    lea .Lfmt_i(%rip), %rdi");
+                let pty = ty.unwrap_or_else(|| self.expr_ty(value));
+                match pty {
+                    Ty::Str => {
+                        self.expr(value)?;
+                        self.line("    mov %rax, %rsi");
+                        self.line("    lea .Lfmt_s(%rip), %rdi");
+                        self.line("    xor %eax, %eax");
+                        self.call("printf@PLT");
+                    }
+                    Ty::F64 => {
+                        self.fexpr(value)?;
+                        self.line("    lea .Lfmt_g(%rip), %rdi");
+                        self.line("    mov $1, %eax");
+                        self.call("printf@PLT");
+                    }
+                    Ty::Bool => {
+                        self.expr(value)?;
+                        let done = self.fresh("boolp");
+                        self.line("    lea .Lfalse_s(%rip), %rsi");
+                        self.line("    test %rax, %rax");
+                        self.line(&format!("    je {}", done));
+                        self.line("    lea .Ltrue_s(%rip), %rsi");
+                        self.line(&format!("{}:", done));
+                        self.line("    lea .Lfmt_s(%rip), %rdi");
+                        self.line("    xor %eax, %eax");
+                        self.call("printf@PLT");
+                    }
+                    Ty::I32 => {
+                        self.expr(value)?;
+                        self.line("    mov %eax, %esi");
+                        self.line("    lea .Lfmt_d(%rip), %rdi");
+                        self.line("    xor %eax, %eax");
+                        self.call("printf@PLT");
+                    }
+                    Ty::U8 => {
+                        self.expr(value)?;
+                        self.line("    mov %eax, %esi");
+                        self.line("    lea .Lfmt_u(%rip), %rdi");
+                        self.line("    xor %eax, %eax");
+                        self.call("printf@PLT");
+                    }
+                    _ => {
+                        self.expr(value)?;
+                        self.line("    mov %rax, %rsi");
+                        self.line("    lea .Lfmt_ll(%rip), %rdi");
+                        self.line("    xor %eax, %eax");
+                        self.call("printf@PLT");
+                    }
                 }
-                self.line("    xor %eax, %eax");
-                self.call("printf@PLT");
             }
             StmtKind::Expr(e) => {
                 self.expr(e)?;
@@ -1213,9 +1445,13 @@ impl Emitter {
             StmtKind::Return(e) => {
                 match e {
                     Some(e) => {
-                        self.expr(e)?;
                         let ty = self.cur_ret;
-                        self.truncate(ty);
+                        if ty == Ty::F64 {
+                            self.fexpr(e)?;
+                        } else {
+                            self.expr(e)?;
+                            self.truncate(ty);
+                        }
                     }
                     None => self.line("    xor %eax, %eax"),
                 }
@@ -1310,8 +1546,15 @@ impl Emitter {
                     self.line(&format!("    lea {}(%rip), %rdi", msg));
                     self.call(".Lmagic_panic");
                 }
-                self.expr(value)?;
-                self.push("%rax");
+                let is_float = elem == Ty::F64;
+                if is_float {
+                    self.fexpr(value)?;
+                    self.line("    sub $16, %rsp");
+                    self.line("    movsd %xmm0, (%rsp)");
+                } else {
+                    self.expr(value)?;
+                    self.push("%rax");
+                }
                 let size = Self::elem_size(elem) * len;
                 self.line(&format!("    mov ${}, %rdi", size));
                 self.call("malloc@PLT");
@@ -1324,7 +1567,12 @@ impl Emitter {
                 self.line(&format!("{}:", ok));
                 self.line(&format!("    mov %rax, -{}(%rbp)", off));
                 self.line("    mov %rax, %r10");
-                self.pop("%rax");
+                if is_float {
+                    self.line("    movsd (%rsp), %xmm0");
+                    self.line("    add $16, %rsp");
+                } else {
+                    self.pop("%rax");
+                }
                 self.line(&format!("    mov ${}, %rcx", len));
                 self.line("    mov $0, %r8");
                 let fill = self.fresh("fill");
@@ -1336,6 +1584,7 @@ impl Emitter {
                     Ty::U8 | Ty::Bool => self.line("    movb %al, (%r10,%r8,1)"),
                     Ty::I32 => self.line("    movl %eax, (%r10,%r8,4)"),
                     Ty::I64 => self.line("    movq %rax, (%r10,%r8,8)"),
+                    Ty::F64 => self.line("    movsd %xmm0, (%r10,%r8,8)"),
                     other => {
                         return Err(format!(
                             "native backend line {}: array element type {:?} is not supported yet",
@@ -1351,21 +1600,33 @@ impl Emitter {
                 let (off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown array `{}`", s.line, name)
                 })?;
-                self.expr(value)?;
-                self.push("%rax");
-                self.expr(index)?;
-                self.bounds_check("%rax", name, s.line)?;
-                self.pop("%rcx");
-                self.line(&format!("    mov -{}(%rbp), %r10", off));
-                match elem {
-                    Ty::U8 | Ty::Bool => self.line("    movb %cl, (%r10,%rax,1)"),
-                    Ty::I32 => self.line("    movl %ecx, (%r10,%rax,4)"),
-                    Ty::I64 => self.line("    movq %rcx, (%r10,%rax,8)"),
-                    other => {
-                        return Err(format!(
-                            "native backend line {}: array element type {:?} is not supported yet",
-                            s.line, other
-                        ))
+                if elem == Ty::F64 {
+                    self.fexpr(value)?;
+                    self.line("    sub $16, %rsp");
+                    self.line("    movsd %xmm0, (%rsp)");
+                    self.expr(index)?;
+                    self.bounds_check("%rax", name, s.line)?;
+                    self.line("    movsd (%rsp), %xmm0");
+                    self.line("    add $16, %rsp");
+                    self.line(&format!("    mov -{}(%rbp), %r10", off));
+                    self.line("    movsd %xmm0, (%r10,%rax,8)");
+                } else {
+                    self.expr(value)?;
+                    self.push("%rax");
+                    self.expr(index)?;
+                    self.bounds_check("%rax", name, s.line)?;
+                    self.pop("%rcx");
+                    self.line(&format!("    mov -{}(%rbp), %r10", off));
+                    match elem {
+                        Ty::U8 | Ty::Bool => self.line("    movb %cl, (%r10,%rax,1)"),
+                        Ty::I32 => self.line("    movl %ecx, (%r10,%rax,4)"),
+                        Ty::I64 => self.line("    movq %rcx, (%r10,%rax,8)"),
+                        other => {
+                            return Err(format!(
+                                "native backend line {}: array element type {:?} is not supported yet",
+                                s.line, other
+                            ))
+                        }
                     }
                 }
             }
@@ -1420,7 +1681,15 @@ impl Emitter {
         let mut expanded: Vec<(String, bool)> = Vec::new();
         for (name, pty) in &f.params {
             match pty {
-                ParamTy::Scalar(_) => expanded.push((name.clone(), false)),
+                ParamTy::Scalar(ty) => {
+                    if *ty == Ty::F64 {
+                        return Err(format!(
+                            "native backend: `{}` has an f64 parameter, which is not supported yet",
+                            f.name
+                        ));
+                    }
+                    expanded.push((name.clone(), false))
+                }
                 ParamTy::Array(_) => {
                     expanded.push((name.clone(), true));
                     expanded.push((format!("{}#len", name), false));
@@ -1512,6 +1781,13 @@ pub fn emit(prog: &Program) -> Result<String, String> {
     e.line(".section .rodata");
     e.line(".Lempty: .asciz \"\"");
     e.line(".Lfmt_i: .asciz \"%ld\\n\"");
+    e.line(".Lfmt_ll: .asciz \"%lld\\n\"");
+    e.line(".Lfmt_d: .asciz \"%d\\n\"");
+    e.line(".Lfmt_u: .asciz \"%u\\n\"");
+    e.line(".Lfmt_g: .asciz \"%g\\n\"");
+    e.line(".Lfmt_pf: .asciz \"%.*f\\n\"");
+    e.line(".Ltrue_s: .asciz \"true\"");
+    e.line(".Lfalse_s: .asciz \"false\"");
     e.line(".Lfmt_s: .asciz \"%s\\n\"");
     e.line(".Lfmt_panic: .asciz \"%s\\n\"");
     let rodata = std::mem::take(&mut e.rodata);
@@ -1541,6 +1817,11 @@ pub fn emit(prog: &Program) -> Result<String, String> {
     e.line("    call fprintf@PLT");
     e.line("    mov $1, %edi");
     e.line("    call exit@PLT");
+    let doubles = std::mem::take(&mut e.doubles);
+    for (label, bits) in &doubles {
+        e.line(&format!(".align 8"));
+        e.line(&format!("{}: .quad {}", label, bits));
+    }
     e.line(".section .note.GNU-stack,\"\",@progbits");
     Ok(e.out)
 }
