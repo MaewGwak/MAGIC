@@ -56,3 +56,11 @@
 /bench-db/sqldb_magic
 /bench-db/sqldb_magic.c
 /bench-db/sqldb.dat
+/bench-db/inserts.dat
+/bench-db/heap.dat
+/bench-db/dbload_c
+/bench-db/dbload_magic
+/bench-db/dbload_magic.c
+/bench-db/dbquery_c
+/bench-db/dbquery_magic
+/bench-db/dbquery_magic.c

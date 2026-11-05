@@ -12,7 +12,7 @@ compare against a C implementation of the same design.
 | 3 | B+tree: 64-key nodes, insert/search, leaf and root splits | **in-memory done** |
 | 4 | SQL tokenizer and parser (SELECT/INSERT/CREATE TABLE) | **done** |
 | 5 | Executor: sequential scan, index scan, simple aggregates | **heap scan + COUNT/SUM/WHERE done** |
-| 6 | Persistence: catalog and heap files, crash-safe writes | |
+| 6 | Persistence: catalog and heap files, crash-safe writes | **heap file + reload done** |
 | 7 | Wire protocol or CLI REPL | |
 
 ## Baseline (measured on this machine)
@@ -59,6 +59,20 @@ Run it as `./sqldb_magic scan` (heap scan) or `./sqldb_magic index` (B+tree inde
 
 The index makes point lookups 17x faster, and MAGIC matches C in both modes (1.7% slower on the
 scan, parity on the index).
+
+## Persistence
+
+`dbload` parses the INSERT file once and writes 16-byte `(key, value)` records to `heap.dat` behind
+an 8-byte row count. `dbquery` opens that file in a fresh process, reads the rows back and answers
+lookups, so the SQL text is not parsed at query time.
+
+| Step | C | MAGIC |
+|---|---:|---:|
+| bulk load: 100,000 INSERTs to heap | 11 ms | 13 ms |
+| query process: load 1.6 MB heap + 1,000 point scans | 65 ms | **57 ms** |
+
+Both processes print the same rows (100,000) and checksum (348883500). The next step is to build the
+B+tree on load instead of scanning, which should take the query process to a few milliseconds.
 
 Build and run:
 

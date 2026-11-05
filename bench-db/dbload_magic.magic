@@ -1,0 +1,66 @@
+// Bulk loader: read INSERT statements, write 16-byte (key, value) records into
+// a heap file in 4 KB blocks. Prints the number of rows written.
+fn is_digit(c: u8) -> bool {
+    return c >= 48 && c <= 57;
+}
+
+fn put_i64(buf: [u8], off: i32, v: i64) {
+    var x = v;
+    var k = 0;
+    while k < 8 {
+        buf[off + k] = (x % 256) as u8;
+        x = x / 256;
+        k = k + 1;
+    }
+}
+
+fn main() {
+    var sql: [u8] = [0; 8388608];
+    var fd = file_open("bench-db/inserts.dat", "rb");
+    var n = file_read(fd, sql, 8388608);
+    file_close(fd);
+
+    var page: [u8] = [0; 4096];
+    var out = file_open("bench-db/heap.dat", "wb");
+    var hdr: [u8] = [0; 8];
+    file_write(out, hdr, 8);
+    var off = 0;
+    var rows: i64 = 0;
+    var have = 0;
+    var k0: i64 = 0;
+
+    var i = 0;
+    while i < n {
+        if is_digit(sql[i]) {
+            var v: i64 = 0;
+            while i < n && is_digit(sql[i]) {
+                v = v * 10 + ((sql[i] as i64) - 48);
+                i = i + 1;
+            }
+            if have == 0 {
+                k0 = v;
+                have = 1;
+            } else {
+                put_i64(page, off, k0);
+                put_i64(page, off + 8, v);
+                off = off + 16;
+                rows = rows + 1;
+                have = 0;
+                if off == 4096 {
+                    file_write(out, page, 4096);
+                    off = 0;
+                }
+            }
+        } else {
+            i = i + 1;
+        }
+    }
+    if off > 0 {
+        file_write(out, page, 4096);
+    }
+    put_i64(hdr, 0, rows);
+    file_seek(out, 0, 0);
+    file_write(out, hdr, 8);
+    file_close(out);
+    print(rows);
+}

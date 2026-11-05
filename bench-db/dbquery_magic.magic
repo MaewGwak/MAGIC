@@ -1,0 +1,47 @@
+// Query process: load the heap file written by dbload, then run 1,000 point
+// lookups with a linear scan. Prints rows and the checksum of found values.
+fn get_i64(buf: [u8], off: i32) -> i64 {
+    var v: i64 = 0;
+    var mul: i64 = 1;
+    var k = 0;
+    while k < 8 {
+        v = v + (buf[off + k] as i64) * mul;
+        mul = mul * 256;
+        k = k + 1;
+    }
+    return v;
+}
+
+fn main() {
+    var all: [u8] = [0; 2097152];
+    var fd = file_open("bench-db/heap.dat", "rb");
+    var n = file_read(fd, all, 2097152);
+    file_close(fd);
+    var rows = get_i64(all, 0);
+    var rk: [i64] = [0; 200000];
+    var rv: [i64] = [0; 200000];
+    var r = 0;
+    while r < rows {
+        rk[r] = get_i64(all, 8 + r * 16);
+        rv[r] = get_i64(all, 8 + r * 16 + 8);
+        r = r + 1;
+    }
+
+    var total: i64 = 0;
+    var q = 0;
+    while q < 1000 {
+        var key = (q * 7919) % 100000;
+        var found: i64 = 0;
+        var r = 0;
+        while r < rows {
+            if rk[r] == key {
+                found = rv[r];
+            }
+            r = r + 1;
+        }
+        total = total + found;
+        q = q + 1;
+    }
+    print(rows);
+    print(total);
+}

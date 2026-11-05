@@ -111,6 +111,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
   matching C in both modes. Two real B+tree bugs were found by a sequential-key test: the internal
   descent used a lower bound where an upper bound is needed, and node arrays were one element too
   narrow, so a full leaf wrote into the next node. Both are fixed in the MAGIC and C versions.
+- mini-PostgreSQL persistence: `dbload` writes 100,000 rows to a 1.6 MB heap file (MAGIC 13 ms,
+  C 11 ms) and a separate `dbquery` process reads it back and answers 1,000 point lookups
+  (MAGIC 57 ms, C 65 ms), with identical rows and checksums and no SQL parsing at query time.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
