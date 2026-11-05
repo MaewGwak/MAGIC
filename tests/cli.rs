@@ -524,3 +524,31 @@ fn cc_env_may_include_arguments() {
     let run = Command::new(&exe).output().expect("run built program");
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
 }
+
+#[test]
+fn changing_the_cc_rebuilds_the_program() {
+    if !has_compiler() {
+        return;
+    }
+    let dir = TempDir::new("cc_stamp");
+    let src = dir.path().join("hello.magic");
+    std::fs::write(&src, "fn main() { print(1); }\n").expect("write source");
+    let first = Command::new(magicc())
+        .current_dir(dir.path())
+        .args(["build", "hello.magic"])
+        .output()
+        .expect("run magicc");
+    assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+    let stamp = dir.path().join("hello.flags");
+    let before = std::fs::read_to_string(&stamp).expect("flags stamp");
+    let default_cc = before.rsplit('|').next().unwrap_or("gcc").trim().to_string();
+    let second = Command::new(magicc())
+        .current_dir(dir.path())
+        .args(["build", "hello.magic", "--cc", &format!("{default_cc} -O1")])
+        .output()
+        .expect("run magicc");
+    assert!(second.status.success(), "{}", String::from_utf8_lossy(&second.stderr));
+    let after = std::fs::read_to_string(&stamp).expect("flags stamp");
+    assert_ne!(before, after, "the compiler must be part of the build identity");
+    assert!(after.contains("-O1"), "stamp was {after:?}");
+}

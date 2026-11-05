@@ -4,6 +4,11 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 
 ## Unreleased
 
+**Fixed**
+- `magicc build --cc ...` did not invalidate the cache: the compiler is now part of the `.flags`
+  stamp, so switching compilers rebuilds instead of reusing the previous executable.
+
+
 **Performance** (algorithm-optimized MAGIC implementations, same answers)
 - Odd-only sieve: 173 ms vs 397 ms for the classic C sieve.
 - Parallel odd-only sieve (`par for`, dynamic schedule): 86 ms vs 397 ms — 4.6x.

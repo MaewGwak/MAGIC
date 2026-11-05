@@ -134,10 +134,17 @@ fn run() -> Result<(), String> {
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| "out".to_string())
             };
+            // The C compiler is part of the build identity: switching --cc must
+            // rebuild instead of silently reusing the previous executable.
+            let cc = cc_override
+                .clone()
+                .or_else(find_cc)
+                .ok_or("no C compiler found (tried $CC, gcc, clang, cc)")?;
             let flags = format!(
-                "{}{}-nou",
+                "{}{}-nou|{}",
                 if dev { "O0" } else { "O3" },
-                if native { "-native" } else { "" }
+                if native { "-native" } else { "" },
+                cc
             );
             let stamp = dir.join(format!("{}.flags", stem));
             let flags_changed = fs::read_to_string(&stamp)
@@ -146,10 +153,6 @@ fn run() -> Result<(), String> {
             let chunks = magic::compile_parts_opts(&source, 16, unroll)
                 .map_err(|e| map_diagnostic(e, &segments, src_path))?;
             let needs_omp = chunks.iter().any(|c| c.contains("#pragma omp"));
-            let cc = cc_override
-                .clone()
-                .or_else(find_cc)
-                .ok_or("no C compiler found (tried $CC, gcc, clang, cc)")?;
             if unroll && cc.to_lowercase().contains("gcc") {
                 eprintln!(
                     "note: --unroll usually helps clang/zig and can regress gcc; \
