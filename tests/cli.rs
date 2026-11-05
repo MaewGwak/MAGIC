@@ -541,7 +541,15 @@ fn changing_the_cc_rebuilds_the_program() {
     assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
     let stamp = dir.path().join("hello.flags");
     let before = std::fs::read_to_string(&stamp).expect("flags stamp");
-    let default_cc = before.rsplit('|').next().unwrap_or("gcc").trim().to_string();
+    let default_cc = before
+        .lines()
+        .next()
+        .unwrap_or("")
+        .rsplit('|')
+        .next()
+        .unwrap_or("gcc")
+        .trim()
+        .to_string();
     let second = Command::new(magicc())
         .current_dir(dir.path())
         .args(["build", "hello.magic", "--cc", &format!("{default_cc} -O1")])
@@ -786,4 +794,326 @@ fn native_backend_wraps_like_the_c_backend() {
         String::from_utf8_lossy(&run.stdout).trim(),
         "-2147483648\n0"
     );
+}
+
+#[test]
+fn source_paths_cannot_inject_compiler_arguments() {
+    let dir = TempDir::new("inject");
+    std::fs::write(dir.path().join("@evil.magic"), "fn main() { print(7); }\n").unwrap();
+    std::fs::write(dir.path().join("evil.c"), "-fplugin=/nonexistent/evil.so\n").unwrap();
+    let exe = dir.path().join("out");
+    let out = Command::new(magicc())
+        .current_dir(dir.path())
+        .arg("build")
+        .arg("@evil.magic")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run magicc");
+    assert!(
+        out.status.success(),
+        "@-named source failed to build: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&exe).output().expect("run");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "7");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_artifacts_are_refused() {
+    let dir = TempDir::new("symlink");
+    let victim = dir.path().join("victim.txt");
+    std::fs::write(&victim, "untouched").unwrap();
+    std::fs::write(dir.path().join("t.magic"), "fn main() { print(1); }\n").unwrap();
+    if std::os::unix::fs::symlink(&victim, dir.path().join("t.c")).is_err() {
+        return;
+    }
+    let out = Command::new(magicc())
+        .current_dir(dir.path())
+        .arg("build")
+        .arg("t.magic")
+        .output()
+        .expect("run magicc");
+    assert!(!out.status.success(), "build wrote through a symlink");
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched");
+}
+
+#[test]
+fn tampered_binary_is_rebuilt() {
+    let dir = TempDir::new("tamper");
+    let src = dir.path().join("t.magic");
+    std::fs::write(&src, "fn main() { print(11); }\n").unwrap();
+    let exe = dir.path().join("t");
+    let first = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("build");
+    assert!(first.status.success());
+    let mut bytes = std::fs::read(&exe).unwrap();
+    bytes.extend_from_slice(b"tampered");
+    std::fs::write(&exe, bytes).unwrap();
+    let second = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("rebuild");
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(stdout.contains("built"), "tampered binary was trusted: {stdout}");
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "11");
+}
+
+#[test]
+fn deeply_nested_expressions_are_rejected() {
+    let dir = TempDir::new("deep");
+    let src = dir.path().join("deep.magic");
+    let mut text = String::from("fn main() { print(");
+    text.push_str(&"(".repeat(5000));
+    text.push('1');
+    text.push_str(&")".repeat(5000));
+    text.push_str("); }\n");
+    std::fs::write(&src, text).unwrap();
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .output()
+        .expect("run magicc");
+    assert!(!out.status.success());
+    assert!(out.status.code().is_some(), "compiler died by signal");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("too deep"),
+        "missing depth diagnostic"
+    );
+}
+
+#[test]
+fn trigraphs_are_escaped() {
+    let dir = TempDir::new("trigraph");
+    let src = dir.path().join("t.magic");
+    std::fs::write(&src, "fn main() { print(\"a??/b\"); }\n").unwrap();
+    let exe = dir.path().join("t");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "a??/b");
+}
+
+fn native_available() -> bool {
+    cfg!(target_os = "linux")
+        && cfg!(target_arch = "x86_64")
+        && Command::new("as")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+}
+
+#[test]
+fn native_inline_substitution_uses_caller_values() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("inlsub");
+    let src = dir.path().join("i.magic");
+    std::fs::write(
+        &src,
+        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+         fn main() {\n\
+         var b: i32 = 1000;\n\
+         print(add(b, 1));\n\
+         var a: i32 = 100;\n\
+         var c: i32 = 5;\n\
+         print(add(a, 2));\n\
+         }\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("i");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "1001\n102");
+}
+
+#[test]
+fn native_early_return_frees_nothing() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("early");
+    let src = dir.path().join("e.magic");
+    std::fs::write(
+        &src,
+        "fn g(x: i32) -> i32 { return x; }\n\
+         fn f(flag: bool) -> i32 {\n\
+         if flag { return 1; }\n\
+         var a: [i32] = [0; 4];\n\
+         a[0] = 7;\n\
+         return a[0] + g(1);\n\
+         }\n\
+         fn main() { print(f(true)); print(f(false)); }\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("e");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert!(run.status.success(), "native binary crashed");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "1\n8");
+}
+
+#[test]
+fn native_file_read_checks_the_buffer_length() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("fread");
+    let src = dir.path().join("f.magic");
+    std::fs::write(
+        &src,
+        format!(
+            "fn main() {{\n\
+             var fd = file_open(\"{}\", \"rb\");\n\
+             var b: [u8] = [0; 16];\n\
+             print(file_read(fd, b, 4096));\n\
+             }}\n",
+            dir.path().join("data").display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("data"), b"hello").unwrap();
+    let exe = dir.path().join("f");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(run.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&run.stderr).contains("length exceeds the buffer"),
+        "missing bounds diagnostic"
+    );
+}
+
+#[test]
+fn native_i64_literals_and_u8_promotion_match_c() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("widths");
+    let src = dir.path().join("w.magic");
+    std::fs::write(
+        &src,
+        "fn main() {\n\
+         var a: i64 = 4000000000 + 1;\n\
+         print(a);\n\
+         var b: u8 = 250;\n\
+         print(b + 10);\n\
+         }\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("w");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout).trim(),
+        "4000000001\n260"
+    );
+}
+
+#[test]
+fn native_division_by_zero_panics() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("divzero");
+    let src = dir.path().join("d.magic");
+    std::fs::write(&src, "fn main() { var a = 10; var b = 0; print(a / b); }\n").unwrap();
+    let exe = dir.path().join("d");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(run.status.code(), Some(1), "expected a panic, not SIGFPE");
+    assert!(String::from_utf8_lossy(&run.stderr).contains("division by zero"));
+}
+
+#[test]
+fn native_null_env_and_arg_are_safe() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("nullstr");
+    let src = dir.path().join("n.magic");
+    std::fs::write(
+        &src,
+        "fn main() {\n\
+         print(str_len(env(\"MAGIC_SURELY_UNSET_XYZ\")));\n\
+         print(str_len(arg(999)));\n\
+         }\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("n");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert!(run.status.success(), "null string crashed");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "0\n0");
 }

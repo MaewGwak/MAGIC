@@ -111,6 +111,7 @@ fn header_base(prog: &Program) -> String {
         out.push_str(
             "static void magic_push(void **p, int64_t *len, int64_t *cap, const void *v, size_t esz, const char *msg) {\n\
              \x20   if (*len == *cap) {\n\
+             \x20       if (*cap < 0 || *cap > (int64_t)(SIZE_MAX / (esz ? esz : 1) / 2)) magic_panic(msg);\n\
              \x20       int64_t nc = *cap ? *cap * 2 : 8;\n\
              \x20       void *np = realloc(*p, (size_t)nc * esz);\n\
              \x20       if (!np) magic_panic(msg);\n\
@@ -127,6 +128,7 @@ fn header_base(prog: &Program) -> String {
              }\n\n\
              static void magic_reserve(void **p, int64_t *cap, int64_t need, size_t esz, const char *msg) {\n\
              \x20   if (need <= *cap) return;\n\
+             \x20   if (need < 0 || esz == 0 || (uint64_t)need > (uint64_t)(SIZE_MAX / esz)) magic_panic(msg);\n\
              \x20   void *np = realloc(*p, (size_t)need * esz);\n\
              \x20   if (!np) magic_panic(msg);\n\
              \x20   *p = np;\n\
@@ -209,7 +211,7 @@ fn header_base(prog: &Program) -> String {
     out.push_str(
         "static int64_t magic_file_pread_at(int32_t fd, uint8_t *buf, int64_t boff, int64_t len, int64_t cap, int64_t off, const char *msg) {\n\
          \x20   if (fd < 3 || fd >= 256 || !magic_files[fd]) return -1;\n\
-         \x20   if (boff < 0 || len < 0 || boff + len > cap || off < 0) magic_panic(msg);\n\
+         \x20   if (boff < 0 || len < 0 || boff > cap || len > cap - boff || off < 0) magic_panic(msg);\n\
          #ifdef _WIN32\n\
          \x20   if (_lseeki64(_fileno(magic_files[fd]), off, SEEK_SET) < 0) return -1;\n\
          \x20   return (int64_t)fread(buf + boff, 1, (size_t)len, magic_files[fd]);\n\
@@ -222,12 +224,12 @@ fn header_base(prog: &Program) -> String {
     out.push_str(
         "static int64_t magic_file_read_at(int32_t fd, uint8_t *buf, int64_t off, int64_t len, int64_t cap, const char *msg) {\n\
          \x20   if (fd < 3 || fd >= 256 || !magic_files[fd]) return -1;\n\
-         \x20   if (off < 0 || len < 0 || off + len > cap) magic_panic(msg);\n\
+         \x20   if (off < 0 || len < 0 || off > cap || len > cap - off) magic_panic(msg);\n\
          \x20   return (int64_t)fread(buf + off, 1, (size_t)len, magic_files[fd]);\n\
          }\n\n\
          static int64_t magic_file_write_at(int32_t fd, const uint8_t *buf, int64_t off, int64_t len, int64_t cap, const char *msg) {\n\
          \x20   if (fd < 3 || fd >= 256 || !magic_files[fd]) return -1;\n\
-         \x20   if (off < 0 || len < 0 || off + len > cap) magic_panic(msg);\n\
+         \x20   if (off < 0 || len < 0 || off > cap || len > cap - off) magic_panic(msg);\n\
          \x20   return (int64_t)fwrite(buf + off, 1, (size_t)len, magic_files[fd]);\n\
          }\n\n",
     );
@@ -337,7 +339,7 @@ fn header_base(prog: &Program) -> String {
 
     out.push_str(
         "static int64_t magic_net_read_at(int32_t fd, uint8_t *buf, int64_t off, int64_t len, int64_t cap, const char *msg) {\n\
-         \x20   if (off < 0 || len < 0 || off + len > cap) magic_panic(msg);\n\
+         \x20   if (off < 0 || len < 0 || off > cap || len > cap - off) magic_panic(msg);\n\
          #ifdef _WIN32\n\
          \x20   return (int64_t)recv((SOCKET)fd, (char*)buf + off, (int)len, 0);\n\
          #else\n\
@@ -345,7 +347,7 @@ fn header_base(prog: &Program) -> String {
          #endif\n\
          }\n\
          static int64_t magic_net_write_at(int32_t fd, const uint8_t *buf, int64_t off, int64_t len, int64_t cap, const char *msg) {\n\
-         \x20   if (off < 0 || len < 0 || off + len > cap) magic_panic(msg);\n\
+         \x20   if (off < 0 || len < 0 || off > cap || len > cap - off) magic_panic(msg);\n\
          #ifdef _WIN32\n\
          \x20   return (int64_t)send((SOCKET)fd, (const char*)buf + off, (int)len, 0);\n\
          #else\n\
@@ -855,9 +857,30 @@ fn emit_stmt(
                     } = &s.kind
                     {
                         let n = const_int(count, consts).unwrap_or(0);
-                        let size = (n.max(0) as u64) * elem_size(*elem);
+                        let size = (n.max(0) as u64).checked_mul(elem_size(*elem));
+                        let size = match size {
+                            Some(v) if n >= 0 && n <= 1073741824 => v,
+                            _ => {
+                                out.push_str(&format!(
+                                    "{}magic_panic(\"line {}: bad arena size\");\n",
+                                    pad(indent),
+                                    st.line
+                                ));
+                                return;
+                            }
+                        };
                         let off = total;
-                        total = (off + size + 7) & !7u64;
+                        total = match off.checked_add(size).and_then(|v| v.checked_add(7)) {
+                            Some(v) => v & !7u64,
+                            None => {
+                                out.push_str(&format!(
+                                    "{}magic_panic(\"line {}: bad arena size\");\n",
+                                    pad(indent),
+                                    st.line
+                                ));
+                                return;
+                            }
+                        };
                         layout.push((name.as_str(), elem.c_name(), off, n, value));
                     }
                 }
@@ -1366,6 +1389,7 @@ fn c_escape(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
+            '?' => out.push_str("\\?"),
             other => out.push(other),
         }
     }

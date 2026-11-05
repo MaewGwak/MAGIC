@@ -281,7 +281,13 @@ impl Emitter {
 
     fn expr_ty(&self, e: &Expr) -> Ty {
         match &e.kind {
-            ExprKind::Int(_) => Ty::I32,
+            ExprKind::Int(v) => {
+                if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
+                    Ty::I32
+                } else {
+                    Ty::I64
+                }
+            }
             ExprKind::Bool(_) => Ty::Bool,
             ExprKind::Float(_) => Ty::F64,
             ExprKind::Str(_) => Ty::Str,
@@ -304,6 +310,17 @@ impl Emitter {
                 .unwrap_or(Ty::I64),
             ExprKind::Call { name, .. } => self.func_ret.get(name).copied().unwrap_or(Ty::I64),
             _ => Ty::I64,
+        }
+    }
+
+    /// C integer promotion: u8 and bool become int; i64 wins.
+    fn arith_ty(&self, l: &Expr, r: &Expr) -> Ty {
+        let a = self.expr_ty(l);
+        let b = self.expr_ty(r);
+        if a == Ty::I64 || b == Ty::I64 {
+            Ty::I64
+        } else {
+            Ty::I32
         }
     }
 
@@ -367,6 +384,11 @@ impl Emitter {
     /// Emit an operand that needs no calls or temporaries directly into `reg`,
     /// so simple binary expressions never touch the stack.
     fn simple_into(&mut self, e: &Expr, reg: &str) -> Result<bool, String> {
+        if !self.subst.is_empty() {
+            // Inside an inlined body a variable may name a substituted parameter;
+            // let expr() resolve it instead of reading the caller's slot.
+            return Ok(false);
+        }
         match &e.kind {
             ExprKind::Int(v) => {
                 if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
@@ -481,6 +503,13 @@ impl Emitter {
                     BinOp::Sub => self.line("    sub %rcx, %rax"),
                     BinOp::Mul => self.line("    imul %rcx, %rax"),
                     BinOp::Div | BinOp::Rem => {
+                        let ok = self.fresh("divok");
+                        self.line("    test %rcx, %rcx");
+                        self.line(&format!("    jne {}", ok));
+                        let msg = self.panic_msg(e.line, "division by zero");
+                        self.line(&format!("    lea {}(%rip), %rdi", msg));
+                        self.call(".Lmagic_panic");
+                        self.line(&format!("{}:", ok));
                         self.line("    cqo");
                         self.line("    idiv %rcx");
                         if *op == BinOp::Rem {
@@ -507,7 +536,7 @@ impl Emitter {
                 let ty = match op {
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
                     | BinOp::And | BinOp::Or => Ty::Bool,
-                    _ => self.expr_ty(l),
+                    _ => self.arith_ty(l, r),
                 };
                 self.truncate(ty);
             }
@@ -666,6 +695,7 @@ impl Emitter {
                 self.expr(&args[1])?;
                 self.push("%rax");
                 self.expr(&args[2])?;
+                self.check_len("%rax", &args[1], line)?;
                 self.line("    mov %rax, %rdx");
                 self.pop("%rsi");
                 self.expr(&args[0])?;
@@ -679,6 +709,11 @@ impl Emitter {
                 self.expr(&args[2])?;
                 self.push("%rax");
                 self.expr(&args[3])?;
+                self.push("%rax");
+                self.line("    mov (%rsp), %r11");
+                self.line("    mov 8(%rsp), %rax");
+                self.check_range("%rax", "%r11", &args[1], line)?;
+                self.pop("%rax");
                 self.line("    mov %rax, %rdx");
                 self.pop("%rax");
                 self.pop("%rsi");
@@ -697,6 +732,64 @@ impl Emitter {
         }
         let _ = line;
         Ok(true)
+    }
+
+    fn array_capacity(&self, e: &Expr) -> Option<(i64, Option<i64>)> {
+        if let ExprKind::Var(n) = &e.kind {
+            let (_, _, len) = *self.arrays.get(n)?;
+            Some((len, self.array_len_slot.get(n).copied()))
+        } else {
+            None
+        }
+    }
+
+    /// Enforce `0 <= n <= len` for a buffer argument before a libc call.
+    fn check_len(&mut self, nreg: &str, buf: &Expr, line: usize) -> Result<(), String> {
+        let Some((len, slot)) = self.array_capacity(buf) else {
+            return Ok(());
+        };
+        let msg = self.panic_msg(line, "length exceeds the buffer");
+        let ok = self.fresh("lenok");
+        if let Some(slot) = slot {
+            self.line(&format!("    mov -{}(%rbp), %r11", slot));
+            self.line(&format!("    cmp %r11, {}", nreg));
+        } else {
+            self.line(&format!("    cmp ${}, {}", len, nreg));
+        }
+        self.line(&format!("    jbe {}", ok));
+        self.line(&format!("    lea {}(%rip), %rdi", msg));
+        self.call(".Lmagic_panic");
+        self.line(&format!("{}:", ok));
+        Ok(())
+    }
+
+    /// Enforce `boff >= 0`, `len >= 0`, `boff + len <= cap` without overflow.
+    fn check_range(&mut self, boff_reg: &str, len_reg: &str, buf: &Expr, line: usize) -> Result<(), String> {
+        let Some((len, slot)) = self.array_capacity(buf) else {
+            return Ok(());
+        };
+        let msg = self.panic_msg(line, "range exceeds the buffer");
+        let ok = self.fresh("rngok");
+        self.line(&format!("    test {}, {}", boff_reg, boff_reg));
+        self.line(&format!("    js {}", ok));
+        self.line(&format!("    test {}, {}", len_reg, len_reg));
+        self.line(&format!("    js {}", ok));
+        if let Some(slot) = slot {
+            self.line(&format!("    mov -{}(%rbp), %r11", slot));
+        } else {
+            self.line(&format!("    mov ${}, %r11", len));
+        }
+        self.line(&format!("    cmp %r11, {}", boff_reg));
+        self.line(&format!("    ja {}", ok));
+        self.line(&format!("    sub {}, %r11", boff_reg));
+        self.line(&format!("    cmp %r11, {}", len_reg));
+        let bad = self.fresh("rngbad");
+        self.line(&format!("    jbe {}", ok));
+        self.line(&format!("{}:", bad));
+        self.line(&format!("    lea {}(%rip), %rdi", msg));
+        self.call(".Lmagic_panic");
+        self.line(&format!("{}:", ok));
+        Ok(())
     }
 
     /// File I/O builtins, mapped directly onto libc so no runtime library is
@@ -720,6 +813,7 @@ impl Emitter {
                 self.expr(&args[1])?;
                 self.push("%rax");
                 self.expr(&args[2])?;
+                self.check_len("%rax", &args[1], line)?;
                 self.push("%rax");
                 self.expr(&args[0])?;
                 self.line("    mov %rax, %rcx");
@@ -781,6 +875,9 @@ impl Emitter {
                 self.push("%rax");
                 self.expr(&args[3])?;
                 self.push("%rax");
+                self.line("    mov (%rsp), %r11");
+                self.line("    mov 8(%rsp), %rax");
+                self.check_range("%rax", "%r11", &args[1], line)?;
                 self.expr(&args[0])?;
                 self.line("    mov %rax, %rcx");
                 self.pop("%rdx");
@@ -872,12 +969,19 @@ impl Emitter {
         }
         if name == "str_len" && args.len() == 1 {
             self.expr(&args[0])?;
+            let done = self.fresh("sllen");
+            self.line("    test %rax, %rax");
+            self.line(&format!("    je {}", done));
             self.line("    mov %rax, %rdi");
             self.call("strlen@PLT");
+            self.line(&format!("{}:", done));
             return Ok(());
         }
         if name == "str_byte" && args.len() == 2 {
             self.expr(&args[0])?;
+            let zero0 = self.fresh("sbnil");
+            self.line("    test %rax, %rax");
+            self.line(&format!("    je {}", zero0));
             self.push("%rax");
             self.line("    mov %rax, %rdi");
             self.call("strlen@PLT");
@@ -896,6 +1000,11 @@ impl Emitter {
             self.line(&format!("{}:", zero));
             self.line("    mov $0, %eax");
             self.line(&format!("{}:", done));
+            let end = self.fresh("sbend");
+            self.line(&format!("    jmp {}", end));
+            self.line(&format!("{}:", zero0));
+            self.line("    mov $0, %eax");
+            self.line(&format!("{}:", end));
             return Ok(());
         }
         if name == "str_byte_n" && args.len() == 3 {
@@ -940,7 +1049,8 @@ impl Emitter {
             };
             let bad = self.fresh("argbad");
             let done = self.fresh("argdone");
-            self.line(&format!("    cmp -{}(%rbp), %eax", argc_off));
+            self.line(&format!("    movslq -{}(%rbp), %rcx", argc_off));
+            self.line("    cmp %rcx, %rax");
             self.line(&format!("    jae {}", bad));
             self.line(&format!("    mov -{}(%rbp), %r10", argv_off));
             self.line("    mov (%r10,%rax,8), %rax");
@@ -1086,8 +1196,7 @@ impl Emitter {
             StmtKind::Print { value, ty } => {
                 let as_str = matches!(value.kind, ExprKind::Str(_)) || matches!(ty, Some(Ty::Str));
                 self.expr(value)?;
-                let pty = ty.unwrap_or_else(|| self.expr_ty(value));
-                self.truncate(pty);
+                let _pty = ty.unwrap_or_else(|| self.expr_ty(value));
                 if as_str {
                     self.line("    mov %rax, %rsi");
                     self.line("    lea .Lfmt_s(%rip), %rdi");
@@ -1196,6 +1305,11 @@ impl Emitter {
                 let (off, elem, len) = *self.arrays.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown array `{}`", s.line, name)
                 })?;
+                if len < 0 || len > 1073741824 || (len as i64).checked_mul(Self::elem_size(elem)).is_none() {
+                    let msg = self.panic_msg(s.line, "bad array length");
+                    self.line(&format!("    lea {}(%rip), %rdi", msg));
+                    self.call(".Lmagic_panic");
+                }
                 self.expr(value)?;
                 self.push("%rax");
                 let size = Self::elem_size(elem) * len;
@@ -1296,6 +1410,11 @@ impl Emitter {
             self.line(&format!("    mov %edi, -{}(%rbp)", a));
             self.line(&format!("    mov %rsi, -{}(%rbp)", v));
         }
+        // Owned array slots start as NULL so an early `return` frees nothing,
+        // not an uninitialised pointer.
+        for off in self.owned.clone() {
+            self.line(&format!("    movq $0, -{}(%rbp)", off));
+        }
 
         // Expanded parameters: an array parameter arrives as (pointer, length).
         let mut expanded: Vec<(String, bool)> = Vec::new();
@@ -1391,6 +1510,7 @@ pub fn emit(prog: &Program) -> Result<String, String> {
         e.func(f)?;
     }
     e.line(".section .rodata");
+    e.line(".Lempty: .asciz \"\"");
     e.line(".Lfmt_i: .asciz \"%ld\\n\"");
     e.line(".Lfmt_s: .asciz \"%s\\n\"");
     e.line(".Lfmt_panic: .asciz \"%s\\n\"");
@@ -1403,6 +1523,7 @@ pub fn emit(prog: &Program) -> Result<String, String> {
                 '\\' => escaped.push_str("\\\\"),
                 '\n' => escaped.push_str("\\n"),
                 '\t' => escaped.push_str("\\t"),
+                '?' => escaped.push_str("\\?"),
                 c => escaped.push(c),
             }
         }

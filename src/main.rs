@@ -155,15 +155,23 @@ fn run() -> Result<(), String> {
                 .or_else(find_cc)
                 .ok_or("no C compiler found (tried $CC, gcc, clang, cc)")?;
             let flags = format!(
-                "{}{}-nou|{}",
+                "v2|{}|{:x}|{}{}-nou|{}",
+                env!("CARGO_PKG_VERSION"),
+                fnv64(source.as_bytes()),
                 if dev { "O0" } else { "O3" },
                 if native { "-native" } else { "" },
                 cc
             );
             let stamp = dir.join(format!("{}.flags", stem));
-            let flags_changed = fs::read_to_string(&stamp)
-                .map(|s| s.trim() != flags)
+            let stamp_text = fs::read_to_string(&stamp).unwrap_or_default();
+            let flags_changed = stamp_text
+                .lines()
+                .next()
+                .map(|l| l.trim() != flags)
                 .unwrap_or(true);
+            let recorded_exe = stamp_text.lines().nth(1).unwrap_or("").trim().to_string();
+            let exe_matches = !recorded_exe.is_empty()
+                && recorded_exe == fnv_file(&exe_path);
             let chunks = magic::compile_parts_opts(&source, 16, unroll)
                 .map_err(|e| map_diagnostic(e, &segments, src_path))?;
             let needs_omp = chunks.iter().any(|c| c.contains("#pragma omp"));
@@ -180,14 +188,18 @@ fn run() -> Result<(), String> {
                     .map(|old| old == chunks[0])
                     .unwrap_or(false);
 
-                if unchanged && exe_path.exists() && !flags_changed {
+                if unchanged && exe_path.exists() && !flags_changed && exe_matches {
                     println!("🔮 up to date {}", exe_path.display());
                 } else {
-                    fs::write(&c_path, &chunks[0])
+                    refuse_symlink(&c_path)?;
+                    refuse_symlink(&exe_path)?;
+                    write_atomic(&c_path, chunks[0].as_bytes())
                         .map_err(|e| format!("cannot write {}: {}", c_path.display(), e))?;
                     let mut cmd = cc_command(&cc);
                     cmd.arg(if dev { "-O0" } else { "-O3" })
                         .arg("-std=c11")
+                        .arg("-fwrapv")
+                        .arg("-fno-strict-overflow")
                         .arg("-fno-asynchronous-unwind-tables")
                         .arg("-fno-ident");
                     if needs_omp {
@@ -202,14 +214,16 @@ fn run() -> Result<(), String> {
                     let status = cmd
                         .arg("-o")
                         .arg(&exe_path)
-                        .arg(&c_path)
+                        .arg(abs_path(&c_path))
                         .status()
                         .map_err(|e| format!("failed to run {}: {}", cc, e))?;
                     if !status.success() {
                         return Err(format!("{} failed while compiling {}", cc, c_path.display()));
                     }
                     println!("🔮 built {}", exe_path.display());
-                    let _ = fs::write(&stamp, &flags);
+                    refuse_symlink(&stamp)?;
+                    let stamp_body = format!("{}\n{}", flags, fnv_file(&exe_path));
+                    let _ = write_atomic(&stamp, stamp_body.as_bytes());
                 }
             } else {
                 let mut objs = Vec::new();
@@ -252,7 +266,12 @@ fn run() -> Result<(), String> {
                             if native2 {
                                 cmd.arg("-march=native");
                             }
-                            cmd.arg("-c").arg("-o").arg(&o_path).arg(&c_path);
+                            cmd.arg("-c")
+                                .arg("-fwrapv")
+                                .arg("-fno-strict-overflow")
+                                .arg("-o")
+                                .arg(abs_path(&o_path))
+                                .arg(abs_path(&c_path));
                             cmd.status()
                         }));
                     }
@@ -287,12 +306,13 @@ fn run() -> Result<(), String> {
                         chunks.len(),
                         dirty_count
                     );
-                    let _ = fs::write(&stamp, &flags);
+                    let stamp_body = format!("{}\n{}", flags, fnv_file(&exe_path));
+                    let _ = write_atomic(&stamp, stamp_body.as_bytes());
                 }
             }
 
             if command == "run" {
-                let status = Command::new(&exe_path)
+                let status = Command::new(abs_path(&exe_path))
                     .status()
                     .map_err(|e| format!("cannot run {}: {}", exe_path.display(), e))?;
                 if !status.success() {
@@ -311,7 +331,7 @@ fn run() -> Result<(), String> {
 fn write_with_retry(path: &Path, content: &str) -> Result<(), String> {
     let mut last = String::new();
     for _ in 0..5 {
-        match fs::write(path, content) {
+        match write_atomic(path, content.as_bytes()) {
             Ok(()) => return Ok(()),
             Err(e) => {
                 last = format!("cannot write {}: {}", path.display(), e);
@@ -320,6 +340,56 @@ fn write_with_retry(path: &Path, content: &str) -> Result<(), String> {
         }
     }
     Err(last)
+}
+
+fn fnv64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+fn fnv_file(path: &Path) -> String {
+    match fs::read(path) {
+        Ok(b) => format!("{:x}", fnv64(&b)),
+        Err(_) => "0".to_string(),
+    }
+}
+
+/// Refuse to write generated artifacts through a symlink committed in the repo.
+fn refuse_symlink(path: &Path) -> Result<(), String> {
+    if let Ok(m) = fs::symlink_metadata(path) {
+        if m.file_type().is_symlink() {
+            return Err(format!(
+                "refusing to write through symlink {}: remove it or build in another directory",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Absolute path for anything handed to a child process. An absolute path can
+/// never be read as a command-line option or a GCC response file (`@file`).
+fn abs_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .map(|d| d.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    }
+}
+
+/// Write through a same-directory temporary file and rename it into place, so a
+/// symlink committed in the repository cannot redirect generated C/asm/stamps
+/// into another file.
+fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    fs::write(&tmp, data)?;
+    fs::rename(&tmp, path)
 }
 
 fn with_ext(path: &Path, ext: &str) -> PathBuf {
@@ -359,13 +429,16 @@ fn build_native(
     });
     let asm_path = with_ext(src_path, "s");
     let obj_path = with_ext(src_path, "o");
-    fs::write(&asm_path, asm).map_err(|e| format!("cannot write {}: {}", asm_path.display(), e))?;
+    refuse_symlink(&asm_path)?;
+    refuse_symlink(&obj_path)?;
+    refuse_symlink(&exe_path)?;
+    write_atomic(&asm_path, asm.as_bytes()).map_err(|e| format!("cannot write {}: {}", asm_path.display(), e))?;
     let as_cmd = env::var("AS").unwrap_or_else(|_| "as".to_string());
     let status = Command::new(&as_cmd)
         .arg("--64")
         .arg("-o")
-        .arg(&obj_path)
-        .arg(&asm_path)
+        .arg(abs_path(&obj_path))
+        .arg(abs_path(&asm_path))
         .status()
         .map_err(|e| format!("failed to run {}: {}", as_cmd, e))?;
     if !status.success() {
@@ -401,11 +474,11 @@ fn build_native(
     });
     let ld_cmd = env::var("LD").unwrap_or_else(|_| "ld".to_string());
     let mut link = Command::new(&ld_cmd);
-    link.arg("-o").arg(&exe_path).arg(&crt1);
+    link.arg("-o").arg(abs_path(&exe_path)).arg(&crt1);
     if let Some(c) = &crti {
         link.arg(c);
     }
-    link.arg(&obj_path);
+    link.arg(abs_path(&obj_path));
     if let Some(c) = &crtn {
         link.arg(c);
     }

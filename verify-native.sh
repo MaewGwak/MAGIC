@@ -12,6 +12,7 @@ cd "$ROOT" || exit 2
 [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ] || {
   echo "native gate needs Linux x86-64"; exit 2;
 }
+unset CC CXX AS LD CFLAGS 2>/dev/null || true
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/bin"
@@ -65,6 +66,23 @@ run_case() {
 while IFS= read -r src; do
   [ -n "$src" ] && run_case "$src"
 done < tests/native/corpus.txt
+
+# If strace is available, prove that a native build only executes magicc, as, ld.
+if command -v strace >/dev/null 2>&1; then
+  cat > "$WORK/trace.magic" <<'MAGIC'
+fn main() { print(5); }
+MAGIC
+  if strace -f -e trace=execve -o "$WORK/exec.log" \
+      env -i PATH="$SAFE" "$M" build "$WORK/trace.magic" --backend native -o "$WORK/trace" >/dev/null 2>&1; then
+    if grep -E 'execve\("[^"]*/(cc|gcc|clang|cc1|collect2)"' "$WORK/exec.log" >/dev/null; then
+      echo "FAIL(exec audit): a C compiler ran"; fail=1
+    else
+      echo "ok exec audit (no C compiler executed)"
+    fi
+  else
+    echo "FAIL(exec audit build)"; fail=1
+  fi
+fi
 
 # Out-of-bounds access must print the diagnostic and exit 1.
 cat > "$WORK/oob.magic" <<'MAGIC'

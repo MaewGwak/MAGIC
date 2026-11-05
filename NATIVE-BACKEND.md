@@ -82,6 +82,14 @@ Four independent reviews (performance, language features, release gates, adversa
 - **Honesty rules**: do not call this "self-hosted" (the compiler is Rust); say "no-C native
   backend". Native tests must not silently pass when `as`/`ld` are missing: the gate script fails.
 
+## Security hardening
+
+The native path passes absolute paths to `as`/`ld`, refuses to write through symlinks, checks every
+buffer length at the libc boundary, zeroes owned slots before an early return and wraps `i32`/`u8`
+like the C backend. The compiler refuses expression nesting beyond 256, escapes trigraphs, rejects
+NUL in string literals, hashes the source and the produced executable in its cache stamp, and runs
+the built program by absolute path. `verify-native.sh` audits `execve` with `strace` when available.
+
 ## Risks
 
 - **Floats and the ABI** are where hand-written backends usually break; allocate a full milestone

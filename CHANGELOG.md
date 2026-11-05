@@ -17,6 +17,44 @@ Native arithmetic now narrows after every operation to the declared type, matchi
 `int32_t`/`uint8_t` wrapping: `2147483647 + 1` prints `-2147483648` and a `u8` at 255 wraps to 0.
 A regression test builds both cases natively and checks the output.
 
+## v0.8.3 — security hardening (2026-11-06)
+
+Two independent security reviews of the compiler and the native backend produced concrete exploits;
+all release-blocking ones are fixed and regression-tested:
+
+- **Build-time argument injection**: child processes now receive absolute paths, so a source named
+  `@evil.magic` or `-fplugin=...` cannot be parsed by GCC as a response file or an option
+  (`source_paths_cannot_inject_compiler_arguments`).
+- **`magicc run` PATH hijack**: the built executable is executed by absolute path, never through
+  `PATH` (verified with a shadowing binary).
+- **Symlink write-through**: generated C/asm/stamps are written to a same-directory temporary file
+  and renamed, and existing symlinks are refused (`symlinked_artifacts_are_refused`).
+- **Cache trust**: the stamp carries the compiler version, a hash of the source and a hash of the
+  executable; editing or replacing the binary forces a rebuild (`tampered_binary_is_rebuilt`).
+- **Parser recursion**: nesting deeper than 256 expressions is a diagnostic, not a stack overflow
+  (`deeply_nested_expressions_are_rejected`).
+- **String escaping**: `?` is escaped (trigraphs) and NUL in a string literal is rejected
+  (`trigraphs_are_escaped`).
+- **Native inline substitution**: inlined parameters no longer read a caller local with the same
+  name (`native_inline_substitution_uses_caller_values`).
+- **Native early return**: owned array slots start as NULL, so returning before a declaration frees
+  nothing (`native_early_return_frees_nothing`).
+- **Native buffer bounds**: `file_read`/`file_write`/`net_read`/`net_write` and the `*_at` variants
+  check the buffer length (`native_file_read_checks_the_buffer_length`).
+- **Allocator overflow**: `magic_reserve`, `magic_push`, arena size arithmetic and the `*_at`
+  offset checks use overflow-safe forms; oversized arenas panic instead of under-allocating.
+- **Native gate audit**: `verify-native.sh` unsets `CC`/`AS`/`LD` and, when `strace` exists, asserts
+  that only `magicc`, `as` and `ld` execute.
+- **Width semantics**: integer literals outside `i32` are `i64`, `u8` promotes to `int` in arithmetic
+  (250 + 10 prints 260), and printing no longer narrows. `i64` values above 2^31 are preserved.
+- **Division by zero** panics with `line N: division by zero` instead of trapping with SIGFPE.
+- **NULL strings**: `str_len`/`str_byte` return 0 for a NULL string (unset `env` or an out-of-range
+  `arg`) instead of calling `strlen(NULL)`; `arg` compares its index in 64 bits.
+- **Native array lengths**: huge lengths are rejected with `bad array length` and the byte size is
+  computed with checked arithmetic.
+- **C compiler flags**: generated C is compiled with `-fwrapv -fno-strict-overflow`, so signed
+  overflow and index arithmetic are defined.
+
 ## v0.8.2 — native backend: sockets, arguments, sequential par-for (2026-11-06)
 
 The native backend now covers the rest of the process-facing surface:

@@ -7,6 +7,7 @@ pub struct Parser {
     toks: Vec<Token>,
     pos: usize,
     structs: Vec<StructDef>,
+    depth: usize,
 }
 
 impl Parser {
@@ -15,6 +16,7 @@ impl Parser {
             toks,
             pos: 0,
             structs: Vec::new(),
+            depth: 0,
         }
     }
 
@@ -569,6 +571,17 @@ impl Parser {
     // ---- expressions: lowest to highest precedence ----
 
     fn parse_expr(&mut self) -> Result<Expr, String> {
+        self.depth += 1;
+        if self.depth > 256 {
+            self.depth -= 1;
+            return Err("expression nesting is too deep (limit 256)".to_string());
+        }
+        let r = self.parse_expr_inner();
+        self.depth -= 1;
+        r
+    }
+
+    fn parse_expr_inner(&mut self) -> Result<Expr, String> {
         self.parse_or()
     }
 
@@ -770,6 +783,9 @@ impl Parser {
                 })
             }
             Tok::Str(s) => {
+                if s.contains('\0') {
+                    return Err(format!("line {}: string literals cannot contain NUL", line));
+                }
                 self.bump();
                 Ok(Expr {
                     kind: ExprKind::Str(s),
