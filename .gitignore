@@ -14,3 +14,4 @@
 /bench-compile/big.*
 *.s
 /bench-suite/nbody_unrolled.c
+/bench-suite/nbody_unrollpragma.c
