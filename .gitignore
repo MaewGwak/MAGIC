@@ -18,3 +18,4 @@
 /bench-suite/nu_*.c
 /bench-suite/odd_small.c
 /bench-suite/sieve_magic_odd.c
+/bench-suite/matmul_magic_ikj.c

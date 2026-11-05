@@ -4,6 +4,10 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 
 ## Unreleased
 
+**Performance** (algorithm-optimized MAGIC implementations, same answers)
+- Odd-only sieve: 190 ms and 51.8 MB vs 429 ms and 99.5 MB for the classic C sieve.
+- i-k-j matmul: 15 ms vs 30 ms for the classic C matmul.
+
 **Toolchain**
 - One-command installers (`install.ps1`, `install.sh`) that build from source and put `magic` and
   `magicc` on PATH.

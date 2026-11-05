@@ -179,7 +179,8 @@ MAGIC is at, or within 0.1 MB of, the lowest peak memory on every workload; Goos
 on fannkuch (4.3 vs 4.4 MB).
 
 MAGIC also ships an odd-only sieve — a different algorithm with the same answer — at 190 ms and
-51.8 MB peak: 2.3x faster and 1.9x smaller than the classic sieve above.
+51.8 MB peak: 2.3x faster and 1.9x smaller than the classic sieve above. Its i-k-j matmul runs at
+15 ms and 5.8 MB: 2x faster than the classic C matmul above.
 
 n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms
 with gcc, and `--unroll` with clang/zig gives 205–236 ms. The harness verifies every checksum:
