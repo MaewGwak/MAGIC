@@ -365,6 +365,33 @@ fn header_base(prog: &Program) -> String {
     out
 }
 
+/// Drops functions that `main` cannot reach. MAGIC has no exported functions and
+/// no function pointers, so the call graph rooted at `main` is the whole program.
+pub fn retain_reachable(prog: &mut Program) {
+    use std::collections::{HashMap, HashSet};
+    let mut callees: HashMap<String, HashSet<String>> = HashMap::new();
+    for f in &prog.funcs {
+        let mut calls = HashSet::new();
+        collect_calls(&f.body, &mut calls);
+        callees.insert(f.name.clone(), calls);
+    }
+    let mut keep: HashSet<String> = HashSet::new();
+    let mut stack = vec!["main".to_string()];
+    while let Some(name) = stack.pop() {
+        if !keep.insert(name.clone()) {
+            continue;
+        }
+        if let Some(cs) = callees.get(&name) {
+            for c in cs {
+                if !keep.contains(c) {
+                    stack.push(c.clone());
+                }
+            }
+        }
+    }
+    prog.funcs.retain(|f| keep.contains(&f.name));
+}
+
 fn collect_calls(stmts: &[Stmt], out: &mut std::collections::HashSet<String>) {
     for s in stmts {
         match &s.kind {

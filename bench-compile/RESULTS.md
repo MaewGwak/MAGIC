@@ -1,3 +1,19 @@
+# Compile speed
+
+## v0.6.0 — Linux, dead-function elimination (2026-11-06)
+
+2,000 trivial functions (~90 KB), `bench-compile/run.sh`, medians of 3 runs (ms):
+
+| Metric | MAGIC gcc | MAGIC clang | rustc -O | goose build |
+|---|---:|---:|---:|---:|
+| cold | **94** | **98** | 223 | 120 |
+| one reachable edit | **21** | **17** | 223 | 123 |
+| no-op | **15** | — | — | 121 |
+
+Dead-function elimination keeps only the functions reachable from `main`: the generated C falls
+from 170 KB to 10 KB, so the C backend stops being the bottleneck. Goose's 120 ms comes from
+constant-folding the whole program away; MAGIC now matches it without folding, and wins every column.
+
 # M4 — compile speed, first measurement
 
 > Superseded: the current numbers are in "Round 42 — after 30+ rounds of language features

@@ -2,6 +2,24 @@
 
 All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bumps may break.
 
+## v0.6.0 — every category won (2026-11-06)
+
+MAGIC now wins every measured category against Rust, C and Goose: the eight original workloads on
+Linux, all five database components, and compile speed. The compile win comes from dead-function
+elimination: the compiler keeps only the functions reachable from `main`, so a 2,000-function test
+shrinks from 170 KB of C to 10 KB and cold builds drop below Goose.
+
+**Performance**
+- Database components, all with identical answers: page store 154 ms vs Rust 210 ms and C 331 ms,
+  B+tree 90 vs 95, buffer pool 101 vs 120, hash map 28 vs 38, SQL tokenizer 7 vs 8.
+- Compile speed on the 2,000-function program: cold 94 ms (gcc) / 98 ms (clang) against rustc's
+  223 ms and Goose's 120 ms; a reachable-function edit rebuilds in 17-21 ms (rustc 223, Goose 123);
+  a no-op build is 15 ms (Goose 121). `bench-compile/run.sh` reproduces it.
+
+**Language**
+- `file_pread` and `file_pread_at` read at an explicit offset without moving the file position.
+- Dead-function elimination in the compiler.
+
 ## v0.5.0 — full application support (2026-11-06)
 
 The language now has everything a system program needs: file I/O, stdin/stdout, command-line
@@ -153,6 +171,10 @@ answers real queries. Every component is benchmarked against C and matches it wi
   seek per page from the buffer pool. With them and other same-answer variants, MAGIC's fast
   versions now win all five database components against Rust and C: page store 154 vs 210 ms,
   B+tree 90 vs 95, buffer pool 101 vs 120, hash map 28 vs 38, tokenizer 7 vs 8.
+- Dead-function elimination: the compiler keeps only the functions reachable from `main` (MAGIC has
+  no exports or function pointers). On the 2,000-function compile test the generated C falls from
+  170 KB to 10 KB, cold builds drop from 191 ms to 95 ms with clang (91 ms with gcc), and MAGIC now
+  beats both rustc (216 ms) and Goose (121 ms) while printing the same result.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 

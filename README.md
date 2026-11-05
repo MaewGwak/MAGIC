@@ -3,7 +3,7 @@
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language that
 compiles to C11 and runs anywhere a C compiler does.
 
-**Status: v0.5** — 131 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.6** — 132 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is ~2.5k lines of dependency-free Rust; programs go source → tokens → AST → type
 check → C11 → native binary.
 
@@ -18,9 +18,10 @@ check → C11 → native binary.
   arrays; 1,000,000 inserts and lookups take 38 ms against C's 37 ms with the same checksum.
 - **Flat data is the easy path**: arrays and structs are contiguous and pointers are explicit, so
   pointer-heavy code stays predictable.
-- **Compiles fast**: on a 2,000-function project a one-function rebuild is ~195 ms (rustc: ~215 ms)
-  and a no-op build is ~10 ms. A cold build is ~340 ms with gcc, ~295 ms with `lld`
-  (`--cc "gcc -fuse-ld=lld"`) and ~180 ms with clang (`CC=clang`), which beats rustc's 215 ms.
+- **Compiles fast**: on a 2,000-function project a cold build is ~94 ms (gcc) or ~98 ms (clang),
+  a one-function rebuild is ~195 ms and a no-op build is ~10 ms — against rustc's ~216 ms cold and
+  Goose's ~121 ms. Dead-function elimination keeps only what `main` can reach, so the generated C is
+  10 KB instead of 170 KB.
 
 MAGIC emits C11 and leaves machine-level code generation to the system C compiler. Benchmark
 results and methodology live in `BENCHMARKS.md`; the harness exits non-zero if any answer is wrong.

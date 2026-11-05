@@ -39,7 +39,7 @@ move ±5% between runs on this machine, so treat a 1–15 ms gap as a tie.
 
 ## Linux (Fedora 44, Ryzen AI 7 350)
 
-The same gates run natively here: `./verify.sh` covers 131 tests, the doc counts, a 39-case matrix
+The same gates run natively here: `./verify.sh` covers 132 tests, the doc counts, a 39-case matrix
 with checksums and the memory bounds; `./bench-linux.sh` and `./bench-memory.sh` run the pieces.
 GitHub Actions runs the fast gates, the matrix and the memory bounds on Ubuntu.
 
@@ -72,12 +72,11 @@ beats all four baselines by at least 4.5x.
 So a cold build beats rustc when the C compiler is clang (`CC=clang magicc build`), and an
 incremental edit beats it with either compiler.
 
-Against Goose, on the same synthetic 2,000-function program: `goose build` takes 121 ms (warm
-cache, its default `-O2`), against 191 ms for `magicc build` with clang. The comparison is not
-like-for-like: Goose's front end evaluates the whole trivial program away (its generated C contains
-none of the 2,000 functions, just the constant result), so this measures constant folding, not the C
-backend. Magicc emits all 2,000 functions and pays clang for them. Closing this needs front-end
-inlining/constant folding or a native backend. Chunk count was measured too: 16 chunks is the best
+Against Goose and rustc on the same synthetic 2,000-function program: `magicc build` now takes 91 ms
+(gcc) or 95 ms (clang) cold, against 121 ms for `goose build` (warm, `-O2`) and 216 ms for `rustc -O`.
+The gain is dead-function elimination: only the 21 functions `main` can reach are emitted, so the
+generated C drops from 170 KB to 10 KB and the C backend stops being the bottleneck. Output is
+unchanged (104855500). Chunk count was measured too: 16 chunks is the best
 for edits (120 ms with clang vs 145 ms at 8 and 191 ms at 4), while 8 chunks saved 14 ms on a cold
 clang build (166 vs 180 ms); the default stays at 16 because iteration latency matters more.
 
@@ -97,7 +96,7 @@ functions + ~70 ms link.
 
 ## Tests
 
-131 tests, all green (`cargo test`): 44 unit (lexer, parser, checker, codegen) + 22 CLI (the real
+132 tests, all green (`cargo test`): 44 unit (lexer, parser, checker, codegen) + 22 CLI (the real
 `magicc` binary: check/emit/build/run, cache, `--report`, `--version`, `--help`, multi-file, `$CC`
 with arguments) + 15 integration
 (`tests/emit.rs`, including all 15 examples compiling) + 41 end-to-end (`tests/e2e.rs`: compile with

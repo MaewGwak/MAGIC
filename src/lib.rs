@@ -24,6 +24,7 @@ pub fn compile_to_c_opts(src: &str, unroll: bool) -> Result<String, String> {
     let mut program = parser::Parser::new(tokens).parse_program()?;
     types::Checker::check(&mut program)?;
     types::lower_calls(&mut program);
+    codegen::retain_reachable(&mut program);
     Ok(codegen::emit_opts(&program, unroll))
 }
 
@@ -37,6 +38,7 @@ pub fn compile_parts_opts(src: &str, parts: usize, unroll: bool) -> Result<Vec<S
     let mut program = parser::Parser::new(tokens).parse_program()?;
     types::Checker::check(&mut program)?;
     types::lower_calls(&mut program);
+    codegen::retain_reachable(&mut program);
     let n = if program.funcs.len() < 32 {
         1
     } else {

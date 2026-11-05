@@ -134,7 +134,11 @@ fn large_programs_split_into_chunks() {
     for i in 0..40 {
         src.push_str(&format!("fn f{i}(x: i32) -> i32 {{ return x + {i}; }}\n"));
     }
-    src.push_str("fn main() { print(f0(1)); }\n");
+    src.push_str("fn main() { print(f0(1)");
+    for i in 1..40 {
+        src.push_str(&format!(" + f{i}(0)"));
+    }
+    src.push_str("); }\n");
     let parts = magic::compile_parts(&src, 4).unwrap();
     assert_eq!(parts.len(), 4);
     // main is defined exactly once
@@ -154,4 +158,13 @@ fn large_programs_split_into_chunks() {
 fn string_escapes_survive_codegen() {
     let c = magic::compile_to_c("fn main() { print(\"a\\nb\\\"c\"); }").unwrap();
     assert!(c.contains("a\\nb\\\"c"));
+}
+
+#[test]
+fn unused_functions_are_dropped() {
+    let c = magic::compile_to_c(
+        "fn dead(x: i32) -> i32 { return x + 1; }\nfn main() { print(1); }",
+    )
+    .unwrap();
+    assert!(!c.contains("dead"), "unreachable function was emitted");
 }
