@@ -2,6 +2,13 @@
 
 All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bumps may break.
 
+## v0.7.0 — native backend: arrays and bounds checks (2026-11-06)
+
+The native backend now allocates `[bool]`, `[u8]`, `[i32]` and `[i64]` arrays on the heap, fills them
+from an initializer, loads and stores elements, and checks every index against a constant length —
+an out-of-range access prints `line N: index out of bounds` to stderr and exits 1. `sieve` builds and
+prints 664579 with no C compiler in the path; eight of the fifteen examples now run natively.
+
 ## v0.6.1 — native x86-64 backend, first milestone (2026-11-06)
 
 `--backend native` compiles a MAGIC program to GNU assembler and links it without a C compiler.

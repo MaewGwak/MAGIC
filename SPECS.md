@@ -1,4 +1,4 @@
-# 🔮 MAGIC — Language Specification v0.6.1
+# 🔮 MAGIC — Language Specification v0.7.0
 
 Status: pre-1.0. Breaking changes are allowed in any 0.x release.
 Companion docs: `PLANS.md` (roadmap), `TASKS.md` (board), `TEST.md` (tests).
@@ -143,8 +143,9 @@ print(a[i]);
 `magicc build file.magic` emits C11 and compiles it with `$CC` (default gcc). The experimental
 native backend (`--backend native`) skips the C compiler: it emits GNU assembler for Linux x86-64
 and assembles with `as`, linking through the same driver. Its subset is integer functions with up to
-six parameters, locals, arithmetic, comparisons, `if`, `while`, `for`, calls and `print` of integers
-and string literals. Arrays, structs, floats and I/O builtins remain on the C backend until 0.7.
+six parameters, locals, arithmetic, comparisons, `if`, `while`, `for`, calls, `print` of integers and
+string literals, and heap arrays with bounds checks (including `[bool]`, `[u8]`, `[i32]`, `[i64]`).
+Structs, floats, vectors, array parameters and I/O builtins remain on the C backend for now.
 
 ## 4b. Growable arrays (v0.4)
 

@@ -587,3 +587,50 @@ fn native_backend_builds_and_runs() {
     let run = Command::new(&exe).output().expect("run native binary");
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
 }
+
+#[test]
+fn native_backend_supports_arrays() {
+    if !(cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) {
+        return;
+    }
+    if !Command::new("as")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let dir = TempDir::new("nativearr");
+    let src = dir.path().join("a.magic");
+    std::fs::write(
+        &src,
+        "fn main() {\n\
+         var a: [i32] = [0; 5];\n\
+         var i = 0;\n\
+         while i < 5 { a[i] = i + 1; i = i + 1; }\n\
+         var s = 0;\n\
+         i = 0;\n\
+         while i < 5 { s = s + a[i]; i = i + 1; }\n\
+         print(s);\n\
+         }\n",
+    )
+    .expect("write source");
+    let exe = dir.path().join("a");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run magicc");
+    assert!(
+        out.status.success(),
+        "native build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&exe).output().expect("run");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "15");
+}
