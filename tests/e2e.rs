@@ -652,3 +652,34 @@ fn par_for_runs() {
         assert_eq!(out, "140");
     }
 }
+
+#[test]
+fn file_io_roundtrip() {
+    let path = std::env::temp_dir().join(format!("magic_io_{}.bin", std::process::id()));
+    let p = path.to_string_lossy().replace('\\', "/");
+    let src = format!(
+        r#"
+fn main() {{
+    var buf: [u8] = [0; 8];
+    buf[0] = 65; buf[1] = 66; buf[2] = 67;
+    var fd = file_open("{p}", "wb");
+    print(file_write(fd, buf, 3));
+    print(file_close(fd));
+    var rd = file_open("{p}", "rb");
+    print(file_size(rd));
+    var got: [u8] = [0; 8];
+    print(file_read(rd, got, 3));
+    print(got[0]); print(got[1]); print(got[2]);
+    print(file_seek(rd, 1, 0));
+    print(file_read(rd, got, 2));
+    print(got[0]); print(got[1]);
+    print(file_close(rd));
+}}
+"#
+    );
+    let out = build_and_run("file_io", &src);
+    if let Some(out) = out {
+        assert_eq!(out, "3\n0\n3\n3\n65\n66\n67\n1\n2\n66\n67\n0");
+    }
+    let _ = std::fs::remove_file(&path);
+}

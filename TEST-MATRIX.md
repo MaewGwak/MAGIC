@@ -1,6 +1,6 @@
 # MAGIC test matrix
 
-125 tests, all green. Run with `cargo test`. Every row names the file that owns the test and
+126 tests, all green. Run with `cargo test`. Every row names the file that owns the test and
 what it proves, so the docs can link straight to it.
 
 ## Added after v0.3

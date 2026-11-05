@@ -4,6 +4,12 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 
 ## Unreleased
 
+**Language**
+- File I/O builtins: `file_open`, `file_close`, `file_read`, `file_write`, `file_write_str`,
+  `file_seek`, `file_tell` and `file_size`, all over C `stdio` so they work on Linux and Windows.
+  `file_read`/`file_write` take a `[u8]` array and panic if the length exceeds it.
+
+
 **Tooling**
 - GitHub Actions workflow runs the fast gates, the Linux benchmark matrix and the memory bounds on
   Ubuntu.

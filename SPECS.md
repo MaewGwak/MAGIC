@@ -89,6 +89,14 @@ primary    := int | float | string | "true" | "false"
 | `str_len(s)` | `str` → `i64` | byte length via `strlen` |
 | `str_byte(s, i)` | `str`, integer → `u8` | bounds-checked byte read; arguments must be call-free (they are evaluated twice) |
 | `str_byte_n(s, i, n)` | `str`, integer, integer → `u8` | same, but checks against a caller-supplied length — O(1) per byte, use this in loops |
+| `file_open(path, mode)` | `str`, `str` → `i32` | C `fopen`; returns a handle ≥ 3, or −1 |
+| `file_close(fd)` | `i32` → `i32` | 0 on success, −1 on a bad handle |
+| `file_read(fd, buf, n)` | `i32`, `[u8]`, integer → `i32` | reads up to `n` bytes into the array; panics when `n` exceeds its length; returns bytes read |
+| `file_write(fd, buf, n)` | `i32`, `[u8]`, integer → `i32` | writes `n` bytes from the array; same bounds rule |
+| `file_write_str(fd, s)` | `i32`, `str` → `i32` | writes the whole string |
+| `file_seek(fd, off, whence)` | `i32`, `i64`, `i32` → `i64` | `whence` is 0/1/2 like C; returns the new position or −1 |
+| `file_tell(fd)` | `i32` → `i64` | current position |
+| `file_size(fd)` | `i32` → `i64` | size in bytes, leaving the position unchanged |
 
 No other builtins. A user function cannot shadow `sqrt`; the checker resolves it first.
 

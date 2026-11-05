@@ -140,6 +140,57 @@ fn header_base(prog: &Program) -> String {
          }\n\n",
     );
 
+    out.push_str(
+        "static FILE *magic_files[256];\n\n\
+         static int32_t magic_file_open(const char *path, const char *mode) {\n\
+         \x20   for (int i = 3; i < 256; i++) {\n\
+         \x20       if (!magic_files[i]) {\n\
+         \x20           magic_files[i] = fopen(path, mode);\n\
+         \x20           return magic_files[i] ? i : -1;\n\
+         \x20       }\n\
+         \x20   }\n\
+         \x20   return -1;\n\
+         }\n\n\
+         static int32_t magic_file_close(int32_t fd) {\n\
+         \x20   if (fd < 3 || fd >= 256 || !magic_files[fd]) return -1;\n\
+         \x20   int rc = fclose(magic_files[fd]);\n\
+         \x20   magic_files[fd] = NULL;\n\
+         \x20   return rc == 0 ? 0 : -1;\n\
+         }\n\n\
+         static int64_t magic_file_read(int32_t fd, uint8_t *buf, int64_t len, int64_t cap, const char *msg) {\n\
+         \x20   if (fd < 3 || fd >= 256 || !magic_files[fd]) return -1;\n\
+         \x20   if (len < 0 || len > cap) magic_panic(msg);\n\
+         \x20   return (int64_t)fread(buf, 1, (size_t)len, magic_files[fd]);\n\
+         }\n\n\
+         static int64_t magic_file_write(int32_t fd, const uint8_t *buf, int64_t len, int64_t cap, const char *msg) {\n\
+         \x20   if (fd < 3 || fd >= 256 || !magic_files[fd]) return -1;\n\
+         \x20   if (len < 0 || len > cap) magic_panic(msg);\n\
+         \x20   return (int64_t)fwrite(buf, 1, (size_t)len, magic_files[fd]);\n\
+         }\n\n\
+         static int64_t magic_file_write_str(int32_t fd, const char *s) {\n\
+         \x20   if (fd < 3 || fd >= 256 || !magic_files[fd]) return -1;\n\
+         \x20   return (int64_t)fwrite(s, 1, strlen(s), magic_files[fd]);\n\
+         }\n\n\
+         static int64_t magic_file_seek(int32_t fd, int64_t off, int32_t whence) {\n\
+         \x20   if (fd < 3 || fd >= 256 || !magic_files[fd]) return -1;\n\
+         \x20   if (fseek(magic_files[fd], (long)off, whence) != 0) return -1;\n\
+         \x20   return (int64_t)ftell(magic_files[fd]);\n\
+         }\n\n\
+         static int64_t magic_file_tell(int32_t fd) {\n\
+         \x20   if (fd < 3 || fd >= 256 || !magic_files[fd]) return -1;\n\
+         \x20   return (int64_t)ftell(magic_files[fd]);\n\
+         }\n\n\
+         static int64_t magic_file_size(int32_t fd) {\n\
+         \x20   if (fd < 3 || fd >= 256 || !magic_files[fd]) return -1;\n\
+         \x20   FILE *f = magic_files[fd];\n\
+         \x20   long cur = ftell(f);\n\
+         \x20   if (fseek(f, 0, SEEK_END) != 0) return -1;\n\
+         \x20   long n = ftell(f);\n\
+         \x20   fseek(f, cur, SEEK_SET);\n\
+         \x20   return (int64_t)n;\n\
+         }\n\n",
+    );
+
     for s in &prog.structs {
         out.push_str("typedef struct {\n");
         for (fname, fty) in &s.fields {
@@ -861,6 +912,54 @@ fn expr(e: &Expr) -> String {
                     "printf(\"%.*f\\n\", (int)({}), (double)({}))",
                     expr(&args[1]),
                     expr(&args[0])
+                );
+            }
+            if name == "file_open" && args.len() == 2 {
+                return format!(
+                    "magic_file_open((const char*)({}), (const char*)({}))",
+                    expr(&args[0]),
+                    expr(&args[1])
+                );
+            }
+            if (name == "file_read" || name == "file_write") && args.len() == 3 {
+                let arr = match &args[1].kind {
+                    ExprKind::Var(n) => n.clone(),
+                    _ => String::new(),
+                };
+                let helper = if name == "file_read" { "magic_file_read" } else { "magic_file_write" };
+                return format!(
+                    "{}((int32_t)({}), (uint8_t*)({}), (int64_t)({}), (int64_t)({}_len), \"line {}: file {} length exceeds the buffer\")",
+                    helper,
+                    expr(&args[0]),
+                    arr,
+                    expr(&args[2]),
+                    arr,
+                    e.line,
+                    name
+                );
+            }
+            if name == "file_close" && args.len() == 1 {
+                return format!("magic_file_close((int32_t)({}))", expr(&args[0]));
+            }
+            if name == "file_seek" && args.len() == 3 {
+                return format!(
+                    "magic_file_seek((int32_t)({}), (int64_t)({}), (int32_t)({}))",
+                    expr(&args[0]),
+                    expr(&args[1]),
+                    expr(&args[2])
+                );
+            }
+            if name == "file_tell" && args.len() == 1 {
+                return format!("magic_file_tell((int32_t)({}))", expr(&args[0]));
+            }
+            if name == "file_size" && args.len() == 1 {
+                return format!("magic_file_size((int32_t)({}))", expr(&args[0]));
+            }
+            if name == "file_write_str" && args.len() == 2 {
+                return format!(
+                    "magic_file_write_str((int32_t)({}), (const char*)({}))",
+                    expr(&args[0]),
+                    expr(&args[1])
                 );
             }
             let a = args.iter().map(expr).collect::<Vec<_>>().join(", ");
