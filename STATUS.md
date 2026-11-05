@@ -70,7 +70,14 @@ beats all four baselines by at least 4.5x.
 | `rustc -O` | 215-217 | 217 (full) |
 
 So a cold build beats rustc when the C compiler is clang (`CC=clang magicc build`), and an
-incremental edit beats it with either compiler. Chunk count was measured too: 16 chunks is the best
+incremental edit beats it with either compiler.
+
+Against Goose, on the same synthetic 2,000-function program: `goose build` takes 121 ms (warm
+cache, its default `-O2`), against 191 ms for `magicc build` with clang. The comparison is not
+like-for-like: Goose's front end evaluates the whole trivial program away (its generated C contains
+none of the 2,000 functions, just the constant result), so this measures constant folding, not the C
+backend. Magicc emits all 2,000 functions and pays clang for them. Closing this needs front-end
+inlining/constant folding or a native backend. Chunk count was measured too: 16 chunks is the best
 for edits (120 ms with clang vs 145 ms at 8 and 191 ms at 4), while 8 chunks saved 14 ms on a cold
 clang build (166 vs 180 ms); the default stays at 16 because iteration latency matters more.
 

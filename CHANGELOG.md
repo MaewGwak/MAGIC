@@ -145,6 +145,10 @@ answers real queries. Every component is benchmarked against C and matches it wi
 - Page-store benchmark: a 64 KB-buffered MAGIC variant runs in 154 ms against Rust's 210 ms and C's
   331 ms, with the same checksum; `bench-db/compare.sh` rebuilds and checks every database component
   in C, Rust and MAGIC.
+- Compile-speed comparison against Goose on the synthetic 2,000-function program: `goose build`
+  121 ms (warm, `-O2`) vs `magicc build` 191 ms with clang and 216 ms for rustc. Goose folds the
+  trivial program to a constant (its generated C has none of the functions), so MAGIC needs
+  front-end inlining/constant folding or a native backend to match it.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
