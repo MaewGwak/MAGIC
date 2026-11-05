@@ -713,6 +713,29 @@ impl Checker {
                     self.check_expr(&args[1], Some(Ty::Str), scopes)?;
                     return Ok(Ty::Bool);
                 }
+                if name == "argc" {
+                    if !args.is_empty() {
+                        return Err(format!("{}: argc takes no arguments", e.line));
+                    }
+                    return Ok(Ty::I32);
+                }
+                if name == "arg" {
+                    if args.len() != 1 {
+                        return Err(format!("{}: arg takes 1 argument", e.line));
+                    }
+                    let t = self.check_expr(&args[0], None, scopes)?;
+                    if !t.is_numeric() {
+                        return Err(format!("{}: arg index must be an integer", e.line));
+                    }
+                    return Ok(Ty::Str);
+                }
+                if name == "env" {
+                    if args.len() != 1 {
+                        return Err(format!("{}: env takes 1 argument", e.line));
+                    }
+                    self.check_expr(&args[0], Some(Ty::Str), scopes)?;
+                    return Ok(Ty::Str);
+                }
                 if name == "file_open" {
                     if args.len() != 2 {
                         return Err(format!("{}: file_open takes 2 arguments", e.line));

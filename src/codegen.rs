@@ -191,6 +191,19 @@ fn header_base(prog: &Program) -> String {
          }\n\n",
     );
 
+    out.push_str(
+        "static int magic_argc_v = 0;\n\
+         static char **magic_argv_v = NULL;\n\
+         static const char *magic_arg(int64_t i) {\n\
+         \x20   if (i < 0 || i >= (int64_t)magic_argc_v) return \"\";\n\
+         \x20   return magic_argv_v[i];\n\
+         }\n\
+         static const char *magic_env(const char *name) {\n\
+         \x20   const char *v = getenv(name);\n\
+         \x20   return v ? v : \"\";\n\
+         }\n\n",
+    );
+
     for s in &prog.structs {
         out.push_str("typedef struct {\n");
         for (fname, fty) in &s.fields {
@@ -320,7 +333,9 @@ fn signature(f: &Func, structs: &[StructDef]) -> String {
     } else {
         c_type(f.ret, structs)
     };
-    let params = if f.params.is_empty() {
+    let params = if f.name == "main" {
+        "int magic_argc, char **magic_argv".to_string()
+    } else if f.params.is_empty() {
         "void".to_string()
     } else {
         f.params
@@ -367,6 +382,9 @@ fn definition(f: &Func, structs: &[StructDef], unroll: bool) -> String {
     let mut s = String::new();
     s.push_str(&signature(f, structs));
     s.push_str(" {\n");
+    if f.name == "main" {
+        s.push_str("    magic_argc_v = magic_argc;\n    magic_argv_v = magic_argv;\n");
+    }
 
     for a in &arrays {
         s.push_str(&format!("    {} *{} = NULL;\n", a.c_ty, a.name));
@@ -914,6 +932,15 @@ fn expr(e: &Expr) -> String {
                     expr(&args[0])
                 );
             }
+            if name == "argc" && args.is_empty() {
+                return "(int32_t)magic_argc_v".to_string();
+            }
+            if name == "arg" && args.len() == 1 {
+                return format!("magic_arg((int64_t)({}))", expr(&args[0]));
+            }
+            if name == "env" && args.len() == 1 {
+                return format!("magic_env((const char*)({}))", expr(&args[0]));
+            }
             if name == "file_open" && args.len() == 2 {
                 return format!(
                     "magic_file_open((const char*)({}), (const char*)({}))",
@@ -1067,7 +1094,7 @@ mod tests {
     #[test]
     fn hello_emits_a_c_program() {
         let c = compile_to_c("fn main() { print(\"hi\"); }").unwrap();
-        assert!(c.contains("int main(void)"));
+        assert!(c.contains("int main(int magic_argc, char **magic_argv)"));
         assert!(c.contains("printf(\"%s\\n\""));
         assert!(c.contains("return 0;"));
     }

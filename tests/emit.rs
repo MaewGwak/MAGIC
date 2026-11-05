@@ -4,7 +4,7 @@
 fn hello_pipeline() {
     let c = magic::compile_to_c("fn main() { print(\"Hello, MAGIC!\"); }").unwrap();
     assert!(c.contains("#include <stdint.h>"));
-    assert!(c.contains("int main(void)"));
+    assert!(c.contains("int main(int magic_argc, char **magic_argv)"));
     assert!(c.contains("Hello, MAGIC!"));
 }
 
@@ -139,13 +139,13 @@ fn large_programs_split_into_chunks() {
     assert_eq!(parts.len(), 4);
     // main is defined exactly once
     assert_eq!(
-        parts.iter().filter(|p| p.contains("int main(void) {")).count(),
+        parts.iter().filter(|p| p.contains("int main(int magic_argc, char **magic_argv) {")).count(),
         1
     );
     // the chunk holding main declares the function it calls
     let main_chunk = parts
         .iter()
-        .find(|p| p.contains("int main(void) {"))
+        .find(|p| p.contains("int main(int magic_argc, char **magic_argv) {"))
         .unwrap();
     assert!(main_chunk.contains("int32_t f0(int32_t x);"));
 }

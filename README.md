@@ -3,7 +3,7 @@
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language that
 compiles to C11 and runs anywhere a C compiler does.
 
-**Status: v0.4** — 126 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.4** — 127 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is ~2.5k lines of dependency-free Rust; programs go source → tokens → AST → type
 check → C11 → native binary.
 
@@ -11,8 +11,8 @@ check → C11 → native binary.
 
 - **Bounds-checked by default**, with a printed static memory bound per function and per arena.
 - **No GC, no borrow checker.** Arrays are owned locals; the compiler inserts every `free`.
-- **File I/O built into the language**: `file_open`, `file_read`, `file_write`, `file_seek`,
-  `file_size` and friends, with the same bounds checking as arrays.
+- **File I/O and arguments built into the language**: `file_open`, `file_read`, `file_write`,
+  `file_seek`, `file_size`, `argc`, `arg` and `env`, with the same bounds checking as arrays.
 - **Flat data is the easy path**: arrays and structs are contiguous and pointers are explicit, so
   pointer-heavy code stays predictable.
 - **Compiles fast**: on a 2,000-function project a one-function rebuild is ~195 ms (rustc: ~215 ms)

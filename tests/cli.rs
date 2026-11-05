@@ -193,7 +193,7 @@ fn emit_prints_c() {
         .expect("run magicc");
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("int main(void)"), "stdout was: {text}");
+    assert!(text.contains("int main(int magic_argc, char **magic_argv)"), "stdout was: {text}");
 }
 
 #[test]

@@ -97,6 +97,9 @@ primary    := int | float | string | "true" | "false"
 | `file_seek(fd, off, whence)` | `i32`, `i64`, `i32` → `i64` | `whence` is 0/1/2 like C; returns the new position or −1 |
 | `file_tell(fd)` | `i32` → `i64` | current position |
 | `file_size(fd)` | `i32` → `i64` | size in bytes, leaving the position unchanged |
+| `argc()` | → `i32` | number of command-line arguments, including the program name |
+| `arg(i)` | integer → `str` | argument `i`, or `""` when out of range |
+| `env(name)` | `str` → `str` | environment variable, or `""` when unset |
 
 No other builtins. A user function cannot shadow `sqrt`; the checker resolves it first.
 

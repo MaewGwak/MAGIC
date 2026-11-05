@@ -683,3 +683,60 @@ fn main() {{
     }
     let _ = std::fs::remove_file(&path);
 }
+
+fn build_and_run_with(
+    name: &str,
+    src: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Option<String> {
+    let cc = cc()?;
+    let dir = std::env::temp_dir().join(format!("magic_e2e_{}_{}", std::process::id(), name));
+    std::fs::create_dir_all(&dir).ok()?;
+    let c = match magic::compile_to_c(src) {
+        Ok(c) => c,
+        Err(e) => panic!("MAGIC compilation failed for {name}: {e}"),
+    };
+    let c_path = dir.join("t.c");
+    let exe_path = dir.join(if cfg!(windows) { "t.exe" } else { "t" });
+    std::fs::write(&c_path, c).ok()?;
+    let status = Command::new(&cc)
+        .arg("-O1")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(&c_path)
+        .status()
+        .ok()?;
+    if !status.success() {
+        panic!("C compilation failed for {name}");
+    }
+    let out = Command::new(&exe_path)
+        .args(args)
+        .envs(envs.iter().copied())
+        .output()
+        .ok()?;
+    let _ = std::fs::remove_dir_all(&dir);
+    let norm = |b: &[u8]| String::from_utf8_lossy(b).replace("\r\n", "\n").trim().to_string();
+    Some(norm(&out.stdout))
+}
+
+#[test]
+fn args_and_env() {
+    let src = r#"
+fn main() {
+    print(argc());
+    print(arg(1));
+    print(arg(2));
+    print(env("MAGIC_E2E_VAR"));
+}
+"#;
+    let out = build_and_run_with(
+        "args_env",
+        src,
+        &["alpha", "beta"],
+        &[("MAGIC_E2E_VAR", "hello")],
+    );
+    if let Some(out) = out {
+        assert_eq!(out, "3\nalpha\nbeta\nhello");
+    }
+}
