@@ -1,0 +1,190 @@
+// magic-db CLI: executes a SQL file (argv[1]) or stdin against dbcli.dat.
+// Supported: CREATE TABLE (ignored), INSERT INTO t VALUES (k, v);
+// SELECT COUNT(*) / SUM(value) FROM t; SELECT value FROM t WHERE id = k;
+fn get_i64(buf: [u8], off: i32) -> i64 {
+    var v: i64 = 0;
+    var mul: i64 = 1;
+    var k = 0;
+    while k < 8 {
+        v = v + (buf[off + k] as i64) * mul;
+        mul = mul * 256;
+        k = k + 1;
+    }
+    return v;
+}
+
+fn put_i64(buf: [u8], off: i32, v: i64) {
+    var x = v;
+    var k = 0;
+    while k < 8 {
+        buf[off + k] = (x % 256) as u8;
+        x = x / 256;
+        k = k + 1;
+    }
+}
+
+fn is_digit(c: u8) -> bool {
+    return c >= 48 && c <= 57;
+}
+
+fn is_space(c: u8) -> bool {
+    return c == 32 || c == 10 || c == 13 || c == 9;
+}
+
+fn upper(c: u8) -> u8 {
+    if c >= 97 && c <= 122 {
+        return c - 32;
+    }
+    return c;
+}
+
+fn word_is(buf: [u8], i: i32, n: i32, s: str) -> bool {
+    var k = 0;
+    var m = str_len(s);
+    if i + m > n {
+        return false;
+    }
+    while k < m {
+        if upper(buf[i + k]) != upper(str_byte(s, k)) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+fn skip_ws(buf: [u8], i: i32, n: i32) -> i32 {
+    var j = i;
+    while j < n && is_space(buf[j]) {
+        j = j + 1;
+    }
+    return j;
+}
+
+fn find_semi(buf: [u8], i: i32, n: i32) -> i32 {
+    var j = i;
+    while j < n && buf[j] != 59 {
+        j = j + 1;
+    }
+    return j;
+}
+
+fn first_number(buf: [u8], i: i32, n: i32, out: [i64]) -> i32 {
+    var j = i;
+    while j < n && !is_digit(buf[j]) {
+        j = j + 1;
+    }
+    if j >= n {
+        return j;
+    }
+    var v: i64 = 0;
+    while j < n && is_digit(buf[j]) {
+        v = v * 10 + ((buf[j] as i64) - 48);
+        j = j + 1;
+    }
+    out[0] = v;
+    return j;
+}
+
+fn main() {
+    var buf: [u8] = [0; 2097152];
+    var n = 0;
+    if argc() > 1 {
+        var fd = file_open(arg(1), "rb");
+        n = file_read(fd, buf, 2097152);
+        file_close(fd);
+    } else {
+        n = input_read(buf, 2097152);
+    }
+
+    var rk: [i64] = [0; 200000];
+    var rv: [i64] = [0; 200000];
+    var all: [u8] = [0; 2097152];
+    var nums2: [i64] = [0; 2];
+    var nums1: [i64] = [0; 1];
+    var hdr: [u8] = [0; 8];
+    var page: [u8] = [0; 4096];
+    var rows = 0;
+    var dbf = file_open("bench-db/dbcli.dat", "rb");
+    if dbf >= 0 {
+        var hn = file_read(dbf, all, 2097152);
+        file_close(dbf);
+        if hn >= 8 {
+            rows = get_i64(all, 0);
+            var hr = 0;
+            while hr < rows {
+                rk[hr] = get_i64(all, 8 + hr * 16);
+                rv[hr] = get_i64(all, 8 + hr * 16 + 8);
+                hr = hr + 1;
+            }
+        }
+    }
+
+    var changed = 0;
+    var i = skip_ws(buf, 0, n);
+    while i < n {
+        var end = find_semi(buf, i, n);
+        if word_is(buf, i, n, "INSERT") {
+            var j = first_number(buf, i, n, nums2);
+            var k = nums2[0];
+            nums2[0] = 0;
+            j = first_number(buf, j, n, nums2);
+            rk[rows] = k;
+            rv[rows] = nums2[0];
+            rows = rows + 1;
+            changed = 1;
+        } else if word_is(buf, i, n, "SELECT") {
+            var q = skip_ws(buf, i + 6, n);
+            if word_is(buf, q, n, "COUNT") {
+                print(rows);
+            } else if word_is(buf, q, n, "SUM") {
+                var total: i64 = 0;
+                var r = 0;
+                while r < rows {
+                    total = total + rv[r];
+                    r = r + 1;
+                }
+                print(total);
+            } else {
+                // SELECT value FROM t WHERE id = k;
+                var j = i;
+                while j < end && !word_is(buf, j, n, "WHERE") {
+                    j = j + 1;
+                }
+                first_number(buf, j, end, nums1);
+                var found: i64 = 0;
+                var r = 0;
+                while r < rows {
+                    if rk[r] == nums1[0] {
+                        found = rv[r];
+                    }
+                    r = r + 1;
+                }
+                print(found);
+            }
+        }
+        i = skip_ws(buf, end + 1, n);
+    }
+
+    if changed == 1 {
+        var out = file_open("bench-db/dbcli.dat", "wb");
+        put_i64(hdr, 0, rows);
+        file_write(out, hdr, 8);
+        var off = 0;
+        var r = 0;
+        while r < rows {
+            put_i64(page, off, rk[r]);
+            put_i64(page, off + 8, rv[r]);
+            off = off + 16;
+            if off == 4096 {
+                file_write(out, page, 4096);
+                off = 0;
+            }
+            r = r + 1;
+        }
+        if off > 0 {
+            file_write(out, page, 4096);
+        }
+        file_close(out);
+    }
+}

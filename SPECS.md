@@ -101,6 +101,7 @@ primary    := int | float | string | "true" | "false"
 | `arg(i)` | integer → `str` | argument `i`, or `""` when out of range |
 | `env(name)` | `str` → `str` | environment variable, or `""` when unset |
 | `print_bytes(a)` | `[u8]` or `[u8+]` → void | writes the bytes to stdout with no newline |
+| `input_read(buf, n)` | `[u8]`, integer → `i32` | reads up to `n` bytes from stdin into the array |
 
 No other builtins. A user function cannot shadow `sqrt`; the checker resolves it first.
 

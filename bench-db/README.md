@@ -13,7 +13,7 @@ compare against a C implementation of the same design.
 | 4 | SQL tokenizer and parser (SELECT/INSERT/CREATE TABLE) | **done** |
 | 5 | Executor: sequential scan, index scan, simple aggregates | **heap scan + COUNT/SUM/WHERE done** |
 | 6 | Persistence: catalog and heap files, crash-safe writes | **heap file + reload done** |
-| 7 | Wire protocol or CLI REPL | |
+| 7 | Wire protocol or CLI REPL | **CLI done** |
 
 ## Baseline (measured on this machine)
 
@@ -73,6 +73,14 @@ B+tree over the keys, and answers 10,000 point lookups with the index or with a 
 | query: load + index build + 10,000 point lookups | **12 ms** | 14 ms |
 | query: load + 10,000 heap-scan lookups | 523 ms | 1026 ms |
 | index speedup | 44x | **73x** |
+
+The CLI (`dbcli_magic.magic`, `bench-db/demo.sh`) runs SQL from a file or stdin against
+`dbcli.dat`, writes new rows back to the file, and answers a second process from the same file:
+
+```bash
+./bench-db/dbcli_magic bench-db/demo.sql      # 2, 210, 140
+printf 'SELECT COUNT(*) FROM t;\n' | ./bench-db/dbcli_magic   # 2
+```
 
 Both processes print the same rows (100,000) and checksum (3498635000). The index is within 17% of C
 and makes the persistent query path 73x faster than scanning; the scan itself is where MAGIC is

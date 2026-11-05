@@ -64,3 +64,6 @@
 /bench-db/dbquery_c
 /bench-db/dbquery_magic
 /bench-db/dbquery_magic.c
+/bench-db/dbcli.dat
+/bench-db/dbcli_magic
+/bench-db/dbcli_magic.c

@@ -210,6 +210,13 @@ fn header_base(prog: &Program) -> String {
          }\n\n",
     );
 
+    out.push_str(
+        "static int64_t magic_input_read(uint8_t *buf, int64_t len, int64_t cap, const char *msg) {\n\
+         \x20   if (len < 0 || len > cap) magic_panic(msg);\n\
+         \x20   return (int64_t)fread(buf, 1, (size_t)len, stdin);\n\
+         }\n\n",
+    );
+
     for s in &prog.structs {
         out.push_str("typedef struct {\n");
         for (fname, fty) in &s.fields {
@@ -936,6 +943,19 @@ fn expr(e: &Expr) -> String {
                     "printf(\"%.*f\\n\", (int)({}), (double)({}))",
                     expr(&args[1]),
                     expr(&args[0])
+                );
+            }
+            if name == "input_read" && args.len() == 2 {
+                let var = match &args[0].kind {
+                    ExprKind::Var(n) => n.clone(),
+                    _ => String::new(),
+                };
+                return format!(
+                    "magic_input_read((uint8_t*)({}), (int64_t)({}), (int64_t)({}_len), \"line {}: input_read length exceeds the buffer\")",
+                    var,
+                    expr(&args[1]),
+                    var,
+                    e.line
                 );
             }
             if name == "print_bytes" && args.len() == 1 {

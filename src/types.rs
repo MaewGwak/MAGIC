@@ -713,6 +713,26 @@ impl Checker {
                     self.check_expr(&args[1], Some(Ty::Str), scopes)?;
                     return Ok(Ty::Bool);
                 }
+                if name == "input_read" {
+                    if args.len() != 2 {
+                        return Err(format!("{}: input_read takes 2 arguments", e.line));
+                    }
+                    let ok = match &args[0].kind {
+                        ExprKind::Var(n) => lookup_array(scopes, n) == Some(Ty::U8),
+                        _ => false,
+                    };
+                    if !ok {
+                        return Err(format!(
+                            "{}: input_read needs a [u8] array as its first argument",
+                            e.line
+                        ));
+                    }
+                    let t = self.check_expr(&args[1], None, scopes)?;
+                    if !t.is_numeric() {
+                        return Err(format!("{}: input_read length must be an integer", e.line));
+                    }
+                    return Ok(Ty::I32);
+                }
                 if name == "print_bytes" {
                     if args.len() != 1 {
                         return Err(format!("{}: print_bytes takes 1 argument", e.line));

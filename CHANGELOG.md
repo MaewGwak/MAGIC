@@ -11,6 +11,7 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - `argc()`, `arg(i)` and `env(name)` expose the command line and environment to a program.
 - `print_bytes(a)` writes a `[u8]` array or `[u8+]` vec to stdout without adding a newline, so a
   program can build output byte by byte.
+- `input_read(buf, n)` reads stdin into a `[u8]` array, so a program can be a filter or a REPL.
 
 
 **Tooling**
@@ -117,6 +118,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - Persistence now builds the B+tree on load: a fresh `dbquery` process loads the 1.6 MB heap,
   builds the index and answers 10,000 point lookups in 14 ms (C 12 ms), against 1026 ms for the
   same lookups by heap scan (C 523 ms) — a 73x speedup with identical checksums.
+- `magic-db` CLI: `dbcli_magic.magic` executes `CREATE`/`INSERT`/`SELECT COUNT`/`SUM`/`WHERE id = k`
+  from a file or stdin against a heap file, persists new rows, and a second process sees them
+  (`bench-db/demo.sh` checks the transcript).
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 

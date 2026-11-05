@@ -1,7 +1,8 @@
 //! End-to-end: MAGIC source -> C -> gcc -> executable -> stdout.
 //! Skipped when no C compiler is on PATH.
 
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 fn cc() -> Option<String> {
     for name in ["gcc", "clang", "cc"] {
@@ -754,5 +755,46 @@ fn main() {
 "#;
     if let Some(out) = build_and_run("print_bytes", src) {
         assert_eq!(out, "ABC");
+    }
+}
+
+fn build_and_run_stdin(name: &str, src: &str, input: &str) -> Option<String> {
+    let cc = cc()?;
+    let dir = std::env::temp_dir().join(format!("magic_e2e_{}_{}", std::process::id(), name));
+    std::fs::create_dir_all(&dir).ok()?;
+    let c = match magic::compile_to_c(src) {
+        Ok(c) => c,
+        Err(e) => panic!("MAGIC compilation failed for {name}: {e}"),
+    };
+    let c_path = dir.join("t.c");
+    let exe_path = dir.join(if cfg!(windows) { "t.exe" } else { "t" });
+    std::fs::write(&c_path, c).ok()?;
+    let status = Command::new(&cc).arg("-O1").arg("-o").arg(&exe_path).arg(&c_path).status().ok()?;
+    if !status.success() {
+        panic!("C compilation failed for {name}");
+    }
+    let mut child = Command::new(&exe_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .ok()?;
+    child.stdin.as_mut()?.write_all(input.as_bytes()).ok()?;
+    let out = child.wait_with_output().ok()?;
+    let _ = std::fs::remove_dir_all(&dir);
+    Some(String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n").trim().to_string())
+}
+
+#[test]
+fn input_read_reads_stdin() {
+    let src = r#"
+fn main() {
+    var b: [u8] = [0; 8];
+    var n = input_read(b, 5);
+    print(n);
+    print(b[0]);
+}
+"#;
+    if let Some(out) = build_and_run_stdin("stdin", src, "hello") {
+        assert_eq!(out, "5\n104");
     }
 }
