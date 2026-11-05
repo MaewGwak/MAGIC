@@ -206,4 +206,7 @@ SemVer 2.0.0: `MAJOR.MINOR.PATCH`.
 
 ## 9. Identity
 
+**MAGIC** stands for **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode: the compiler
+tracks every array's element count (memory-aware) and emits C11 as its intermediate representation.
+
 Logo: 🔮 — used in the CLI banner, the README, and before built artifacts.
