@@ -29,7 +29,7 @@ Reproduce with `pwsh -File .\bench-all.ps1 -Rebuild`; it exits non-zero on a wro
 - n-body gap is **closed by unrolling + an LLVM compiler**: with the six pairs written out,
   `zig cc` gives 206–222 ms (Rust 219–221) and gcc 253 ms; the loop form is 300–315 ms everywhere.
   LLVM vectorises the unrolled straight-line code (`sqrtpd`) but does not unroll the loop nest
-  itself. `$CC` may now carry arguments (`zig cc`).
+  itself; `#pragma GCC unroll 4` does not help either. `$CC` or `--cc` may carry arguments.
 
 ## Compile speed
 
