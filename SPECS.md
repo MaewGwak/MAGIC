@@ -136,16 +136,26 @@ print(len(v));    // 2 (i64)
   pointer, length and capacity. Not returnable or copyable, and not usable in an arena.
 - Freed at function exit like fixed arrays.
 
-## 4c. Multi-file builds
+## 4c. Multi-file builds and imports
 
 ```
 magicc build main.magic lib.magic
 ```
 
-The files are concatenated in the order given and compiled as one program. Function order does not
-matter (signatures are collected first); struct order does, since a struct can only name structs
-declared before it. There is no `import` statement yet: files are listed on the command line, and
-diagnostics use the line numbers of the concatenation, not of the individual file.
+```
+// main.magic
+import "lib.magic";
+fn main() { print(helper()); }
+```
+
+- `import "path";` at top level pulls a file in, relative to the importing file. Files are included
+  once (deduplicated by canonical path), dependencies first, so a file can import the same helper
+  from several places.
+- Command-line files and imports mix freely; all of them compile as one program.
+- Function order does not matter (signatures are collected first); struct order does, since a struct
+  can only name structs declared before it.
+- Diagnostics use the line numbers of the concatenation, not of the individual file. There are no
+  namespaces or module visibility rules yet — every declaration is global.
 
 ## 5. Memory model
 

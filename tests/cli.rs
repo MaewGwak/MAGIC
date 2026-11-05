@@ -251,6 +251,55 @@ fn dev_flag_builds() {
 }
 
 #[test]
+fn imports_are_inlined() {
+    if !has_compiler() {
+        return;
+    }
+    let dir = TempDir::new("import");
+    std::fs::write(
+        dir.path().join("lib.magic"),
+        "fn helper() -> i32 { return 9; }\n",
+    )
+    .unwrap();
+    let main = dir.path().join("main.magic");
+    std::fs::write(
+        &main,
+        "import \"lib.magic\";\nfn main() { print(helper() * 2); }\n",
+    )
+    .unwrap();
+    let out = Command::new(magicc())
+        .args(["build", main.to_str().unwrap()])
+        .output()
+        .expect("run magicc");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let exe = if cfg!(windows) {
+        dir.path().join("main.exe")
+    } else {
+        dir.path().join("main.bin")
+    };
+    let run = Command::new(&exe).output().expect("run built program");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "18");
+}
+
+#[test]
+fn missing_import_fails() {
+    let dir = TempDir::new("importmissing");
+    let main = dir.path().join("m.magic");
+    std::fs::write(&main, "import \"nope.magic\";\nfn main() { print(1); }\n").unwrap();
+    let out = Command::new(magicc())
+        .args(["build", main.to_str().unwrap()])
+        .output()
+        .expect("run magicc");
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("cannot read"), "stderr: {err}");
+}
+
+#[test]
 fn cc_env_may_include_arguments() {
     if !has_compiler() {
         return;

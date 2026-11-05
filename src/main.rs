@@ -58,15 +58,11 @@ fn run() -> Result<(), String> {
     let command = args[1].as_str();
     let src_path = Path::new(&args[2]);
 
-    // Several source files compile as one program, in the order given.
+    // Entry files plus everything they `import`, each included once, dependencies first.
     let mut source = String::new();
+    let mut visited = std::collections::HashSet::new();
     for p in &args[2..] {
-        let text =
-            fs::read_to_string(p).map_err(|e| format!("cannot read {}: {}", p, e))?;
-        source.push_str(&text);
-        if !text.ends_with('\n') {
-            source.push('\n');
-        }
+        load_source(Path::new(p), &mut visited, &mut source)?;
     }
 
     let c = magic::compile_to_c(&source)
@@ -261,6 +257,31 @@ fn cc_command(cc: &str) -> Command {
         cmd.arg(a);
     }
     cmd
+}
+
+fn load_source(
+    path: &Path,
+    visited: &mut std::collections::HashSet<PathBuf>,
+    out: &mut String,
+) -> Result<(), String> {
+    let canon = fs::canonicalize(path)
+        .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    if !visited.insert(canon.clone()) {
+        return Ok(());
+    }
+    let text = fs::read_to_string(&canon)
+        .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    let imports = magic::imports_of(&text)
+        .map_err(|e| format!("{}: {}", path.display(), e))?;
+    let dir = canon.parent().unwrap_or_else(|| Path::new("."));
+    for imp in imports {
+        load_source(&dir.join(imp), visited, out)?;
+    }
+    out.push_str(&text);
+    if !text.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(())
 }
 
 fn find_cc() -> Option<String> {

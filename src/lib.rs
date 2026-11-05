@@ -6,6 +6,13 @@ pub mod lexer;
 pub mod parser;
 pub mod types;
 
+/// Paths named by `import "..."` statements, in source order.
+pub fn imports_of(src: &str) -> Result<Vec<String>, String> {
+    let tokens = lexer::Lexer::new(src).tokenize()?;
+    let program = parser::Parser::new(tokens).parse_program()?;
+    Ok(program.imports)
+}
+
 /// Compile MAGIC source to a single C11 translation unit.
 pub fn compile_to_c(src: &str) -> Result<String, String> {
     let tokens = lexer::Lexer::new(src).tokenize()?;

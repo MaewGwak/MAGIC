@@ -84,9 +84,24 @@ impl Parser {
 
     pub fn parse_program(&mut self) -> Result<Program, String> {
         let mut funcs = Vec::new();
+        let mut imports = Vec::new();
         while !self.at(&Tok::Eof) {
             if self.at(&Tok::Struct) {
                 self.parse_struct()?;
+            } else if self.at(&Tok::Import) {
+                self.bump();
+                let path = match self.bump() {
+                    Tok::Str(s) => s,
+                    other => {
+                        return Err(format!(
+                            "{}: expected a string after import, found {:?}",
+                            self.cur_line(),
+                            other
+                        ))
+                    }
+                };
+                self.expect(Tok::Semi, "';'")?;
+                imports.push(path);
             } else {
                 funcs.push(self.parse_func()?);
             }
@@ -94,6 +109,7 @@ impl Parser {
         Ok(Program {
             structs: std::mem::take(&mut self.structs),
             funcs,
+            imports,
         })
     }
 

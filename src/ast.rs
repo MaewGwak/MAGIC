@@ -246,4 +246,5 @@ pub struct StructDef {
 pub struct Program {
     pub structs: Vec<StructDef>,
     pub funcs: Vec<Func>,
+    pub imports: Vec<String>,
 }

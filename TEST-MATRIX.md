@@ -1,6 +1,6 @@
 # MAGIC test matrix
 
-113 tests, all green. Run with `cargo test`. Every row names the file that owns the test and
+115 tests, all green. Run with `cargo test`. Every row names the file that owns the test and
 what it proves, so the docs can link straight to it.
 
 ## Added after v0.3
@@ -149,6 +149,8 @@ These run `magicc` itself, so argument parsing, the build cache and `--report` a
 | `report_shows_arena_rows` | `--report` prints a per-arena row with `16` bytes | no |
 | `builds_several_source_files_as_one_program` | `magicc build main.magic lib.magic` → `42` | yes |
 | `cc_env_may_include_arguments` | `CC="gcc -O1"` still builds and runs → `42` | yes |
+| `imports_are_inlined` | `import "lib.magic";` then `helper()` → `18` | yes |
+| `missing_import_fails` | missing import → build fails, `cannot read` | yes |
 | `emit_prints_c` | stdout contains `int main(void)` | no |
 | `build_creates_an_executable_that_runs` | builds, runs, prints `42` | yes |
 | `second_build_is_up_to_date` | cache hit prints `up to date` | yes |
