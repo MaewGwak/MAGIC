@@ -23,3 +23,9 @@
 /bench-suite/matmul_magic_par.c
 /bench-suite/raytrace_magic_par.c
 /bench-suite/sieve_magic_odd_par.c
+/bench-suite/sieve_dyn.c
+/bench-suite/sieve_guided.c
+/bench-suite/mdyn.c
+/bench-suite/rdyn.c
+/bench-suite/mstat.c
+/bench-suite/rstat.c
