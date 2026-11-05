@@ -47,6 +47,7 @@ $cases = @(
     @{ name = 'n-body C';            dir = 'bench-suite';    exe = 'nbody_c.exe';         src = 'nbody_c.c';         kind = 'c';    expect = '11211.531383831' },
     @{ name = 'n-body Rust';         dir = 'bench-suite';    exe = 'nbody_rs.exe';        src = 'nbody_rs.rs';       kind = 'rust'; expect = '11211.531383831' },
     @{ name = 'n-body MAGIC';         dir = 'bench-suite';    exe = 'nbody_magic.exe';      src = 'nbody_magic.magic';   kind = 'magic'; expect = '11211.531383831' },
+    @{ name = 'n-body unrolled MAGIC'; dir = 'bench-suite';    exe = 'nbody_unrolled.exe'; src = 'nbody_unrolled.magic'; kind = 'magic'; expect = '11211.531383831' },
 
     @{ name = 'ray tracer C';        dir = 'bench-suite';    exe = 'raytrace_c.exe';      src = 'raytrace_c.c';      kind = 'c';    expect = '336141.941' },
     @{ name = 'ray tracer Rust';     dir = 'bench-suite';    exe = 'raytrace_rs.exe';     src = 'raytrace_rs.rs';    kind = 'rust'; expect = '336141.941' },
@@ -148,3 +149,4 @@ if ($failed -gt 0) {
     exit 1
 }
 Write-Host 'all benchmarks passed' -ForegroundColor Green
+
