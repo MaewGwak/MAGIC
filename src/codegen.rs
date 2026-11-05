@@ -192,6 +192,19 @@ fn header_base(prog: &Program) -> String {
     );
 
     out.push_str(
+        "static int64_t magic_file_read_at(int32_t fd, uint8_t *buf, int64_t off, int64_t len, int64_t cap, const char *msg) {\n\
+         \x20   if (fd < 3 || fd >= 256 || !magic_files[fd]) return -1;\n\
+         \x20   if (off < 0 || len < 0 || off + len > cap) magic_panic(msg);\n\
+         \x20   return (int64_t)fread(buf + off, 1, (size_t)len, magic_files[fd]);\n\
+         }\n\n\
+         static int64_t magic_file_write_at(int32_t fd, const uint8_t *buf, int64_t off, int64_t len, int64_t cap, const char *msg) {\n\
+         \x20   if (fd < 3 || fd >= 256 || !magic_files[fd]) return -1;\n\
+         \x20   if (off < 0 || len < 0 || off + len > cap) magic_panic(msg);\n\
+         \x20   return (int64_t)fwrite(buf + off, 1, (size_t)len, magic_files[fd]);\n\
+         }\n\n",
+    );
+
+    out.push_str(
         "static int magic_argc_v = 0;\n\
          static char **magic_argv_v = NULL;\n\
          static const char *magic_arg(int64_t i) {\n\
@@ -979,6 +992,24 @@ fn expr(e: &Expr) -> String {
                     "magic_file_open((const char*)({}), (const char*)({}))",
                     expr(&args[0]),
                     expr(&args[1])
+                );
+            }
+            if (name == "file_read_at" || name == "file_write_at") && args.len() == 4 {
+                let var = match &args[1].kind {
+                    ExprKind::Var(n) => n.clone(),
+                    _ => String::new(),
+                };
+                let helper = if name == "file_read_at" { "magic_file_read_at" } else { "magic_file_write_at" };
+                return format!(
+                    "{}((int32_t)({}), (uint8_t*)({}), (int64_t)({}), (int64_t)({}), (int64_t)({}_len), \"line {}: {} range exceeds the buffer\")",
+                    helper,
+                    expr(&args[0]),
+                    var,
+                    expr(&args[2]),
+                    expr(&args[3]),
+                    var,
+                    e.line,
+                    name
                 );
             }
             if (name == "file_read" || name == "file_write") && args.len() == 3 {

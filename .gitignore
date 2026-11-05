@@ -67,3 +67,7 @@
 /bench-db/dbcli.dat
 /bench-db/dbcli_magic
 /bench-db/dbcli_magic.c
+/bench-db/bufpool_c
+/bench-db/bufpool_magic
+/bench-db/bufpool_magic.c
+/bench-db/pages.dat

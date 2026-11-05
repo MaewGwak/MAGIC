@@ -97,6 +97,8 @@ primary    := int | float | string | "true" | "false"
 | `file_seek(fd, off, whence)` | `i32`, `i64`, `i32` → `i64` | `whence` is 0/1/2 like C; returns the new position or −1 |
 | `file_tell(fd)` | `i32` → `i64` | current position |
 | `file_size(fd)` | `i32` → `i64` | size in bytes, leaving the position unchanged |
+| `file_read_at(fd, buf, off, n)` | `i32`, `[u8]`, integer, integer → `i32` | reads into `buf[off..off+n]`, so a pool can fill a frame without a copy |
+| `file_write_at(fd, buf, off, n)` | `i32`, `[u8]`, integer, integer → `i32` | writes `buf[off..off+n]` |
 | `argc()` | → `i32` | number of command-line arguments, including the program name |
 | `arg(i)` | integer → `str` | argument `i`, or `""` when out of range |
 | `env(name)` | `str` → `str` | environment variable, or `""` when unset |

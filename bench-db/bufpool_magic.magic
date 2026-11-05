@@ -1,0 +1,79 @@
+// Buffer pool: 512 disk pages of 4 KB, 64 frames, LRU eviction, 200k random
+// accesses. Prints hits, misses and a checksum of the first byte of each page.
+fn main() {
+    let PAGE = 4096;
+    let NPAGES = 512;
+    let FRAMES = 64;
+    let ACCESSES = 200000;
+
+    var page_buf: [u8] = [0; 4096];
+    var fdw = file_open("bench-db/pages.dat", "wb");
+    var p = 0;
+    while p < NPAGES {
+        var j = 0;
+        while j < PAGE {
+            page_buf[j] = ((p * 31 + j) % 256) as u8;
+            j = j + 1;
+        }
+        file_write(fdw, page_buf, PAGE);
+        p = p + 1;
+    }
+    file_close(fdw);
+
+    var frame_data: [u8] = [0; 262144];
+    var fpage: [i32] = [0; 64];
+    var fused: [i64] = [0; 64];
+    var fdirty: [u8] = [0; 64];
+    var k = 0;
+    while k < FRAMES {
+        fpage[k] = -1;
+        k = k + 1;
+    }
+
+    var fd = file_open("bench-db/pages.dat", "rb");
+    var hits: i64 = 0;
+    var misses: i64 = 0;
+    var checksum: i64 = 0;
+    var x: i64 = 12345;
+    var t = 0;
+    while t < ACCESSES {
+        x = (x * 1103515245 + 12345) % 2147483648;
+        var id = ((x / 65536) % NPAGES) as i32;
+
+        var f = -1;
+        k = 0;
+        while k < FRAMES {
+            if fpage[k] == id {
+                f = k;
+            }
+            k = k + 1;
+        }
+        if f >= 0 {
+            hits = hits + 1;
+            fused[f] = t;
+            checksum = checksum + (frame_data[f * PAGE] as i64);
+        } else {
+            misses = misses + 1;
+            var v = 0;
+            var best = fused[0];
+            k = 1;
+            while k < FRAMES {
+                if fused[k] < best {
+                    best = fused[k];
+                    v = k;
+                }
+                k = k + 1;
+            }
+            file_seek(fd, id as i64 * PAGE, 0);
+            file_read_at(fd, frame_data, v * PAGE, PAGE);
+            fpage[v] = id;
+            fused[v] = t;
+            checksum = checksum + (frame_data[v * PAGE] as i64);
+        }
+        t = t + 1;
+    }
+    file_close(fd);
+    print(hits);
+    print(misses);
+    print(checksum);
+}

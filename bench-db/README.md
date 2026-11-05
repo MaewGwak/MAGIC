@@ -8,7 +8,7 @@ compare against a C implementation of the same design.
 | Step | What | Status |
 |---|---|---|
 | 1 | Page store: fixed 4 KB pages over `file_*` builtins | **done** |
-| 2 | Buffer pool: page cache with pin/unpin and LRU eviction | next |
+| 2 | Buffer pool: page cache and LRU eviction | **done** |
 | 3 | B+tree: 64-key nodes, insert/search, leaf and root splits | **in-memory done** |
 | 4 | SQL tokenizer and parser (SELECT/INSERT/CREATE TABLE) | **done** |
 | 5 | Executor: sequential scan, index scan, simple aggregates | **heap scan + COUNT/SUM/WHERE done** |
@@ -73,6 +73,21 @@ B+tree over the keys, and answers 10,000 point lookups with the index or with a 
 | query: load + index build + 10,000 point lookups | **12 ms** | 14 ms |
 | query: load + 10,000 heap-scan lookups | 523 ms | 1026 ms |
 | index speedup | 44x | **73x** |
+
+## Buffer pool
+
+`bufpool`: 512 disk pages of 4 KB, 64 frames, LRU eviction, 200,000 random accesses (the LCG's high
+bits choose the page, so the low bits do not cycle).
+
+| | C | MAGIC |
+|---|---:|---:|
+| hits | 24,997 | 24,997 |
+| misses | 175,003 | 175,003 |
+| checksum | 25,510,321 | 25,510,321 |
+| time | 128 ms | 128 ms |
+
+Identical results and identical time: the pool is a few arrays and a linear scan, which both
+languages compile to the same loop.
 
 The CLI (`dbcli_magic.magic`, `bench-db/demo.sh`) runs SQL from a file or stdin against
 `dbcli.dat`, writes new rows back to the file, and answers a second process from the same file:
