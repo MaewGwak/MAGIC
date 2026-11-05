@@ -5,20 +5,24 @@ This file is the honest scoreboard. It exists so nobody (including us) has to tr
 ## Proven, on this machine, with checksums
 
 Eight workloads, medians of interleaved runs, all languages at `-O3` with no `-march=native`.
-Reproduce with `pwsh -File .\bench-all.ps1 -Rebuild`; it exits non-zero on a wrong answer.
+Reproduce with `pwsh -File .\bench-all.ps1 -Rebuild`; it exits non-zero on a wrong answer. Timings
+move ±5% between runs on this machine, so treat a 1–15 ms gap as a tie.
 
 | Workload | C | Rust | MAGIC | Lowest peak memory |
 |---|---:|---:|---:|---|
-| sieve 100M | 412 | 413 | **398** | MAGIC 99.5 MB |
-| fannkuch n=10 | 187 | 174 | **157** | MAGIC 4.1 MB |
-| matmul 384 | **30** | 46 | **30** | C/MAGIC 5.8 MB |
-| n-body 10M steps | **312** | **219** | 312 | MAGIC 4.1 MB |
-| ray tracer 1536² | **46** | 61 | 47 | MAGIC 4.1 MB |
-| hash table 1M ops | 47 | 31 | **31** | MAGIC 36.1 MB |
-| particles 1M × 100 steps | **79** | 142–157 | **79** | MAGIC 34.7 MB |
-| binary trees | — | 1352 | **733** | MAGIC 20.1 MB |
+| sieve 100M | **414** | 429 | 429 | MAGIC 99.5 MB |
+| fannkuch n=10 | 175 | 174 | **158** | MAGIC 4.4 MB |
+| matmul 384 | 31 | 46 | **30** | MAGIC 5.8 MB |
+| n-body 10M steps | **302** | **221** | 317 | MAGIC 4.7 MB |
+| ray tracer 1536² | 47 | **46** | **46** | MAGIC 4.1 MB |
+| hash table 1M ops | **46** | **46** | 47 | MAGIC 36.1 MB |
+| particles 1M × 100 steps | **78** | 143–158 | **78** | MAGIC 34.7 MB |
+| binary trees | — | 1371 | **731** | MAGIC 20.2 MB |
 
-- MAGIC is first or tied on seven of eight workloads, and at C parity within noise on the eighth.
+- MAGIC is at C parity on every workload. It is fastest or tied on 5–7 of 8 depending on the run;
+  sieve and hash flip inside the noise band.
+- n-body in loop form is a real loss vs Rust; writing the pairs out (254 ms with gcc) or
+  `--unroll` with clang/zig (205–236 ms) closes it.
 - Lowest or tied-lowest memory in most workloads.
 - Hash table: MAGIC matches Rust open addressing, and beats Rust's `std::HashMap` by **3x in time
   and 2x in memory** — the "memory-aware" claim in one number.

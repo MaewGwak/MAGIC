@@ -1,18 +1,19 @@
 ## Head-to-head — same portable flags, one command
 
 `pwsh -File bench-all.ps1 -Rebuild`. All three languages at `-O3` with **no `-march=native`**
-(an earlier table let Rust use native while C and MAGIC did not — fixed in round 28).
+(an earlier table let Rust use native while C and MAGIC did not — fixed in round 28). One
+representative run; timings move ±5% between runs, so 1–15 ms gaps are ties.
 
 | Workload | C | Rust | MAGIC | Lowest peak memory |
 |---|---:|---:|---:|---|
-| sieve 100M | 412 | 413 | **398** | MAGIC 99.5 MB |
-| fannkuch | 187 | 174 | **157** | MAGIC 4.1 MB |
-| matmul 384 | **30** | 46 | **30** | C/MAGIC 5.8 MB |
-| n-body 10M steps | **312** | **219** | 312 | MAGIC 4.1 MB |
-| ray tracer 1536² | **46** | 61 | 47 | MAGIC 4.1 MB |
-| hash table 1M | 47 | 31 | **31** | MAGIC 36.1 MB |
-| particles 1M × 100 | **79** | 142–157 | **79** | MAGIC 34.7 MB |
-| binary trees | — | 1352 | **733** | MAGIC 20.1 MB |
+| sieve 100M | **414** | 429 | 429 | MAGIC 99.5 MB |
+| fannkuch | 175 | 174 | **158** | MAGIC 4.4 MB |
+| matmul 384 | 31 | 46 | **30** | MAGIC 5.8 MB |
+| n-body 10M steps | **302** | **221** | 317 | MAGIC 4.7 MB |
+| ray tracer 1536² | 47 | **46** | **46** | MAGIC 4.1 MB |
+| hash table 1M | **46** | **46** | 47 | MAGIC 36.1 MB |
+| particles 1M × 100 | **78** | 143–158 | **78** | MAGIC 34.7 MB |
+| binary trees | — | 1371 | **731** | MAGIC 20.2 MB |
 
 MAGIC is first or tied on seven of eight workloads and is never meaningfully slower than C. The one
 loss in loop form is n-body (~300 ms vs Rust ~220): LLVM vectorises the unrolled straight-line code
