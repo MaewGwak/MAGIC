@@ -73,6 +73,8 @@ $cases = @(
     @{ name = 'fannkuch C';          dir = 'bench-fannkuch'; exe = 'fannkuch_c.exe';      src = 'fannkuch_c.c';      kind = 'c';    expect = "73196`n38" },
     @{ name = 'fannkuch Rust';       dir = 'bench-fannkuch'; exe = 'fannkuch_rs.exe';     src = 'fannkuch_rs.rs';    kind = 'rust'; expect = "73196`n38" },
     @{ name = 'fannkuch MAGIC';       dir = 'bench-fannkuch'; exe = 'fannkuch_magic.exe';   src = 'fannkuch_magic.magic'; kind = 'magic'; expect = "73196`n38" },
+    @{ name = 'fannkuch MAGIC buf'; dir = 'bench-fannkuch'; exe = 'fannkuch_magic_buf.exe'; src = 'fannkuch_magic_buf.magic'; kind = 'magic'; expect = "73196
+38" },
     @{ name = 'fannkuch C++';        dir = 'bench-fannkuch'; exe = 'fannkuch_cpp.exe';    src = 'fannkuch_cpp.cpp';  kind = 'cpp';  expect = "73196`n38" },
     @{ name = 'fannkuch Goose';      dir = 'bench-fannkuch'; exe = 'fannkuch_goose.exe';  src = 'fannkuch_goose.goose'; kind = 'goose'; expect = "73196`n38" },
 

@@ -27,6 +27,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
   changed the checksum, because the reference enumeration order is not lexicographic (max 38 was
   right, checksum was not). zig (158 ms), `-funroll-loops` (142 ms) and `-march=x86-64-v3`
   (142 ms) gave no gain over the 143 ms gcc build.
+- Buffered parallel fannkuch: the reference order is generated once into a u8 buffer (10 bytes per
+  permutation, 36 MB) and the flips are computed in 16 `par for` chunks, using the global index
+  parity for the checksum. 106 ms vs 162 ms C and 160 ms Rust — 1.5x — at 39.8 MB instead of 4 MB.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
@@ -79,7 +82,7 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 
 **Verification**
 - 124 tests: 44 unit, 22 CLI, 15 integration, 43 end-to-end.
-- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (52 cases, 49 without Zig), `bench-memory.ps1`.
+- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (53 cases, 50 without Zig), `bench-memory.ps1`.
 
 ## v0.3 — the memory model
 
