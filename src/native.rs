@@ -39,6 +39,8 @@ struct Emitter {
     structs_ast: Vec<StructDef>,
     /// Inline struct locals: name -> (base offset, size).
     struct_locs: HashMap<String, (i64, i64)>,
+    /// Growable arrays: name -> (ptr slot, len slot, cap slot, element type).
+    vecs: HashMap<String, (i64, i64, i64, Ty)>,
     frame: i64,
     ret_label: String,
     loops: Vec<(String, String)>,
@@ -75,6 +77,7 @@ impl Emitter {
             sdefs: Vec::new(),
             structs_ast: Vec::new(),
             struct_locs: HashMap::new(),
+            vecs: HashMap::new(),
             frame: 0,
             ret_label: String::new(),
             loops: Vec::new(),
@@ -248,6 +251,16 @@ impl Emitter {
             .map(|(_, t, off)| (*t, *off))
     }
 
+    fn path_offset(&self, mut ty: Ty, path: &[String]) -> Option<(Ty, i64)> {
+        let mut off = 0i64;
+        for seg in path {
+            let (ft, fo) = self.field_of(ty, seg)?;
+            off += fo;
+            ty = ft;
+        }
+        Some((ty, off))
+    }
+
     fn elem_size(&self, ty: Ty) -> i64 {
         match ty {
             Ty::U8 | Ty::Bool => 1,
@@ -354,6 +367,22 @@ impl Emitter {
         Ok(())
     }
 
+    fn collect_vecs(stmts: &[Stmt], out: &mut Vec<(String, Ty)>) {
+        for s in stmts {
+            match &s.kind {
+                StmtKind::VecLet { name, elem } => out.push((name.clone(), *elem)),
+                StmtKind::If { then, els, .. } => {
+                    Self::collect_vecs(then, out);
+                    Self::collect_vecs(els, out);
+                }
+                StmtKind::While { body, .. } => Self::collect_vecs(body, out),
+                StmtKind::For { body, .. } => Self::collect_vecs(body, out),
+                StmtKind::Arena { body } => Self::collect_vecs(body, out),
+                _ => {}
+            }
+        }
+    }
+
     fn assign_frame(&mut self, f: &Func) -> Result<(), String> {
         self.locals.clear();
         self.local_ty.clear();
@@ -361,6 +390,7 @@ impl Emitter {
         self.array_len_slot.clear();
         self.owned.clear();
         self.struct_locs.clear();
+        self.vecs.clear();
         let mut slot = 0i64;
         let mut types: HashMap<String, Ty> = HashMap::new();
         for (name, pty) in &f.params {
@@ -405,6 +435,18 @@ impl Emitter {
             slot += 1;
             self.arrays.insert(name, (8 * slot, elem, len));
             self.owned.push(8 * slot);
+        }
+        let mut vec_decls = Vec::new();
+        Self::collect_vecs(&f.body, &mut vec_decls);
+        for (name, elem) in vec_decls {
+            slot += 1;
+            let p = 8 * slot;
+            slot += 1;
+            let l = 8 * slot;
+            slot += 1;
+            let c = 8 * slot;
+            self.vecs.insert(name, (p, l, c, elem));
+            self.owned.push(p);
         }
         let mut struct_bytes = 0i64;
         for (name, size) in struct_bindings {
@@ -548,6 +590,17 @@ impl Emitter {
                 }
             }
             ExprKind::IndexField { name, index, field } => {
+                if self.vecs.contains_key(name) {
+                    let path = vec![field.clone()];
+                    let (fty, poff) = self.vec_field_addr(name, index, &path, e.line)?;
+                    if fty == Ty::F64 {
+                        self.line(&format!("    movsd {}(%r10,%rax), %xmm0", poff));
+                    } else {
+                        self.line(&format!("    movq {}(%r10,%rax), %rax", poff));
+                        self.line("    cvtsi2sd %rax, %xmm0");
+                    }
+                    return Ok(());
+                }
                 let (arr_off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown array `{}`", e.line, name)
                 })?;
@@ -563,6 +616,51 @@ impl Emitter {
                     self.line(&format!("    movsd {}(%r10,%rax), %xmm0", foff));
                 } else {
                     self.line(&format!("    movq {}(%r10,%rax), %rax", foff));
+                    self.line("    cvtsi2sd %rax, %xmm0");
+                }
+            }
+            ExprKind::FieldPath { base, path } => {
+                let bty = self.local_ty.get(base).copied().ok_or_else(|| {
+                    format!("native backend line {}: unknown struct `{}`", e.line, base)
+                })?;
+                let (fty, poff) = self.path_offset(bty, path).ok_or_else(|| {
+                    format!("native backend line {}: unknown field path", e.line)
+                })?;
+                let (boff, _) = self.struct_locs[base];
+                let disp = boff - poff;
+                if fty == Ty::F64 {
+                    self.line(&format!("    movsd -{}(%rbp), %xmm0", disp));
+                } else {
+                    self.expr(e)?;
+                    self.line("    cvtsi2sd %rax, %xmm0");
+                }
+            }
+            ExprKind::IndexFieldPath { name, index, path } => {
+                if self.vecs.contains_key(name) {
+                    let (fty, poff) = self.vec_field_addr(name, index, path, e.line)?;
+                    if fty == Ty::F64 {
+                        self.line(&format!("    movsd {}(%r10,%rax), %xmm0", poff));
+                    } else {
+                        self.line(&format!("    movq {}(%r10,%rax), %rax", poff));
+                        self.line("    cvtsi2sd %rax, %xmm0");
+                    }
+                    return Ok(());
+                }
+                let (arr_off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("native backend line {}: unknown array `{}`", e.line, name)
+                })?;
+                let (fty, poff) = self.path_offset(elem, path).ok_or_else(|| {
+                    format!("native backend line {}: unknown field path", e.line)
+                })?;
+                let size = self.elem_size(elem);
+                self.expr(index)?;
+                self.bounds_check("%rax", name, e.line)?;
+                self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
+                self.line(&format!("    imul ${}, %rax, %rax", size));
+                if fty == Ty::F64 {
+                    self.line(&format!("    movsd {}(%r10,%rax), %xmm0", poff));
+                } else {
+                    self.line(&format!("    movq {}(%r10,%rax), %rax", poff));
                     self.line("    cvtsi2sd %rax, %xmm0");
                 }
             }
@@ -757,6 +855,202 @@ impl Emitter {
         Ok(true)
     }
 
+    fn vec_field_addr(
+        &mut self,
+        name: &str,
+        index: &Expr,
+        path: &[String],
+        line: usize,
+    ) -> Result<(Ty, i64), String> {
+        let (p, l, _, elem) = *self.vecs.get(name).ok_or_else(|| {
+            format!("native backend line {}: unknown vector `{}`", line, name)
+        })?;
+        let (fty, poff) = self.path_offset(elem, path).ok_or_else(|| {
+            format!("native backend line {}: unknown field path", line)
+        })?;
+        let esz = self.elem_size(elem);
+        self.expr(index)?;
+        let msg = self.panic_msg(line, "index out of bounds");
+        let ok = self.fresh("vfidx");
+        self.line(&format!("    mov -{}(%rbp), %r11", l));
+        self.line("    cmp %r11, %rax");
+        self.line(&format!("    jb {}", ok));
+        self.line(&format!("    lea {}(%rip), %rdi", msg));
+        self.call(".Lmagic_panic");
+        self.line(&format!("{}:", ok));
+        self.line(&format!("    mov -{}(%rbp), %r10", p));
+        self.line(&format!("    imul ${}, %rax", esz));
+        Ok((fty, poff))
+    }
+
+    fn vec_push(&mut self, name: &str, value: &Expr, line: usize) -> Result<(), String> {
+        let (p, l, c, elem) = *self.vecs.get(name).ok_or_else(|| {
+            format!("native backend line {}: unknown vector `{}`", line, name)
+        })?;
+        if let Ty::Struct(si) = elem {
+            let ExprKind::StructLit { fields, .. } = &value.kind else {
+                return Err(format!(
+                    "native backend line {}: pushing a struct needs a struct literal",
+                    line
+                ));
+            };
+            let (_, size, _) = self.sdefs[si as usize].clone();
+            // grow if full (shared growth sequence, no value on the stack yet)
+            self.line(&format!("    mov -{}(%rbp), %r10", p));
+            self.line(&format!("    mov -{}(%rbp), %r11", l));
+            self.line(&format!("    mov -{}(%rbp), %r8", c));
+            self.line("    cmp %r8, %r11");
+            let store = self.fresh("vsstore");
+            self.line(&format!("    jne {}", store));
+            self.line("    mov $8, %rax");
+            self.line("    test %r8, %r8");
+            let have = self.fresh("vscap");
+            self.line(&format!("    je {}", have));
+            self.line("    mov %r8, %rax");
+            self.line("    shl $1, %rax");
+            self.line(&format!("{}:", have));
+            self.push("%rax");
+            self.line("    mov %rax, %rsi");
+            self.line(&format!("    imul ${}, %rsi", size));
+            self.line("    mov %r10, %rdi");
+            self.call("realloc@PLT");
+            let ok = self.fresh("vsok");
+            self.line("    test %rax, %rax");
+            self.line(&format!("    jne {}", ok));
+            let msg = self.panic_msg(line, "out of memory");
+            self.line(&format!("    lea {}(%rip), %rdi", msg));
+            self.call(".Lmagic_panic");
+            self.line(&format!("{}:", ok));
+            self.pop("%rcx");
+            self.line(&format!("    mov %rax, -{}(%rbp)", p));
+            self.line(&format!("    mov %rcx, -{}(%rbp)", c));
+            self.line(&format!("{}:", store));
+            self.vec_store_struct(p, l, size, si as usize, 0, fields, line)?;
+            return Ok(());
+        }
+        let esz = self.elem_size(elem);
+        let is_f = elem == Ty::F64;
+        if is_f {
+            self.fexpr(value)?;
+            self.line("    sub $16, %rsp");
+            self.line("    movsd %xmm0, (%rsp)");
+        } else {
+            self.expr(value)?;
+            self.truncate(elem);
+            self.push("%rax");
+        }
+        self.line(&format!("    mov -{}(%rbp), %r10", p));
+        self.line(&format!("    mov -{}(%rbp), %r11", l));
+        self.line(&format!("    mov -{}(%rbp), %r8", c));
+        self.line("    cmp %r8, %r11");
+        let store = self.fresh("vstore");
+        self.line(&format!("    jne {}", store));
+        self.line("    mov $8, %rax");
+        self.line("    test %r8, %r8");
+        let have = self.fresh("vcap");
+        self.line(&format!("    je {}", have));
+        self.line("    mov %r8, %rax");
+        self.line("    shl $1, %rax");
+        self.line(&format!("{}:", have));
+        self.push("%rax");
+        self.line("    mov %rax, %rsi");
+        self.line(&format!("    imul ${}, %rsi", esz));
+        self.line("    mov %r10, %rdi");
+        self.call("realloc@PLT");
+        let ok = self.fresh("vrealloc");
+        self.line("    test %rax, %rax");
+        self.line(&format!("    jne {}", ok));
+        let msg = self.panic_msg(line, "out of memory");
+        self.line(&format!("    lea {}(%rip), %rdi", msg));
+        self.call(".Lmagic_panic");
+        self.line(&format!("{}:", ok));
+        self.pop("%rcx");
+        self.line(&format!("    mov %rax, -{}(%rbp)", p));
+        self.line(&format!("    mov %rcx, -{}(%rbp)", c));
+        self.line(&format!("{}:", store));
+        self.line(&format!("    mov -{}(%rbp), %r10", p));
+        self.line(&format!("    mov -{}(%rbp), %r11", l));
+        self.line(&format!("    imul ${}, %r11", esz));
+        if is_f {
+            self.line("    movsd (%rsp), %xmm0");
+            self.line("    add $16, %rsp");
+            self.line("    movsd %xmm0, (%r10,%r11)");
+        } else {
+            self.pop("%rax");
+            match elem {
+                Ty::U8 | Ty::Bool => self.line("    movb %al, (%r10,%r11)"),
+                Ty::I32 => self.line("    movl %eax, (%r10,%r11)"),
+                _ => self.line("    movq %rax, (%r10,%r11)"),
+            }
+        }
+        self.line(&format!("    mov -{}(%rbp), %r11", l));
+        self.line("    add $1, %r11");
+        self.line(&format!("    mov %r11, -{}(%rbp)", l));
+        Ok(())
+    }
+
+    fn vec_store_struct(
+        &mut self,
+        p: i64,
+        l: i64,
+        size: i64,
+        si: usize,
+        base: i64,
+        fields: &[(String, Expr)],
+        line: usize,
+    ) -> Result<(), String> {
+        let (sfields, _, _) = self.sdefs[si].clone();
+        for (fname, fty, foff) in sfields {
+            let ex = fields
+                .iter()
+                .find(|(n, _)| n == &fname)
+                .map(|(_, e)| e)
+                .ok_or_else(|| {
+                    format!("native backend line {}: missing field `{}`", line, fname)
+                })?;
+            if let Ty::Struct(si2) = fty {
+                if let ExprKind::StructLit { fields: f2, .. } = &ex.kind {
+                    self.vec_store_struct(p, l, size, si2 as usize, base + foff, f2, line)?;
+                    continue;
+                }
+                return Err(format!(
+                    "native backend line {}: nested struct fields need a struct literal",
+                    line
+                ));
+            }
+            if fty == Ty::F64 {
+                self.fexpr(ex)?;
+                self.line("    sub $16, %rsp");
+                self.line("    movsd %xmm0, (%rsp)");
+                self.line(&format!("    mov -{}(%rbp), %r10", p));
+                self.line(&format!("    mov -{}(%rbp), %r11", l));
+                self.line(&format!("    imul ${}, %r11", size));
+                self.line("    movsd (%rsp), %xmm0");
+                self.line("    add $16, %rsp");
+                self.line(&format!("    movsd %xmm0, {}(%r10,%r11)", base + foff));
+            } else {
+                self.expr(ex)?;
+                self.truncate(fty);
+                self.push("%rax");
+                self.line(&format!("    mov -{}(%rbp), %r10", p));
+                self.line(&format!("    mov -{}(%rbp), %r11", l));
+                self.line(&format!("    imul ${}, %r11", size));
+                self.pop("%rax");
+                match fty {
+                    Ty::U8 | Ty::Bool => {
+                        self.line(&format!("    movb %al, {}(%r10,%r11)", base + foff))
+                    }
+                    Ty::I32 => self.line(&format!("    movl %eax, {}(%r10,%r11)", base + foff)),
+                    _ => self.line(&format!("    movq %rax, {}(%r10,%r11)", base + foff)),
+                }
+            }
+        }
+        self.line(&format!("    mov -{}(%rbp), %r11", l));
+        self.line("    add $1, %r11");
+        self.line(&format!("    mov %r11, -{}(%rbp)", l));
+        Ok(())
+    }
+
     fn struct_lit_local(
         &mut self,
         dest_off: i64,
@@ -796,10 +1090,93 @@ impl Emitter {
                     self.truncate(fty);
                     self.line(&format!("    movl %eax, -{}(%rbp)", disp));
                 }
+                Ty::Struct(_) => {
+                    if let ExprKind::StructLit { name: sn2, fields: f2 } = &ex.kind {
+                        self.struct_lit_local(disp, sn2, f2, line)?;
+                    } else {
+                        return Err(format!(
+                            "native backend line {}: nested struct fields need a struct literal",
+                            line
+                        ));
+                    }
+                }
                 _ => {
                     self.expr(ex)?;
                     self.line(&format!("    movq %rax, -{}(%rbp)", disp));
                 }
+            }
+        }
+        Ok(())
+    }
+
+    fn array_fill_struct(
+        &mut self,
+        arr_off: i64,
+        stride: i64,
+        len: i64,
+        si: usize,
+        base: i64,
+        fields: &[(String, Expr)],
+        line: usize,
+    ) -> Result<(), String> {
+        let (sfields, _, _) = self.sdefs[si].clone();
+        for (fname, fty, foff) in sfields {
+            let ex = fields
+                .iter()
+                .find(|(n, _)| n == &fname)
+                .map(|(_, e)| e)
+                .ok_or_else(|| {
+                    format!("native backend line {}: missing field `{}`", line, fname)
+                })?;
+            if let Ty::Struct(si2) = fty {
+                if let ExprKind::StructLit { fields: f2, .. } = &ex.kind {
+                    self.array_fill_struct(arr_off, stride, len, si2 as usize, base + foff, f2, line)?;
+                    continue;
+                }
+                return Err(format!(
+                    "native backend line {}: nested struct array fields need a struct literal",
+                    line
+                ));
+            }
+            let is_float = fty == Ty::F64;
+            if is_float {
+                self.fexpr(ex)?;
+                self.line("    sub $16, %rsp");
+                self.line("    movsd %xmm0, (%rsp)");
+            } else {
+                self.expr(ex)?;
+                self.truncate(fty);
+                self.push("%rax");
+            }
+            self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
+            self.line(&format!("    mov ${}, %rcx", len));
+            self.line("    mov $0, %r8");
+            let loop_l = self.fresh("sfill");
+            let done = self.fresh("sfdone");
+            self.line(&format!("{}:", loop_l));
+            self.line("    cmp %rcx, %r8");
+            self.line(&format!("    jge {}", done));
+            self.line(&format!("    imul ${}, %r8, %r9", stride));
+            if is_float {
+                self.line("    movsd (%rsp), %xmm0");
+                self.line(&format!("    movsd %xmm0, {}(%r10,%r9)", base + foff));
+            } else {
+                self.line(&format!("    mov {}(%rsp), %rax", 0));
+                match fty {
+                    Ty::U8 | Ty::Bool => {
+                        self.line(&format!("    movb %al, {}(%r10,%r9)", base + foff))
+                    }
+                    Ty::I32 => self.line(&format!("    movl %eax, {}(%r10,%r9)", base + foff)),
+                    _ => self.line(&format!("    movq %rax, {}(%r10,%r9)", base + foff)),
+                }
+            }
+            self.line("    add $1, %r8");
+            self.line(&format!("    jmp {}", loop_l));
+            self.line(&format!("{}:", done));
+            if is_float {
+                self.line("    add $16, %rsp");
+            } else {
+                self.pop("%rax");
             }
         }
         Ok(())
@@ -820,7 +1197,7 @@ impl Emitter {
                 line
             ));
         };
-        let (sfields, size, _) = self.sdefs[si].clone();
+        let (_, size, _) = self.sdefs[si].clone();
         let bytes = size * len;
         self.line(&format!("    mov ${}, %rdi", bytes));
         self.call("malloc@PLT");
@@ -832,55 +1209,8 @@ impl Emitter {
         self.call(".Lmagic_panic");
         self.line(&format!("{}:", ok));
         self.line(&format!("    mov %rax, -{}(%rbp)", off));
-        for (fname, fty, foff) in sfields {
-            let ex = fields
-                .iter()
-                .find(|(n, _)| n == &fname)
-                .map(|(_, e)| e)
-                .ok_or_else(|| {
-                    format!("native backend line {}: missing field `{}`", line, fname)
-                })?;
-            let is_float = fty == Ty::F64;
-            if is_float {
-                self.fexpr(ex)?;
-                self.line("    sub $16, %rsp");
-                self.line("    movsd %xmm0, (%rsp)");
-            } else {
-                self.expr(ex)?;
-                self.truncate(fty);
-                self.push("%rax");
-            }
-            self.line(&format!("    mov -{}(%rbp), %r10", off));
-            self.line(&format!("    mov ${}, %rcx", len));
-            self.line("    mov $0, %r8");
-            let loop_l = self.fresh("sfill");
-            let done = self.fresh("sfdone");
-            self.line(&format!("{}:", loop_l));
-            self.line("    cmp %rcx, %r8");
-            self.line(&format!("    jge {}", done));
-            self.line(&format!("    imul ${}, %r8, %r9", size));
-            if is_float {
-                self.line("    movsd (%rsp), %xmm0");
-                self.line(&format!("    movsd %xmm0, {}(%r10,%r9)", foff));
-            } else {
-                self.line("    mov (%rsp), %rax");
-                match fty {
-                    Ty::U8 | Ty::Bool => {
-                        self.line(&format!("    movb %al, {}(%r10,%r9)", foff))
-                    }
-                    Ty::I32 => self.line(&format!("    movl %eax, {}(%r10,%r9)", foff)),
-                    _ => self.line(&format!("    movq %rax, {}(%r10,%r9)", foff)),
-                }
-            }
-            self.line("    add $1, %r8");
-            self.line(&format!("    jmp {}", loop_l));
-            self.line(&format!("{}:", done));
-            if is_float {
-                self.line("    add $16, %rsp");
-            } else {
-                self.pop("%rax");
-            }
-        }
+        self.array_fill_struct(off, size, len, si, 0, fields, line)?;
+        let _ = name;
         Ok(())
     }
 
@@ -956,6 +1286,21 @@ impl Emitter {
                 }
             }
             ExprKind::IndexField { name, index, field } => {
+                if self.vecs.contains_key(name) {
+                    let path = vec![field.clone()];
+                    let (fty, poff) = self.vec_field_addr(name, index, &path, e.line)?;
+                    match fty {
+                        Ty::I32 => self.line(&format!("    movslq {}(%r10,%rax), %rax", poff)),
+                        Ty::U8 | Ty::Bool => self.line(&format!("    movzbq {}(%r10,%rax), %rax", poff)),
+                        Ty::F64 => {
+                            self.line(&format!("    movsd {}(%r10,%rax), %xmm0", poff));
+                            self.line("    movq %xmm0, %rax");
+                        }
+                        Ty::Struct(_) => self.line(&format!("    lea {}(%r10,%rax), %rax", poff)),
+                        _ => self.line(&format!("    mov {}(%r10,%rax), %rax", poff)),
+                    }
+                    return Ok(());
+                }
                 let (arr_off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown array `{}`", e.line, name)
                 })?;
@@ -976,6 +1321,63 @@ impl Emitter {
                     }
                     Ty::Struct(_) => self.line(&format!("    lea {}(%r10,%rax), %rax", foff)),
                     _ => self.line(&format!("    mov {}(%r10,%rax), %rax", foff)),
+                }
+            }
+            ExprKind::FieldPath { base, path } => {
+                let bty = self.local_ty.get(base).copied().ok_or_else(|| {
+                    format!("native backend line {}: unknown struct `{}`", e.line, base)
+                })?;
+                let (fty, poff) = self.path_offset(bty, path).ok_or_else(|| {
+                    format!("native backend line {}: unknown field path", e.line)
+                })?;
+                let (boff, _) = self.struct_locs[base];
+                let disp = boff - poff;
+                match fty {
+                    Ty::I32 => self.line(&format!("    movslq -{}(%rbp), %rax", disp)),
+                    Ty::U8 | Ty::Bool => self.line(&format!("    movzbq -{}(%rbp), %rax", disp)),
+                    Ty::F64 => {
+                        self.line(&format!("    movsd -{}(%rbp), %xmm0", disp));
+                        self.line("    movq %xmm0, %rax");
+                    }
+                    Ty::Struct(_) => self.line(&format!("    lea -{}(%rbp), %rax", disp)),
+                    _ => self.line(&format!("    mov -{}(%rbp), %rax", disp)),
+                }
+            }
+            ExprKind::IndexFieldPath { name, index, path } => {
+                if self.vecs.contains_key(name) {
+                    let (fty, poff) = self.vec_field_addr(name, index, path, e.line)?;
+                    match fty {
+                        Ty::I32 => self.line(&format!("    movslq {}(%r10,%rax), %rax", poff)),
+                        Ty::U8 | Ty::Bool => self.line(&format!("    movzbq {}(%r10,%rax), %rax", poff)),
+                        Ty::F64 => {
+                            self.line(&format!("    movsd {}(%r10,%rax), %xmm0", poff));
+                            self.line("    movq %xmm0, %rax");
+                        }
+                        Ty::Struct(_) => self.line(&format!("    lea {}(%r10,%rax), %rax", poff)),
+                        _ => self.line(&format!("    mov {}(%r10,%rax), %rax", poff)),
+                    }
+                    return Ok(());
+                }
+                let (arr_off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("native backend line {}: unknown array `{}`", e.line, name)
+                })?;
+                let (fty, poff) = self.path_offset(elem, path).ok_or_else(|| {
+                    format!("native backend line {}: unknown field path", e.line)
+                })?;
+                let size = self.elem_size(elem);
+                self.expr(index)?;
+                self.bounds_check("%rax", name, e.line)?;
+                self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
+                self.line(&format!("    imul ${}, %rax, %rax", size));
+                match fty {
+                    Ty::I32 => self.line(&format!("    movslq {}(%r10,%rax), %rax", poff)),
+                    Ty::U8 | Ty::Bool => self.line(&format!("    movzbq {}(%r10,%rax), %rax", poff)),
+                    Ty::F64 => {
+                        self.line(&format!("    movsd {}(%r10,%rax), %xmm0", poff));
+                        self.line("    movq %xmm0, %rax");
+                    }
+                    Ty::Struct(_) => self.line(&format!("    lea {}(%r10,%rax), %rax", poff)),
+                    _ => self.line(&format!("    mov {}(%r10,%rax), %rax", poff)),
                 }
             }
             ExprKind::Bin { op, l, r } => {
@@ -1086,32 +1488,53 @@ impl Emitter {
                 }
             }
             ExprKind::Cast { e, ty } => {
-                self.expr(e)?;
-                match ty {
-                    Ty::I64 | Ty::Str => {}
-                    Ty::I32 => self.line("    movslq %eax, %rax"),
-                    Ty::U8 => self.line("    movzbq %al, %rax"),
-                    Ty::Bool => {
-                        self.line("    test %rax, %rax");
-                        self.line("    setne %al");
-                        self.line("    movzbq %al, %rax");
+                if *ty == Ty::F64 {
+                    if self.is_float(e) {
+                        self.fexpr(e)?;
+                    } else {
+                        self.expr(e)?;
+                        self.line("    cvtsi2sd %rax, %xmm0");
                     }
-                    other => {
-                        return Err(format!(
-                            "native backend line {}: cast to {:?} is not supported yet",
-                            e.line, other
-                        ))
-                    }
+                } else if self.is_float(e) {
+                    self.fexpr(e)?;
+                    self.line("    cvttsd2si %xmm0, %rax");
+                    self.truncate(*ty);
+                } else {
+                    self.expr(e)?;
+                    self.truncate(*ty);
                 }
             }
             ExprKind::Index { name, index } => {
-                let (_, elem, _) = *self
-                    .arrays
-                    .get(name)
-                    .ok_or_else(|| format!("native backend line {}: unknown array `{}`", e.line, name))?;
-                self.expr(index)?;
-                self.bounds_check("%rax", name, e.line)?;
-                self.array_load(name, "%rax", elem, e.line)?;
+                if let Some((p, l, _, elem)) = self.vecs.get(name).copied() {
+                    let esz = self.elem_size(elem);
+                    self.expr(index)?;
+                    let msg = self.panic_msg(e.line, "index out of bounds");
+                    let ok = self.fresh("vidx");
+                    self.line(&format!("    mov -{}(%rbp), %r11", l));
+                    self.line("    cmp %r11, %rax");
+                    self.line(&format!("    jb {}", ok));
+                    self.line(&format!("    lea {}(%rip), %rdi", msg));
+                    self.call(".Lmagic_panic");
+                    self.line(&format!("{}:", ok));
+                    self.line(&format!("    mov -{}(%rbp), %r10", p));
+                    self.line(&format!("    imul ${}, %rax", esz));
+                    match elem {
+                        Ty::U8 | Ty::Bool => self.line("    movzbq (%r10,%rax), %rax"),
+                        Ty::I32 => self.line("    movslq (%r10,%rax), %rax"),
+                        Ty::F64 => {
+                            self.line("    movsd (%r10,%rax), %xmm0");
+                            self.line("    movq %xmm0, %rax");
+                        }
+                        _ => self.line("    mov (%r10,%rax), %rax"),
+                    }
+                } else {
+                    let (_, elem, _) = *self.arrays.get(name).ok_or_else(|| {
+                        format!("native backend line {}: unknown array `{}`", e.line, name)
+                    })?;
+                    self.expr(index)?;
+                    self.bounds_check("%rax", name, e.line)?;
+                    self.array_load(name, "%rax", elem, e.line)?;
+                }
             }
             ExprKind::ArrayLen(name) => {
                 let (_, _, len) = *self.arrays.get(name).ok_or_else(|| {
@@ -1638,6 +2061,54 @@ impl Emitter {
             self.call("fwrite@PLT");
             return Ok(());
         }
+        if name == "len" && args.len() == 1 {
+            if let ExprKind::Var(n) = &args[0].kind {
+                if let Some((_, l, _, _)) = self.vecs.get(n) {
+                    self.line(&format!("    mov -{}(%rbp), %rax", *l));
+                    return Ok(());
+                }
+                if let Some((_, _, len)) = self.arrays.get(n) {
+                    if let Some(slot) = self.array_len_slot.get(n) {
+                        self.line(&format!("    mov -{}(%rbp), %rax", *slot));
+                    } else {
+                        self.line(&format!("    mov ${}, %rax", len));
+                    }
+                    return Ok(());
+                }
+            }
+            return Err(format!("native backend line {}: len needs an array or vector", line));
+        }
+        if name == "reserve" && args.len() == 2 {
+            if let ExprKind::Var(n) = &args[0].kind {
+                let (p, _, c, elem) = *self.vecs.get(n).ok_or_else(|| {
+                    format!("native backend line {}: reserve needs a local vector", line)
+                })?;
+                let esz = self.elem_size(elem);
+                self.expr(&args[1])?;
+                let skip = self.fresh("vres");
+                self.line(&format!("    cmp -{}(%rbp), %rax", c));
+                self.line(&format!("    jbe {}", skip));
+                self.line("    mov %rax, %rsi");
+                self.line(&format!("    imul ${}, %rsi", esz));
+                self.line(&format!("    mov -{}(%rbp), %rdi", p));
+                self.line("    push %rax");
+                self.depth += 1;
+                self.call("realloc@PLT");
+                self.pop("%rcx");
+                let ok = self.fresh("vresok");
+                self.line("    test %rax, %rax");
+                self.line(&format!("    jne {}", ok));
+                let msg = self.panic_msg(line, "out of memory");
+                self.line(&format!("    lea {}(%rip), %rdi", msg));
+                self.call(".Lmagic_panic");
+                self.line(&format!("{}:", ok));
+                self.line(&format!("    mov %rax, -{}(%rbp)", p));
+                self.line(&format!("    mov %rcx, -{}(%rbp)", c));
+                self.line(&format!("{}:", skip));
+                return Ok(());
+            }
+            return Err(format!("native backend line {}: reserve needs a local vector", line));
+        }
         if self.file_builtin(name, args, line)? {
             return Ok(());
         }
@@ -1835,6 +2306,52 @@ impl Emitter {
                 }
             }
             StmtKind::IndexFieldAssign { name, index, field, value } => {
+                if self.vecs.contains_key(name) {
+                    let path = vec![field.clone()];
+                    let vend = self.vecs.get(name).map(|(_, l, _, _)| *l).unwrap();
+                    let _ = vend;
+                    let (fty, poff) = {
+                        let (p, l, _, elem) = *self.vecs.get(name).unwrap();
+                        let (fty, poff) = self.path_offset(elem, &path).ok_or_else(|| {
+                            format!("native backend line {}: unknown field", s.line)
+                        })?;
+                        let esz = self.elem_size(elem);
+                        if fty == Ty::F64 {
+                            self.fexpr(value)?;
+                            self.line("    sub $16, %rsp");
+                            self.line("    movsd %xmm0, (%rsp)");
+                        } else {
+                            self.expr(value)?;
+                            self.truncate(fty);
+                            self.push("%rax");
+                        }
+                        self.expr(index)?;
+                        let msg = self.panic_msg(s.line, "index out of bounds");
+                        let ok = self.fresh("vfw");
+                        self.line(&format!("    mov -{}(%rbp), %r11", l));
+                        self.line("    cmp %r11, %rax");
+                        self.line(&format!("    jb {}", ok));
+                        self.line(&format!("    lea {}(%rip), %rdi", msg));
+                        self.call(".Lmagic_panic");
+                        self.line(&format!("{}:", ok));
+                        self.line(&format!("    mov -{}(%rbp), %r10", p));
+                        self.line(&format!("    imul ${}, %rax", esz));
+                        (fty, poff)
+                    };
+                    if fty == Ty::F64 {
+                        self.line("    movsd (%rsp), %xmm0");
+                        self.line("    add $16, %rsp");
+                        self.line(&format!("    movsd %xmm0, {}(%r10,%rax)", poff));
+                    } else {
+                        self.pop("%rcx");
+                        match fty {
+                            Ty::U8 | Ty::Bool => self.line(&format!("    movb %cl, {}(%r10,%rax)", poff)),
+                            Ty::I32 => self.line(&format!("    movl %ecx, {}(%r10,%rax)", poff)),
+                            _ => self.line(&format!("    movq %rcx, {}(%r10,%rax)", poff)),
+                        }
+                    }
+                    return Ok(());
+                }
                 let (arr_off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown array `{}`", s.line, name)
                 })?;
@@ -1866,6 +2383,40 @@ impl Emitter {
                     Ty::I32 => self.line(&format!("    movl %ecx, {}(%r10,%rax)", foff)),
                     Ty::F64 => self.line(&format!("    movsd %xmm0, {}(%r10,%rax)", foff)),
                     _ => self.line(&format!("    movq %rcx, {}(%r10,%rax)", foff)),
+                }
+            }
+            StmtKind::IndexFieldPathAssign { name, index, path, value } => {
+                let (arr_off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("native backend line {}: unknown array `{}`", s.line, name)
+                })?;
+                let (fty, poff) = self.path_offset(elem, path).ok_or_else(|| {
+                    format!("native backend line {}: unknown field path", s.line)
+                })?;
+                let size = self.elem_size(elem);
+                if fty == Ty::F64 {
+                    self.fexpr(value)?;
+                    self.line("    sub $16, %rsp");
+                    self.line("    movsd %xmm0, (%rsp)");
+                } else {
+                    self.expr(value)?;
+                    self.truncate(fty);
+                    self.push("%rax");
+                }
+                self.expr(index)?;
+                self.bounds_check("%rax", name, s.line)?;
+                if fty == Ty::F64 {
+                    self.line("    movsd (%rsp), %xmm0");
+                    self.line("    add $16, %rsp");
+                } else {
+                    self.pop("%rcx");
+                }
+                self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
+                self.line(&format!("    imul ${}, %rax, %rax", size));
+                match fty {
+                    Ty::U8 | Ty::Bool => self.line(&format!("    movb %cl, {}(%r10,%rax)", poff)),
+                    Ty::I32 => self.line(&format!("    movl %ecx, {}(%r10,%rax)", poff)),
+                    Ty::F64 => self.line(&format!("    movsd %xmm0, {}(%r10,%rax)", poff)),
+                    _ => self.line(&format!("    movq %rcx, {}(%r10,%rax)", poff)),
                 }
             }
             StmtKind::Print { value, ty } => {
@@ -2017,6 +2568,17 @@ impl Emitter {
                 let c = c.clone();
                 self.line(&format!("    jmp {}", c));
             }
+            StmtKind::VecLet { name, .. } => {
+                let (p, l, c, _) = *self.vecs.get(name).ok_or_else(|| {
+                    format!("native backend line {}: unknown vector `{}`", s.line, name)
+                })?;
+                self.line(&format!("    movq $0, -{}(%rbp)", p));
+                self.line(&format!("    movq $0, -{}(%rbp)", l));
+                self.line(&format!("    movq $0, -{}(%rbp)", c));
+            }
+            StmtKind::Push { name, value } => {
+                self.vec_push(name, value, s.line)?;
+            }
             StmtKind::ArrayLet { name, value, .. } => {
                 let (off, elem, len) = *self.arrays.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown array `{}`", s.line, name)
@@ -2080,6 +2642,42 @@ impl Emitter {
                 self.line(&format!("{}:", filled));
             }
             StmtKind::IndexAssign { name, index, value } => {
+                if let Some((p, l, _, elem)) = self.vecs.get(name).copied() {
+                    let esz = self.elem_size(elem);
+                    if elem == Ty::F64 {
+                        self.fexpr(value)?;
+                        self.line("    sub $16, %rsp");
+                        self.line("    movsd %xmm0, (%rsp)");
+                    } else {
+                        self.expr(value)?;
+                        self.truncate(elem);
+                        self.push("%rax");
+                    }
+                    self.expr(index)?;
+                    let msg = self.panic_msg(s.line, "index out of bounds");
+                    let ok = self.fresh("vidxw");
+                    self.line(&format!("    mov -{}(%rbp), %r11", l));
+                    self.line("    cmp %r11, %rax");
+                    self.line(&format!("    jb {}", ok));
+                    self.line(&format!("    lea {}(%rip), %rdi", msg));
+                    self.call(".Lmagic_panic");
+                    self.line(&format!("{}:", ok));
+                    self.line(&format!("    mov -{}(%rbp), %r10", p));
+                    self.line(&format!("    imul ${}, %rax", esz));
+                    if elem == Ty::F64 {
+                        self.line("    movsd (%rsp), %xmm0");
+                        self.line("    add $16, %rsp");
+                        self.line("    movsd %xmm0, (%r10,%rax)");
+                    } else {
+                        self.pop("%rcx");
+                        match elem {
+                            Ty::U8 | Ty::Bool => self.line("    movb %cl, (%r10,%rax)"),
+                            Ty::I32 => self.line("    movl %ecx, (%r10,%rax)"),
+                            _ => self.line("    movq %rcx, (%r10,%rax)"),
+                        }
+                    }
+                    return Ok(());
+                }
                 let (off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown array `{}`", s.line, name)
                 })?;

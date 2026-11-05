@@ -17,6 +17,14 @@ Native arithmetic now narrows after every operation to the declared type, matchi
 `int32_t`/`uint8_t` wrapping: `2147483647 + 1` prints `-2147483648` and a `u8` at 255 wraps to 0.
 A regression test builds both cases natively and checks the output.
 
+## v0.8.6 — nested structs and vectors (2026-11-06)
+
+Nested struct literals and field paths (`bins[i].item.sku`), arrays of nested structs, and growable
+vectors `[T+]` now work on the native backend: `VecLet`, `push` (with growth through realloc),
+`reserve`, `len`, indexed reads/writes with bounds checks, vectors of struct literals, and freeing at
+function exit. All 15 examples and the `vecpart` benchmark build and print the same results without a
+C compiler: inventory 103/4/60, vec 10/285, vecpart 125024147186.169 (292 ms vs C's ~100 ms).
+
 ## v0.8.5 — native structs (2026-11-06)
 
 Structs now work on the native backend with the same layout as the C backend (shared `ty_size` /

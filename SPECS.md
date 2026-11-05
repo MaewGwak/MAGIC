@@ -1,4 +1,4 @@
-# 🔮 MAGIC — Language Specification v0.8.5
+# 🔮 MAGIC — Language Specification v0.8.6
 
 Status: pre-1.0. Breaking changes are allowed in any 0.x release.
 Companion docs: `PLANS.md` (roadmap), `TASKS.md` (board), `TEST.md` (tests).
@@ -150,8 +150,9 @@ It also takes array parameters (the checker lowers them to a pointer plus a leng
 six arguments on the stack, casts between integer types, wraps `i32`/`u8` like the C backend, and
 supports `str_len`, `str_byte`, `str_byte_n`, `argc`, `arg`, `env`, `input_read`, `print_bytes`, the
 file builtins, the `net_*` TCP builtins and `par for` (sequentially). Native `f64` covers literals, arithmetic, comparisons, `sqrt`, casts, `f64` arrays and `print_prec`.
-Struct locals, struct literals, single-level field access and arrays of structs work; nested struct
-fields and vectors remain on the C backend for now.
+Structs (nested fields and arrays of structs) and growable vectors `[T+]` (including vectors of
+structs) work natively with bounds checks; `len` and `reserve` are supported. All 15 examples run
+without a C compiler.
 
 ## 4b. Growable arrays (v0.4)
 

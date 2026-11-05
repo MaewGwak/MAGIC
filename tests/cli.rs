@@ -1252,3 +1252,70 @@ fn native_struct_arrays_match_the_c_backend() {
     let run = Command::new(&exe).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "0\n11\n20");
 }
+
+#[test]
+fn native_nested_structs_and_vectors_match_c() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("inv");
+    let src = dir.path().join("i.magic");
+    std::fs::write(
+        &src,
+        "struct Item { sku: i32, qty: i32 }\n\
+         struct Bin { item: Item, count: i32 }\n\
+         fn main() {\n\
+         var bins: [Bin] = [Bin { item: Item { sku: 0, qty: 0 }, count: 0 }; 4];\n\
+         for i in 0..4 {\n\
+         bins[i].item.sku = 100 + i;\n\
+         bins[i].item.qty = i * 5;\n\
+         bins[i].count = 2;\n\
+         }\n\
+         var totals: [i32+] = [];\n\
+         for i in 0..4 { totals.push(bins[i].item.qty * bins[i].count); }\n\
+         var grand = 0;\n\
+         for i in 0..(len(totals) as i32) { grand = grand + totals[i]; }\n\
+         print(bins[3].item.sku);\n\
+         print(len(totals));\n\
+         print(grand);\n\
+         }\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("i");
+    let out = Command::new(magicc())
+        .arg("build").arg(&src).arg("--backend").arg("native").arg("-o").arg(&exe)
+        .output().expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "103\n4\n60");
+}
+
+#[test]
+fn native_vectors_of_structs_match_c() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("vecp");
+    let src = dir.path().join("v.magic");
+    std::fs::write(
+        &src,
+        "struct P { x: f64, y: f64 }\n\
+         fn main() {\n\
+         var ps: [P+] = [];\n\
+         reserve(ps, 2);\n\
+         ps.push(P { x: 1.0, y: 2.0 });\n\
+         ps.push(P { x: 3.0, y: 4.0 });\n\
+         var t = 0.0;\n\
+         for i in 0..(len(ps) as i32) { t = t + ps[i].x + ps[i].y; }\n\
+         print(t);\n\
+         }\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("v");
+    let out = Command::new(magicc())
+        .arg("build").arg(&src).arg("--backend").arg("native").arg("-o").arg(&exe)
+        .output().expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "10");
+}

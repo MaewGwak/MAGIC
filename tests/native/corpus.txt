@@ -22,3 +22,7 @@ bench-suite/nbody_magic.magic
 examples/struct.magic
 examples/points.magic
 bench-suite/particles_magic.magic
+examples/cast.magic
+examples/vec.magic
+examples/inventory.magic
+bench-suite/vecpart_magic.magic
