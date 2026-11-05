@@ -193,17 +193,17 @@ all five baselines:
 
 | Workload | C | C++ | Rust | Go | MAGIC optimized | margin |
 |---|---:|---:|---:|---:|---:|---:|
-| sieve 100M | 502 | 497 | 516 | 572 | 132 | 3.8x |
+| sieve 100M | 502 | 497 | 516 | 572 | 86 | 5.7x |
 | particles 1M × 100 | 151 | 151 | 157 | 215 | 4 | 37x |
 | hash 1M | 38 | 37 | 36 | 36 | 6 | 6x |
 | ray tracer 1536² | 86 | 89 | **77** | - | 13 | 5.9x |
 | binary trees | 1647 | - | 3077 | - | 397 | 4.2x |
-| matmul 384 | 31 | 27 | 92 | 106 | 9 | 3x |
+| matmul 384 | 31 | 27 | 92 | 106 | 6 | 4.5x |
 | fannkuch | 383 | 392 | 364 | - | 40 | 9.6x |
 | n-body 10M | 724 | 728 | **523** | 920 | 450 | 1.16x |
 
-The n-body and matmul rows use clang for their AVX2 builds; without clang the n-body build is
-605 ms (gcc). `./verify.sh` runs the tests, the doc counts and this matrix.
+The n-body row uses clang with `-march=x86-64-v3` and the matmul row clang with `-march=native`;
+without clang the n-body build is 605 ms (gcc). `./verify.sh` runs the tests, the doc counts and this matrix.
 
 
 n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms

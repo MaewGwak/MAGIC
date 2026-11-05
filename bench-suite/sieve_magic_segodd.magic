@@ -1,0 +1,76 @@
+// Segmented odd-only sieve: index i stands for 2i+1, and each thread marks only
+// its own chunk of the 50M odd slots, so threads never touch the same cache
+// line. Same sieve, same answer.
+fn main() {
+    let limit = 100000000;
+    let half = 50000000;
+    let root = 10000;
+    let parts = 16;
+    let chunk = half / parts;
+
+    var small: [u8] = [0; 5001];
+    var primes: [i32] = [0; 1300];
+    var np = 0;
+    var i = 1;
+    while i < 5000 {
+        if small[i] == 0 {
+            var p = 2 * i + 1;
+            primes[np] = p;
+            np = np + 1;
+            var j = i + p;
+            while j < 5000 {
+                small[j] = 1;
+                j = j + p;
+            }
+        }
+        i = i + 1;
+    }
+
+    var odd: [u8] = [0; half];
+    odd[0] = 1; // 1 is not prime
+    var sums: [i64] = [0; 16];
+
+    par for t in 0..parts {
+        var lo = t * chunk;
+        var hi = (t + 1) * chunk;
+        if hi > half {
+            hi = half;
+        }
+        var k = 0;
+        while k < np {
+            var p = primes[k];
+            var start = p * p;
+            var first = 2 * lo + 1;
+            if start < first {
+                var q = (first + p - 1) / p;
+                start = q * p;
+                if start % 2 == 0 {
+                    start = start + p;
+                }
+            }
+            var idx = (start - 1) / 2;
+            while idx < hi {
+                odd[idx] = 1;
+                idx = idx + p;
+            }
+            k = k + 1;
+        }
+        var c: i64 = 0;
+        var x = lo;
+        while x < hi {
+            if odd[x] == 0 {
+                c = c + 1;
+            }
+            x = x + 1;
+        }
+        sums[t] = c;
+    }
+
+    var total: i64 = 1; // the prime 2
+    var t2 = 0;
+    while t2 < parts {
+        total = total + sums[t2];
+        t2 = t2 + 1;
+    }
+    print(total);
+}

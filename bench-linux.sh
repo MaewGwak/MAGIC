@@ -56,6 +56,7 @@ cd "$ROOT/bench-suite" || exit 2
 build_c sieve_c.c s_c; build_rust sieve_rs.rs s_rs
 build_magic sieve_magic.magic s_m; build_magic sieve_magic_odd.magic s_o
 build_magic sieve_magic_odd_par.magic s_p
+build_magic sieve_magic_segodd.magic s_s
 median "$OUT/s_c" 5761455 'sieve C'
 median "$OUT/s_rs" 5761455 'sieve Rust'
 if [ -n "$CXX" ]; then build_cpp sieve_cpp.cpp s_cpp; median "$OUT/s_cpp" 5761455 'sieve C++'; fi
@@ -63,6 +64,7 @@ if [ -n "$GO" ]; then build_go sieve_go.go s_go; median "$OUT/s_go" 5761455 'sie
 median "$OUT/s_m" 5761455 'sieve MAGIC'
 median "$OUT/s_o" 5761455 'sieve MAGIC odd'
 median "$OUT/s_p" 5761455 'sieve MAGIC odd par'
+median "$OUT/s_s" 5761455 'sieve MAGIC seg odd'
 
 echo "== fannkuch n=10"
 cd "$ROOT/bench-fannkuch" || exit 2
@@ -89,8 +91,8 @@ median "$OUT/m_m" 326316140 'matmul MAGIC'
 median "$OUT/m_k" 326316140 'matmul MAGIC i-k-j'
 
 if [ -n "$CLANG" ]; then
-  "$M" build matmul_magic_ikj.magic --cc "$CLANG -march=x86-64-v3" -o "$OUT/m_clang.bin" >/dev/null 2>&1 || true
-  [ -x "$OUT/m_clang.bin" ] && median "$OUT/m_clang.bin" 326316140 'matmul MAGIC clang AVX2'
+  "$M" build matmul_magic_ikj.magic --cc "$CLANG -march=native" -o "$OUT/m_clang.bin" >/dev/null 2>&1 || true
+  [ -x "$OUT/m_clang.bin" ] && median "$OUT/m_clang.bin" 326316140 'matmul MAGIC clang native'
 fi
 
 echo "== n-body 10M"
