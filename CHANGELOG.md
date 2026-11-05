@@ -2,7 +2,13 @@
 
 All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bumps may break.
 
-## Unreleased
+## v0.5.0 — full application support (2026-11-06)
+
+The language now has everything a system program needs: file I/O, stdin/stdout, command-line
+arguments and environment, TCP sockets, the PostgreSQL wire protocol, byte-buffer strings and a
+collections pattern. The mini-PostgreSQL recreation drives all of it: page store, buffer pool,
+B+tree, SQL tokenizer/parser, executor, persistent heap files and a wire-protocol server that
+answers real queries. Every component is benchmarked against C and matches it within a few percent.
 
 **Language**
 - File I/O builtins: `file_open`, `file_close`, `file_read`, `file_write`, `file_write_str`,
