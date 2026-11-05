@@ -323,6 +323,28 @@ fn errors_point_at_the_imported_file() {
 }
 
 #[test]
+fn unroll_warns_for_gcc() {
+    let gcc = Command::new("gcc")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !gcc {
+        return;
+    }
+    let dir = TempDir::new("unrollwarn");
+    let src = dir.path().join("w.magic");
+    std::fs::write(&src, "fn main() { var s = 0; for i in 0..3 { s = s + i; } print(s); }\n")
+        .unwrap();
+    let out = Command::new(magicc())
+        .args(["build", src.to_str().unwrap(), "--unroll"])
+        .output()
+        .expect("run magicc");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("note: --unroll"), "stderr: {err}");
+}
+
+#[test]
 fn unroll_flag_emits_straight_line_and_runs() {
     let dir = TempDir::new("unroll");
     let src = dir.path().join("u.magic");

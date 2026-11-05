@@ -144,6 +144,12 @@ fn run() -> Result<(), String> {
                 .clone()
                 .or_else(find_cc)
                 .ok_or("no C compiler found (tried $CC, gcc, clang, cc)")?;
+            if unroll && cc.to_lowercase().contains("gcc") {
+                eprintln!(
+                    "note: --unroll usually helps clang/zig and can regress gcc; \
+                     measure before keeping it"
+                );
+            }
 
             if chunks.len() == 1 {
                 let c_path = with_ext(src_path, "c");

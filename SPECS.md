@@ -158,6 +158,17 @@ fn main() { print(helper()); }
   concatenated program, so an error inside an imported file points at that file, not at the merge.
 - There are no namespaces or module visibility rules yet — every declaration is global.
 
+## 4d. Compiler flags
+
+| flag | effect |
+|---|---|
+| `--native` | adds `-march=native` (not portable across CPUs) |
+| `--dev` | compiles at `-O0` for fast iteration |
+| `--report` | prints the static per-function memory bound |
+| `--cc "cmd"` | C compiler command; may carry arguments, e.g. `zig cc` |
+| `--unroll` | fully unrolls small constant `for` loops (≤ 8 iterations, no `break`/`continue`). A win with clang/zig, often a loss with gcc, so it is opt-in; using it with gcc prints a note |
+| `-o <path>` | names the output executable instead of `<file>.exe` |
+
 ## 5. Memory model
 
 - Heap only. `malloc`/`free`, no GC, no stack arrays (10 MB would overflow), no VLAs.
@@ -168,7 +179,7 @@ fn main() { print(helper()); }
 ## 6. Code generation
 
 - One C11 translation unit per program.
-- Compile with `gcc -O2 -std=c11` (the driver does this).
+- Compile with `-O3 -std=c11 -fno-asynchronous-unwind-tables -fno-ident` (the driver does this; `--dev` switches to `-O0`, `--native` adds `-march=native`).
 - Helpers emitted only when arrays are used:
 
 ```c

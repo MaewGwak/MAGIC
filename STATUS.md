@@ -47,7 +47,7 @@ functions + ~70 ms link.
 
 ## Tests
 
-121 tests, all green (`cargo test`): 44 unit (lexer, parser, checker, codegen) + 20 CLI (the real
+122 tests, all green (`cargo test`): 44 unit (lexer, parser, checker, codegen) + 21 CLI (the real
 `magicc` binary: check/emit/build/run, cache, `--report`, `--version`, `--help`, multi-file, `$CC`
 with arguments) + 15 integration
 (`tests/emit.rs`, including all 14 examples compiling) + 41 end-to-end (`tests/e2e.rs`: compile with
