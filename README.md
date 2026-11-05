@@ -13,8 +13,9 @@ check → C11 → native binary.
 - **No GC, no borrow checker.** Arrays are owned locals; the compiler inserts every `free`.
 - **Flat data is the easy path**: arrays and structs are contiguous and pointers are explicit, so
   pointer-heavy code stays predictable.
-- **Compiles fast**: a one-function rebuild is ~280 ms and a no-op build is 30 ms on a
-  2,000-function project.
+- **Compiles fast**: on a 2,000-function project a one-function rebuild is ~195 ms (rustc: ~215 ms)
+  and a no-op build is ~10 ms. A cold build is ~340 ms, or ~295 ms when `lld` is installed
+  (`--cc "gcc -fuse-ld=lld"`).
 
 MAGIC emits C11 and leaves machine-level code generation to the system C compiler. Benchmark
 results and methodology live in `BENCHMARKS.md`; the harness exits non-zero if any answer is wrong.
