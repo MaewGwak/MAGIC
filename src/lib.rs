@@ -170,7 +170,13 @@ fn sum_stmts(
             StmtKind::ArrayLet { elem, count, .. } => {
                 if let Some(n) = const_i64(count, consts) {
                     if n > 0 {
-                        *total += (n as u64) * elem_size(*elem, structs);
+                        // `[bool]` is bit-packed: eight elements per byte.
+                        let bytes = if *elem == ast::Ty::Bool {
+                            ((n as u64) + 7) / 8
+                        } else {
+                            (n as u64) * elem_size(*elem, structs)
+                        };
+                        *total += bytes;
                     }
                 }
             }

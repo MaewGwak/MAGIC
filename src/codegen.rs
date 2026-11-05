@@ -3,10 +3,60 @@
 
 use crate::ast::*;
 
+thread_local! {
+    // Element types of the arrays in the function currently being emitted, so
+    // `expr()` can lower `[bool]` indexing to bit operations.
+    static ARRAY_ELEMS: std::cell::RefCell<std::collections::HashMap<String, Ty>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+thread_local! {
+    static BITPACK: std::cell::Cell<bool> = std::cell::Cell::new(true);
+}
+
+fn bitpack_enabled() -> bool {
+    BITPACK.with(|c| c.get())
+}
+
+fn has_par_for(stmts: &[Stmt]) -> bool {
+    for st in stmts {
+        match &st.kind {
+            StmtKind::For { par: true, .. } => return true,
+            StmtKind::For { body, .. } => {
+                if has_par_for(body) {
+                    return true;
+                }
+            }
+            StmtKind::While { body, .. } => {
+                if has_par_for(body) {
+                    return true;
+                }
+            }
+            StmtKind::If { then, els, .. } => {
+                if has_par_for(then) || has_par_for(els) {
+                    return true;
+                }
+            }
+            StmtKind::Arena { body } => {
+                if has_par_for(body) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn array_elem(name: &str) -> Option<Ty> {
+    ARRAY_ELEMS.with(|m| m.borrow().get(name).copied())
+}
+
 #[derive(Clone)]
 struct ArrayInfo {
     name: String,
     c_ty: String,
+    elem: Ty,
 }
 
 struct VecInfo {
@@ -138,7 +188,17 @@ fn header_base(prog: &Program) -> String {
     }
 
     out.push_str(
-        "static int64_t magic_index(int64_t i, int64_t len, const char *msg) {\n\
+        "static int64_t magic_bit_get(const uint64_t *p, int64_t len, int64_t i, const char *msg) {\n\
+         \x20   if ((uint64_t)i >= (uint64_t)len) magic_panic(msg);\n\
+         \x20   return (int64_t)((p[(uint64_t)i >> 6] >> ((uint64_t)i & 63)) & 1u);\n\
+         }\n\
+         static void magic_bit_set(uint64_t *p, int64_t len, int64_t i, int64_t v, const char *msg) {\n\
+         \x20   if ((uint64_t)i >= (uint64_t)len) magic_panic(msg);\n\
+         \x20   uint64_t *w = &p[(uint64_t)i >> 6];\n\
+         \x20   uint64_t m = 1ull << ((uint64_t)i & 63);\n\
+         \x20   if (v) *w |= m; else *w &= ~m;\n\
+         }\n\
+         static int64_t magic_index(int64_t i, int64_t len, const char *msg) {\n\
          \x20   if ((uint64_t)i >= (uint64_t)len) magic_panic(msg);\n\
          \x20   return i;\n\
          }\n\n",
@@ -488,6 +548,7 @@ fn collect_arrays(stmts: &[Stmt], structs: &[StructDef]) -> Vec<ArrayInfo> {
             StmtKind::ArrayLet { name, elem, .. } => v.push(ArrayInfo {
                 name: name.clone(),
                 c_ty: c_type(*elem, structs),
+                elem: *elem,
             }),
             StmtKind::Arena { body } => v.extend(collect_arrays(body, structs)),
             _ => {}
@@ -522,7 +583,11 @@ fn signature(f: &Func, structs: &[StructDef]) -> String {
             .map(|(n, p)| match p {
                 ParamTy::Scalar(t) => format!("{} {}", c_type(*t, structs), n),
                 ParamTy::Array(t) => {
-                    format!("{} *{}, int64_t {}_len", t.c_name(), n, n)
+                    if *t == Ty::Bool && !has_par_for(&f.body) {
+                        format!("uint64_t *{}, int64_t {}_len", n, n)
+                    } else {
+                        format!("{} *{}, int64_t {}_len", t.c_name(), n, n)
+                    }
                 }
                 ParamTy::Vec(t) => {
                     format!(
@@ -542,12 +607,15 @@ fn signature(f: &Func, structs: &[StructDef]) -> String {
 
 fn definition(f: &Func, structs: &[StructDef], unroll: bool) -> String {
     let arrays = collect_arrays(&f.body, structs);
+    let bitpack = !has_par_for(&f.body);
+    BITPACK.with(|c| c.set(bitpack));
     let vecs = collect_vecs(&f.body, structs);
     let mut free_list = arrays.clone();
     for v in &vecs {
         free_list.push(ArrayInfo {
             name: v.name.clone(),
             c_ty: v.c_ty.clone(),
+            elem: Ty::U8,
         });
     }
     let mut consts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
@@ -566,7 +634,12 @@ fn definition(f: &Func, structs: &[StructDef], unroll: bool) -> String {
     }
 
     for a in &arrays {
-        s.push_str(&format!("    {} *{} = NULL;\n", a.c_ty, a.name));
+        let decl = if a.elem == Ty::Bool && bitpack_enabled() {
+            "uint64_t"
+        } else {
+            a.c_ty.as_str()
+        };
+        s.push_str(&format!("    {} *{} = NULL;\n", decl, a.name));
         s.push_str(&format!("    int64_t {}_len = 0;\n", a.name));
     }
     for v in &vecs {
@@ -575,9 +648,28 @@ fn definition(f: &Func, structs: &[StructDef], unroll: bool) -> String {
         s.push_str(&format!("    int64_t {}_cap = 0;\n", v.name));
     }
 
+    ARRAY_ELEMS.with(|m| {
+        let mut m = m.borrow_mut();
+        m.clear();
+        for a in &arrays {
+            let t = if a.elem == Ty::Bool && !bitpack {
+                Ty::U8
+            } else {
+                a.elem
+            };
+            m.insert(a.name.clone(), t);
+        }
+        for (pname, pty) in &f.params {
+            if let ParamTy::Array(elem) = pty {
+                let t = if *elem == Ty::Bool && !bitpack { Ty::U8 } else { *elem };
+                m.insert(pname.clone(), t);
+            }
+        }
+    });
     for st in &f.body {
         emit_stmt(st, 1, f.ret, f.name == "main", &free_list, structs, &consts, unroll, &mut s);
     }
+    ARRAY_ELEMS.with(|m| m.borrow_mut().clear());
 
     for a in &free_list {
         s.push_str(&format!("    free({});\n", a.name));
@@ -690,6 +782,35 @@ fn emit_stmt(
             count,
         } => {
             let p = pad(indent);
+            if *elem == Ty::Bool && bitpack_enabled() {
+                out.push_str(&format!("{}{}_len = (int64_t)({});\n", p, name, expr(count)));
+                out.push_str(&format!(
+                    "{}if ({}_len < 0 || {}_len > 1073741824LL) magic_panic(\"line {}: bad array length\");\n",
+                    p, name, name, st.line
+                ));
+                out.push_str(&format!(
+                    "{}{} = (uint64_t*)calloc((size_t)(({}_len + 63) / 64), sizeof(uint64_t));\n",
+                    p, name, name
+                ));
+                out.push_str(&format!(
+                    "{}if (!{} && {}_len > 0) magic_panic(\"line {}: out of memory\");\n",
+                    p, name, name, st.line
+                ));
+                match &value.kind {
+                    ExprKind::Bool(false) | ExprKind::Int(0) => {}
+                    ExprKind::Bool(true) => out.push_str(&format!(
+                        "{}if ({}_len > 0) memset({}, 0xFF, (size_t)(({}_len + 63) / 64) * 8);\n",
+                        p, name, name, name
+                    )),
+                    _ => {
+                        out.push_str(&format!(
+                            "{{ int64_t magic_tmp = ({}); for (int64_t magic_i = 0; magic_i < {}_len; magic_i++) magic_bit_set({}, {}_len, magic_i, magic_tmp, \"line {}: index out of bounds\"); }}\n",
+                            expr(value), name, name, name, st.line
+                        ));
+                    }
+                }
+                return;
+            }
             let t = c_type(*elem, structs);
             out.push_str(&format!("{}{}_len = (int64_t)({});\n", p, name, expr(count)));
             out.push_str(&format!(
@@ -747,6 +868,18 @@ fn emit_stmt(
             ));
         }
         StmtKind::IndexAssign { name, index, value } => {
+            if array_elem(name) == Some(Ty::Bool) {
+                out.push_str(&format!(
+                    "{}magic_bit_set((uint64_t*)({}), {}_len, (int64_t)({}), (int64_t)({}), \"line {}: index out of bounds\");\n",
+                    pad(indent),
+                    name,
+                    name,
+                    expr(index),
+                    expr(value),
+                    st.line
+                ));
+                return;
+            }
             out.push_str(&format!(
                 "{}{}[magic_index((int64_t)({}), {}_len, \"line {}: index out of bounds\")] = {};\n",
                 pad(indent),
@@ -846,7 +979,7 @@ fn emit_stmt(
                 _ => true,
             });
             if !owned.is_empty() && all_const {
-                let mut layout: Vec<(&str, &'static str, u64, i64, &Expr)> = Vec::new();
+                let mut layout: Vec<(&str, &'static str, u64, i64, &Expr, Ty)> = Vec::new();
                 let mut total: u64 = 0;
                 for s in body {
                     if let StmtKind::ArrayLet {
@@ -857,7 +990,11 @@ fn emit_stmt(
                     } = &s.kind
                     {
                         let n = const_int(count, consts).unwrap_or(0);
-                        let size = (n.max(0) as u64).checked_mul(elem_size(*elem));
+                        let size = if *elem == Ty::Bool && bitpack_enabled() {
+                            Some(((n.max(0) as u64 + 63) / 64) * 8)
+                        } else {
+                            (n.max(0) as u64).checked_mul(elem_size(*elem))
+                        };
                         let size = match size {
                             Some(v) if n >= 0 && n <= 1073741824 => v,
                             _ => {
@@ -881,7 +1018,12 @@ fn emit_stmt(
                                 return;
                             }
                         };
-                        layout.push((name.as_str(), elem.c_name(), off, n, value));
+                        let cty = if *elem == Ty::Bool && bitpack_enabled() {
+                            "uint64_t"
+                        } else {
+                            elem.c_name()
+                        };
+                        layout.push((name.as_str(), cty, off, n, value, *elem));
                     }
                 }
                 let p = pad(indent);
@@ -895,23 +1037,41 @@ fn emit_stmt(
                     "{}    if (!magic_arena) magic_panic(\"line {}: out of memory\");\n",
                     p, st.line
                 ));
-                for (name, cty, off, n, value) in &layout {
+                for (name, cty, off, n, value, elem) in &layout {
                     out.push_str(&format!("{}    {}_len = {};\n", p, name, n));
                     out.push_str(&format!(
                         "{}    {} = ({}*)(magic_arena + {});\n",
                         p, name, cty, off
                     ));
-                    out.push_str(&format!(
-                        "{}    {{ {} magic_tmp = ({}); for (int64_t magic_i = 0; magic_i < {}_len; magic_i++) {}[magic_i] = magic_tmp; }}\n",
-                        p, cty, expr(value), name, name
-                    ));
+                    if *elem == Ty::Bool && bitpack_enabled() {
+                        let words = format!("(size_t)(({}_len + 63) / 64) * 8", name);
+                        match &value.kind {
+                            ExprKind::Bool(false) | ExprKind::Int(0) => out.push_str(&format!(
+                                "{}    if ({}_len > 0) memset({}, 0, {});\n",
+                                p, name, name, words
+                            )),
+                            ExprKind::Bool(true) => out.push_str(&format!(
+                                "{}    if ({}_len > 0) memset({}, 0xFF, {});\n",
+                                p, name, name, words
+                            )),
+                            _ => out.push_str(&format!(
+                                "{}    {{ int64_t magic_tmp = ({}); for (int64_t magic_i = 0; magic_i < {}_len; magic_i++) magic_bit_set({}, {}_len, magic_i, magic_tmp, \"line {}: index out of bounds\"); }}\n",
+                                p, expr(value), name, name, name, st.line
+                            )),
+                        }
+                    } else {
+                        out.push_str(&format!(
+                            "{}    {{ {} magic_tmp = ({}); for (int64_t magic_i = 0; magic_i < {}_len; magic_i++) {}[magic_i] = magic_tmp; }}\n",
+                            p, cty, expr(value), name, name
+                        ));
+                    }
                 }
                 for s in body {
                     if !matches!(s.kind, StmtKind::ArrayLet { .. }) {
                         emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, unroll, out);
                     }
                 }
-                for (name, _, _, _, _) in &layout {
+                for (name, _, _, _, _, _) in &layout {
                     out.push_str(&format!("{}    {} = NULL;\n", p, name));
                 }
                 out.push_str(&format!("{}    free(magic_arena);\n", p));
@@ -1316,13 +1476,24 @@ fn expr(e: &Expr) -> String {
             e.line,
             field
         ),
-        ExprKind::Index { name, index } => format!(
-            "{}[magic_index((int64_t)({}), {}_len, \"line {}: index out of bounds\")]",
-            name,
-            expr(index),
-            name,
-            e.line
-        ),
+        ExprKind::Index { name, index } => {
+            if array_elem(name) == Some(Ty::Bool) {
+                return format!(
+                    "magic_bit_get((const uint64_t*)({}), {}_len, (int64_t)({}), \"line {}: index out of bounds\")",
+                    name,
+                    name,
+                    expr(index),
+                    e.line
+                );
+            }
+            format!(
+                "{}[magic_index((int64_t)({}), {}_len, \"line {}: index out of bounds\")]",
+                name,
+                expr(index),
+                name,
+                e.line
+            )
+        }
         ExprKind::FieldPath { base, path } => format!("{}.{}", base, path.join(".")),
         ExprKind::Field { base, field } => format!("{}.{}", base, field),
         ExprKind::ArrayLen(name) => format!("{}_len", name),
@@ -1440,8 +1611,9 @@ mod tests {
                    print(a[0]);\n\
                    }";
         let c = compile_to_c(src).unwrap();
-        assert!(c.contains("malloc"));
-        assert!(c.contains("magic_index"));
+        assert!(c.contains("calloc"));
+        assert!(c.contains("magic_bit_get"));
+        assert!(c.contains("magic_bit_set"));
         assert!(c.contains("free(a)"));
     }
 

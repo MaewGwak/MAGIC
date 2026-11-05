@@ -1319,3 +1319,41 @@ fn native_vectors_of_structs_match_c() {
     let run = Command::new(&exe).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "10");
 }
+
+#[test]
+fn native_bool_arrays_are_bit_packed() {
+    if !native_available() {
+        return;
+    }
+    let dir = TempDir::new("bits");
+    let src = dir.path().join("b.magic");
+    std::fs::write(
+        &src,
+        "fn count(xs: [bool], n: i32) -> i32 {\n\
+         var c = 0; var i = 0;\n\
+         while i < n { if xs[i] { c = c + 1; } i = i + 1; }\n\
+         return c;\n\
+         }\n\
+         fn main() {\n\
+         var a: [bool] = [false; 130];\n\
+         var i = 0;\n\
+         while i < 130 { if i % 3 == 0 { a[i] = true; } i = i + 1; }\n\
+         print(count(a, 130));\n\
+         print(a[0]);\n\
+         print(a[1]);\n\
+         a[129] = true;\n\
+         print(a[129]);\n\
+         }\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("b");
+    let out = Command::new(magicc())
+        .arg("build").arg(&src).arg("--backend").arg("native").arg("-o").arg(&exe)
+        .output().expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout).trim(),
+        "44\ntrue\nfalse\ntrue"
+    );
+}

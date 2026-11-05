@@ -1528,12 +1528,24 @@ impl Emitter {
                         _ => self.line("    mov (%r10,%rax), %rax"),
                     }
                 } else {
-                    let (_, elem, _) = *self.arrays.get(name).ok_or_else(|| {
+                    let (arr_off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
                         format!("native backend line {}: unknown array `{}`", e.line, name)
                     })?;
                     self.expr(index)?;
                     self.bounds_check("%rax", name, e.line)?;
-                    self.array_load(name, "%rax", elem, e.line)?;
+                    if elem == Ty::Bool {
+                        self.line("    mov %rax, %r11");
+                        self.line("    shr $6, %r11");
+                        self.line("    and $63, %rax");
+                        self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
+                        self.line("    mov (%r10,%r11,8), %rdx");
+                        self.line("    mov %rax, %rcx");
+                        self.line("    shr %cl, %rdx");
+                        self.line("    and $1, %rdx");
+                        self.line("    mov %rdx, %rax");
+                    } else {
+                        self.array_load(name, "%rax", elem, e.line)?;
+                    }
                 }
             }
             ExprKind::ArrayLen(name) => {
@@ -2586,6 +2598,63 @@ impl Emitter {
                 if let Ty::Struct(si) = elem {
                     return self.array_let_struct(name, off, si as usize, len, value, s.line);
                 }
+                if elem == Ty::Bool {
+                    let words = (len + 63) / 64;
+                    self.line(&format!("    mov ${}, %rdi", words));
+                    self.line("    mov $8, %esi");
+                    self.call("calloc@PLT");
+                    let ok = self.fresh("bmalloc");
+                    self.line("    test %rax, %rax");
+                    self.line(&format!("    jne {}", ok));
+                    let msg = self.panic_msg(s.line, "out of memory");
+                    self.line(&format!("    lea {}(%rip), %rdi", msg));
+                    self.call(".Lmagic_panic");
+                    self.line(&format!("{}:", ok));
+                    self.line(&format!("    mov %rax, -{}(%rbp)", off));
+                    match &value.kind {
+                        ExprKind::Bool(false) | ExprKind::Int(0) => {}
+                        ExprKind::Bool(true) => {
+                            self.line(&format!("    mov -{}(%rbp), %rdi", off));
+                            self.line("    mov $255, %esi");
+                            self.line(&format!("    mov ${}, %edx", words * 8));
+                            self.call("memset@PLT");
+                        }
+                        _ => {
+                            self.expr(value)?;
+                            self.push("%rax");
+                            self.line("    mov $0, %r8");
+                            let loop_l = self.fresh("bfill");
+                            let done = self.fresh("bfdone");
+                            self.line(&format!("{}:", loop_l));
+                            self.line(&format!("    cmp ${}, %r8", len));
+                            self.line(&format!("    jge {}", done));
+                            self.line(&format!("    mov -{}(%rbp), %r10", off));
+                            self.line("    mov %r8, %r11");
+                            self.line("    shr $6, %r11");
+                            self.line("    mov %r8, %rax");
+                            self.line("    and $63, %rax");
+                            self.line("    mov %rax, %rcx");
+                            self.line("    mov $1, %rdx");
+                            self.line("    shl %cl, %rdx");
+                            self.line("    mov (%rsp), %r9");
+                            self.line("    test %r9, %r9");
+                            let clear = self.fresh("bfclear");
+                            let stored = self.fresh("bfstore");
+                            self.line(&format!("    je {}", clear));
+                            self.line("    or %rdx, (%r10,%r11,8)");
+                            self.line(&format!("    jmp {}", stored));
+                            self.line(&format!("{}:", clear));
+                            self.line("    not %rdx");
+                            self.line("    and %rdx, (%r10,%r11,8)");
+                            self.line(&format!("{}:", stored));
+                            self.line("    add $1, %r8");
+                            self.line(&format!("    jmp {}", loop_l));
+                            self.line(&format!("{}:", done));
+                            self.pop("%rax");
+                        }
+                    }
+                    return Ok(());
+                }
                 if len < 0 || len > 1073741824 || (len as i64).checked_mul(self.elem_size(elem)).is_none() {
                     let msg = self.panic_msg(s.line, "bad array length");
                     self.line(&format!("    lea {}(%rip), %rdi", msg));
@@ -2681,6 +2750,31 @@ impl Emitter {
                 let (off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
                     format!("native backend line {}: unknown array `{}`", s.line, name)
                 })?;
+                if elem == Ty::Bool {
+                    self.expr(value)?;
+                    self.push("%rax");
+                    self.expr(index)?;
+                    self.bounds_check("%rax", name, s.line)?;
+                    self.line("    mov %rax, %r11");
+                    self.line("    shr $6, %r11");
+                    self.line("    and $63, %rax");
+                    self.line("    mov %rax, %rcx");
+                    self.line("    mov $1, %rdx");
+                    self.line("    shl %cl, %rdx");
+                    self.pop("%r9");
+                    self.line(&format!("    mov -{}(%rbp), %r10", off));
+                    self.line("    test %r9, %r9");
+                    let clear = self.fresh("bset0");
+                    let stored = self.fresh("bset1");
+                    self.line(&format!("    je {}", clear));
+                    self.line("    or %rdx, (%r10,%r11,8)");
+                    self.line(&format!("    jmp {}", stored));
+                    self.line(&format!("{}:", clear));
+                    self.line("    not %rdx");
+                    self.line("    and %rdx, (%r10,%r11,8)");
+                    self.line(&format!("{}:", stored));
+                    return Ok(());
+                }
                 if elem == Ty::F64 {
                     self.fexpr(value)?;
                     self.line("    sub $16, %rsp");

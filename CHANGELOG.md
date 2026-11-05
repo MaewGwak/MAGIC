@@ -17,6 +17,20 @@ Native arithmetic now narrows after every operation to the declared type, matchi
 `int32_t`/`uint8_t` wrapping: `2147483647 + 1` prints `-2147483648` and a `u8` at 255 wraps to 0.
 A regression test builds both cases natively and checks the output.
 
+## v0.8.7 — bit-packed `[bool]` arrays (2026-11-06)
+
+Top-level `[bool]` arrays are stored as bitsets on both backends: allocation uses `(len + 63) / 64`
+words, indexing becomes `magic_bit_get` / `magic_bit_set` (native: shift/mask on a word), literal
+fills use `memset` (0 or 0xFF), and arrays inside arenas follow the same layout. The memory bound
+reports bytes/8 accordingly. Functions that contain a `par for` keep byte arrays: concurrent
+read-modify-write on a shared bit word would be a data race, and the idempotent-write property of the
+byte layout is what makes the parallel odd sieve correct.
+
+Measured with `bench-memory.sh`: sieve 100M drops from a 95.4 MB payload / 96.7 MB peak to a 11.9 MB
+payload / **13.5 MB peak — a 7.2x reduction**, crossing the 5x memory target for the largest workload.
+The 10M example drops from ~10.4 MB to 2.8 MB. Both backends print 664579 and boolean-array
+parameters work.
+
 ## v0.8.6 — nested structs and vectors (2026-11-06)
 
 Nested struct literals and field paths (`bins[i].item.sku`), arrays of nested structs, and growable
