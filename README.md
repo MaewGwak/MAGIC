@@ -185,14 +185,14 @@ n-body in loop form is the one workload where MAGIC trails; writing the six pair
 with gcc, and `--unroll` with clang/zig gives 205–236 ms. The harness verifies every checksum:
 
 ```powershell
-pwsh -File verify.ps1          # tests + doc counts + 43 cases (42 without Zig) + memory bounds
+pwsh -File verify.ps1          # tests + doc counts + 44 cases (43 without Zig) + memory bounds
 pwsh -File verify.ps1 -Fast    # tests + doc counts only (a few seconds)
 ```
 
 Run the pieces individually:
 
 ```powershell
-pwsh -File .\bench-all.ps1 -Rebuild   # 43 cases (42 without Zig): checksums, time, memory
+pwsh -File .\bench-all.ps1 -Rebuild   # 44 cases (43 without Zig): checksums, time, memory
 pwsh -File .\bench-memory.ps1         # --report bound vs measured peak RSS
 pwsh -File check-docs.ps1             # the numbers quoted here still match the repo
 ```

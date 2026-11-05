@@ -1,0 +1,43 @@
+// INTEGER matmul, N = 384, i-k-j order: the inner j loop walks one row of b
+// and one row of c contiguously, which the C compiler can vectorise.
+fn main() {
+    let n = 384;
+    let nn = n * n;
+    var a: [i32] = [0; nn];
+    var b: [i32] = [0; nn];
+    var c: [i32] = [0; nn];
+
+    var i = 0;
+    while i < n {
+        var j = 0;
+        while j < n {
+            a[i * n + j] = (i + j) % 10;
+            b[i * n + j] = (i * j) % 7;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    i = 0;
+    while i < n {
+        var k = 0;
+        while k < n {
+            let aik = a[i * n + k];
+            var j = 0;
+            while j < n {
+                c[i * n + j] = c[i * n + j] + aik * b[k * n + j];
+                j = j + 1;
+            }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+
+    var total: i64 = 0;
+    i = 0;
+    while i < nn {
+        total = total + (c[i] as i64);
+        i = i + 2;
+    }
+    print(total);
+}

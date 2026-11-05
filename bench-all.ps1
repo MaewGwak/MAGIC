@@ -51,6 +51,7 @@ $cases = @(
     @{ name = 'matmul C';            dir = 'bench-suite';    exe = 'matmul_c.exe';        src = 'matmul_c.c';        kind = 'c';    expect = '326316140' },
     @{ name = 'matmul Rust';         dir = 'bench-suite';    exe = 'matmul_rs.exe';       src = 'matmul_rs.rs';      kind = 'rust'; expect = '326316140' },
     @{ name = 'matmul MAGIC';         dir = 'bench-suite';    exe = 'matmul_magic.exe';     src = 'matmul_magic.magic';  kind = 'magic'; expect = '326316140' },
+    @{ name = 'matmul 384 MAGIC i-k-j'; dir = 'bench-suite'; exe = 'matmul_magic_ikj.exe'; src = 'matmul_magic_ikj.magic'; kind = 'magic'; expect = '326316140' },
     @{ name = 'matmul C++';          dir = 'bench-suite';    exe = 'matmul_cpp.exe';      src = 'matmul_cpp.cpp';    kind = 'cpp';  expect = '326316140' },
     @{ name = 'matmul Go';           dir = 'bench-suite';    exe = 'matmul_go.exe';       src = 'matmul_go.go';      kind = 'go';   expect = '326316140' },
 
