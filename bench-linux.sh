@@ -100,6 +100,7 @@ median "$OUT/m_c" 326316140 'matmul C'
 median "$OUT/m_rs" 326316140 'matmul Rust'
 if [ -n "$CXX" ]; then build_cpp matmul_cpp.cpp m_cpp; median "$OUT/m_cpp" 326316140 'matmul C++'; fi
 if [ -n "$GO" ]; then build_go matmul_go.go m_go; median "$OUT/m_go" 326316140 'matmul Go'; fi
+if [ -n "$GOOSE" ]; then build_goose matmul_goose.goose m_goose; median "$OUT/m_goose" 326316140 'matmul Goose'; fi
 median "$OUT/m_m" 326316140 'matmul MAGIC'
 median "$OUT/m_k" 326316140 'matmul MAGIC i-k-j'
 
@@ -141,6 +142,7 @@ median "$OUT/h_rs" 1500001500000 'hash Rust'
 median "$OUT/h_hm" 1500001500000 'hash Rust HashMap'
 if [ -n "$CXX" ]; then build_cpp hash_cpp.cpp h_cpp; median "$OUT/h_cpp" 1500001500000 'hash C++'; fi
 if [ -n "$GO" ]; then build_go hash_go.go h_go; median "$OUT/h_go" 1500001500000 'hash Go'; fi
+if [ -n "$GOOSE" ]; then build_goose hash_goose.goose h_goose; median "$OUT/h_goose" 1500001500000 'hash Goose'; fi
 median "$OUT/h_m" 1500001500000 'hash MAGIC'
 median "$OUT/h_d" 1500001500000 'hash MAGIC direct'
 median "$OUT/h_p" 1500001500000 'hash MAGIC par'
@@ -154,6 +156,7 @@ median "$OUT/p_rs" 500094707846.643 'particles Rust'
 median "$OUT/p_ri" 500094707846.643 'particles Rust iter'
 if [ -n "$CXX" ]; then build_cpp particles_cpp.cpp p_cpp; median "$OUT/p_cpp" 500094707846.643 'particles C++'; fi
 if [ -n "$GO" ]; then build_go particles_go.go p_go; median "$OUT/p_go" 500094707846.643 'particles Go'; fi
+if [ -n "$GOOSE" ]; then build_goose particles_goose.goose p_goose; median "$OUT/p_goose" 500094707846.643 'particles Goose'; fi
 median "$OUT/p_m" 500094707846.643 'particles MAGIC'
 median "$OUT/p_x" 500094707846.643 'particles MAGIC closed'
 
@@ -167,6 +170,7 @@ median "$OUT/b_c" 568328208 'binary trees C'
 median "$OUT/b_rs" 568328208 'binary trees Rust'
 median "$OUT/b_m" 568328208 'binary trees MAGIC'
 median "$OUT/b_x" 568328208 'binary trees MAGIC count'
+if [ -n "$GOOSE" ]; then build_goose bt_goose.goose b_goose; median "$OUT/b_goose" 568328208 'binary trees Goose'; fi
 median "$OUT/b_l" 568328208 'binary trees MAGIC loop'
 
 echo

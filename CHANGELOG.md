@@ -91,6 +91,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - Chunk-count tuning: 16 chunks keeps the best one-function edit (120 ms with clang, 145 ms at 8,
   191 ms at 4); 8 chunks saves 14 ms on a cold clang build (166 vs 180 ms) but loses more on edits.
   `-freciprocal-math` on n-body kept the checksum but was slower (gcc 627 ms).
+- Goose ports of matmul (87 ms), hash (32 ms), particles (148 ms) and binary trees (1907 ms) join
+  sieve (542 ms) and fannkuch (400 ms) in the Linux matrix; all six match their checksums, so the
+  five-language comparison now covers six of the eight workloads on Linux.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
