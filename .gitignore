@@ -39,3 +39,4 @@
 /bench-bt/bt_magic_loop.c
 /bench-fannkuch/fannkuch_magic_blocks.c
 /bench-suite/sieve_magic_segodd.c
+/bench-suite/sieve_magic_block.c

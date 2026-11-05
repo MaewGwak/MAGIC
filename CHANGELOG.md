@@ -52,6 +52,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - Segmented odd-only sieve: every thread marks only its own 50M/16 slot range, so no cache line is
   shared between threads. 82 ms vs 497 ms C++ and 132 ms for the shared odd-only `par for` sieve.
 - Matmul with `clang -march=native`: 6 ms vs 27 ms C++ (4.5x). The portable AVX2 build is 8 ms.
+- Blocked segmented sieve: each thread walks a contiguous range in 256 KB blocks that stay in L2,
+  so memory drops from 95 MB to 6 MB and the time from 132 ms to 53 ms (497 ms for the C++ sieve,
+  9.4x). The previous odd-only segment version was 86 ms.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 

@@ -1,0 +1,91 @@
+// Blocked segmented sieve: every thread walks a contiguous range in 256 KB
+// blocks that stay in L2, marks them with the primes up to sqrt(hi), then
+// counts. Only 16 buffers of 256 KB are live, so memory is ~4 MB instead of
+// 95 MB, and no two threads touch the same cache line.
+fn main() {
+    let limit = 100000000;
+    let root = 10000;
+    let parts = 16;
+    let bsize = 262144;
+    let range = limit / parts;
+
+    var small: [u8] = [0; 10001];
+    var primes: [i32] = [0; 1300];
+    var np = 0;
+    var i = 2;
+    while i <= root {
+        if small[i] == 0 {
+            primes[np] = i;
+            np = np + 1;
+            var j = i * i;
+            while j <= root {
+                small[j] = 1;
+                j = j + i;
+            }
+        }
+        i = i + 1;
+    }
+
+    var bufs: [u8] = [0; parts * bsize];
+    var sums: [i64] = [0; 16];
+
+    par for t in 0..parts {
+        var base = t * bsize;
+        var start = t * range;
+        var end = start + range;
+        if end > limit {
+            end = limit;
+        }
+        var c: i64 = 0;
+        var lo = start;
+        while lo < end {
+            var hi = lo + bsize;
+            if hi > end {
+                hi = end;
+            }
+            var len = hi - lo;
+            var z = 0;
+            while z < len {
+                bufs[base + z] = 0;
+                z = z + 1;
+            }
+            var k = 0;
+            while k < np {
+                var p = primes[k];
+                if p * p >= hi {
+                    k = np;
+                } else {
+                    var m = p * p;
+                    if m < lo {
+                        var q = (lo + p - 1) / p;
+                        m = q * p;
+                    }
+                    var idx = m - lo;
+                    while idx < len {
+                        bufs[base + idx] = 1;
+                        idx = idx + p;
+                    }
+                    k = k + 1;
+                }
+            }
+            var x = 0;
+            while x < len {
+                if bufs[base + x] == 0 {
+                    c = c + 1;
+                }
+                x = x + 1;
+            }
+            lo = hi;
+        }
+        sums[t] = c;
+    }
+
+    var total: i64 = 0;
+    var t2 = 0;
+    while t2 < parts {
+        total = total + sums[t2];
+        t2 = t2 + 1;
+    }
+    total = total - 2; // 0 and 1 were counted as unmarked
+    print(total);
+}
