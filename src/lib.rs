@@ -15,15 +15,24 @@ pub fn imports_of(src: &str) -> Result<Vec<String>, String> {
 
 /// Compile MAGIC source to a single C11 translation unit.
 pub fn compile_to_c(src: &str) -> Result<String, String> {
+    compile_to_c_opts(src, false)
+}
+
+/// Like [`compile_to_c`], optionally unrolling small constant `for` loops.
+pub fn compile_to_c_opts(src: &str, unroll: bool) -> Result<String, String> {
     let tokens = lexer::Lexer::new(src).tokenize()?;
     let mut program = parser::Parser::new(tokens).parse_program()?;
     types::Checker::check(&mut program)?;
     types::lower_calls(&mut program);
-    Ok(codegen::emit(&program))
+    Ok(codegen::emit_opts(&program, unroll))
 }
 
 /// Compile into translation units. Small programs stay a single file.
 pub fn compile_parts(src: &str, parts: usize) -> Result<Vec<String>, String> {
+    compile_parts_opts(src, parts, false)
+}
+
+pub fn compile_parts_opts(src: &str, parts: usize, unroll: bool) -> Result<Vec<String>, String> {
     let tokens = lexer::Lexer::new(src).tokenize()?;
     let mut program = parser::Parser::new(tokens).parse_program()?;
     types::Checker::check(&mut program)?;
@@ -33,7 +42,7 @@ pub fn compile_parts(src: &str, parts: usize) -> Result<Vec<String>, String> {
     } else {
         parts.max(1)
     };
-    Ok(codegen::emit_parts(&program, n))
+    Ok(codegen::emit_parts_opts(&program, n, unroll))
 }
 
 /// Static upper bound on the bytes each function's arrays can occupy.

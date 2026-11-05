@@ -1,4 +1,4 @@
-// n-body, 4 bodies, 500k steps. Prints total energy.
+// n-body, 4 bodies, 10M steps. Prints total energy.
 fn main() {
     let nb = 4;
     let steps = 10000000;
@@ -17,12 +17,11 @@ fn main() {
     x[2] = 4.0;  y[2] = -1.0; z[2] = -0.1;  vx[2] = -0.01; vy[2] = -0.005; vz[2] = -0.001; m[2] = 0.3;
     x[3] = 6.0;  y[3] = 0.5;  z[3] = 0.2;   vx[3] = 0.02;  vy[3] = 0.001; vz[3] = 0.0005; m[3] = 0.2;
 
-    var s = 0;
-    while s < steps {
-        var i = 0;
-        while i < nb {
-            var j = i + 1;
-            while j < nb {
+    // Constant, small loops: MAGIC unrolls these entirely, which is what lets LLVM
+    // vectorise the pair maths (the compilers never unroll the nest themselves).
+    for s in 0..steps {
+        for i in 0..nb {
+            for j in i + 1..nb {
                 var dx = x[i] - x[j];
                 var dy = y[i] - y[j];
                 var dz = z[i] - z[j];
@@ -35,37 +34,26 @@ fn main() {
                 vx[j] = vx[j] + dx * m[i] * mag;
                 vy[j] = vy[j] + dy * m[i] * mag;
                 vz[j] = vz[j] + dz * m[i] * mag;
-                j = j + 1;
             }
-            i = i + 1;
         }
-        i = 0;
-        while i < nb {
+        for i in 0..nb {
             x[i] = x[i] + dt * vx[i];
             y[i] = y[i] + dt * vy[i];
             z[i] = z[i] + dt * vz[i];
-            i = i + 1;
         }
-        s = s + 1;
     }
 
     var e = 0.0;
-    var k = 0;
-    while k < nb {
+    for k in 0..nb {
         e = e + 0.5 * m[k] * (vx[k] * vx[k] + vy[k] * vy[k] + vz[k] * vz[k]);
-        k = k + 1;
     }
-    k = 0;
-    while k < nb {
-        var l = k + 1;
-        while l < nb {
+    for k in 0..nb {
+        for l in k + 1..nb {
             var dx = x[k] - x[l];
             var dy = y[k] - y[l];
             var dz = z[k] - z[l];
             e = e - m[k] * m[l] / sqrt(dx * dx + dy * dy + dz * dz);
-            l = l + 1;
         }
-        k = k + 1;
     }
     print_prec(e, 9);
 }

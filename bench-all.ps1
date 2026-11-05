@@ -91,6 +91,12 @@ if ($zig) {
         kind = 'magic'; cc = "$($zig.FullName) cc"; out = 'nbody_unrolled_zig.exe'
         expect = '11211.531383844'
     }
+    $cases += @{
+        name = 'n-body auto-unroll MAGIC (zig)'; dir = 'bench-suite'
+        exe = 'nbody_auto_zig.exe'; src = 'nbody_magic.magic'
+        kind = 'magic'; cc = "$($zig.FullName) cc"; out = 'nbody_auto_zig.exe'
+        unroll = $true; expect = '11211.531383844'
+    }
 }
 
 if ($Rebuild) {
@@ -104,6 +110,7 @@ if ($Rebuild) {
                 $extra = @()
                 if ($c.cc)  { $extra += @('--cc', $c.cc) }
                 if ($c.out) { $extra += @('-o', $c.out) }
+                if ($c.unroll) { $extra += '--unroll' }
                 & $magicc build $c.src @extra 2>&1 | Out-Null
             }
             'rust' { rustc -C opt-level=3 -o $c.exe $c.src 2>&1 | Out-Null }

@@ -17,9 +17,9 @@
 MAGIC is first or tied on seven of eight workloads and is never meaningfully slower than C. The one
 loss in loop form is n-body (~300 ms vs Rust ~220): LLVM vectorises the unrolled straight-line code
 but does not unroll the loop nest. Writing the six pairs out closes it — `zig cc` 206–222 ms, gcc
-253 ms. `$CC` or `--cc` may carry arguments (`zig cc`). When a portable Zig is on the machine, the
-harness also builds the unrolled n-body with `zig cc`: **206 ms**, MAGIC's best official case.
-Memory is lowest or tied-lowest in most workloads.
+253 ms. `--unroll` does this automatically for small constant `for` loops: with `zig cc` the
+idiomatic source runs at ~205–236 ms, while gcc regresses (~440 ms), so the flag is opt-in.
+`$CC` or `--cc` may carry arguments (`zig cc`). Memory is lowest or tied-lowest in most workloads.
 
 Other baselines (same build rules):
 

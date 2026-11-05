@@ -26,13 +26,16 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - `$CC` may carry arguments, e.g. `zig cc`; the unrolled n-body reaches 206–222 ms under LLVM
   (Rust 219–221) and 253 ms under GCC. `--cc "zig cc"` overrides `$CC` per invocation, and
   `-o <path>` names the executable (the harness uses both for its zig-backed n-body case).
+- `--unroll` fully unrolls small constant `for` loops (≤ 8 iterations, no `break`/`continue`).
+  It is a win with clang/zig (n-body 205–236 ms vs Rust 219–221) and a loss with gcc (~440 ms),
+  so it is opt-in.
 - `magicc --version`, `--help`; the usage line reads the crate version.
 - `--report` sizes array counts written as expressions (`n * n`) and struct elements (C layout, including padding).
 - `-fno-asynchronous-unwind-tables -fno-ident` by default: `big.exe` 201,673 → 167,105 bytes, one-function rebuild 280 → 271 ms.
 
 **Verification**
-- 120 tests: 44 unit, 19 CLI, 15 integration, 42 end-to-end.
-- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (41 cases, 40 without Zig), `bench-memory.ps1`.
+- 121 tests: 44 unit, 20 CLI, 15 integration, 42 end-to-end.
+- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (42 cases, 41 without Zig), `bench-memory.ps1`.
 
 ## v0.3 — the memory model
 

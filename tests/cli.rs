@@ -323,6 +323,72 @@ fn errors_point_at_the_imported_file() {
 }
 
 #[test]
+fn unroll_flag_emits_straight_line_and_runs() {
+    let dir = TempDir::new("unroll");
+    let src = dir.path().join("u.magic");
+    std::fs::write(
+        &src,
+        "fn main() {\n\
+         var sum = 0;\n\
+         for i in 0..4 { sum = sum + i; }\n\
+         print(sum);\n\
+         }\n",
+    )
+    .unwrap();
+    let emitted = Command::new(magicc())
+        .args(["emit", src.to_str().unwrap(), "--unroll"])
+        .output()
+        .expect("run magicc");
+    let text = String::from_utf8_lossy(&emitted.stdout);
+    assert!(
+        !text.contains("for (int32_t i ="),
+        "loop should be unrolled: {text}"
+    );
+    assert!(text.contains("const int32_t i = 0;"), "stdout: {text}");
+
+    // break binds to a real loop, so that loop must stay a loop
+    let src2 = dir.path().join("b.magic");
+    std::fs::write(
+        &src2,
+        "fn main() {\n\
+         var sum = 0;\n\
+         for i in 0..4 { if i == 2 { break; } sum = sum + i; }\n\
+         print(sum);\n\
+         }\n",
+    )
+    .unwrap();
+    let emitted2 = Command::new(magicc())
+        .args(["emit", src2.to_str().unwrap(), "--unroll"])
+        .output()
+        .expect("run magicc");
+    let text2 = String::from_utf8_lossy(&emitted2.stdout);
+    assert!(
+        text2.contains("for (int32_t i ="),
+        "loop with break must not be unrolled: {text2}"
+    );
+
+    if !has_compiler() {
+        return;
+    }
+    let out = Command::new(magicc())
+        .args(["build", src.to_str().unwrap(), "--unroll"])
+        .output()
+        .expect("run magicc");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let exe = if cfg!(windows) {
+        dir.path().join("u.exe")
+    } else {
+        dir.path().join("u.bin")
+    };
+    let run = Command::new(&exe).output().expect("run built program");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "6");
+}
+
+#[test]
 fn duplicate_function_names_the_file() {
     let dir = TempDir::new("dup");
     std::fs::write(

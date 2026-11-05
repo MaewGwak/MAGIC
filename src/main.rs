@@ -27,6 +27,8 @@ fn run() -> Result<(), String> {
     let dev = args.iter().any(|a| a == "--dev");
     args.retain(|a| a != "--native" && a != "--report" && a != "--dev");
     let mut cc_override: Option<String> = None;
+    let unroll = args.iter().any(|a| a == "--unroll");
+    args.retain(|a| a != "--unroll");
     if let Some(pos) = args.iter().position(|a| a == "--cc") {
         if pos + 1 >= args.len() {
             return Err("--cc needs a command, e.g. --cc \"zig cc\"".to_string());
@@ -58,6 +60,7 @@ fn run() -> Result<(), String> {
              \x20 --report  print the static memory bound\n\
              \x20 --dev     compile at -O0 for fast iteration\n\
              \x20 --cc      C compiler command, may carry arguments (e.g. \"zig cc\")\n\
+             \x20 --unroll  unroll small constant for-loops (wins with clang/zig, loses with gcc)\n\
              \x20 -o        output executable path (default: <file>.exe)",
             env!("CARGO_PKG_VERSION")
         );
@@ -84,7 +87,7 @@ fn run() -> Result<(), String> {
         load_source(Path::new(p), &mut visited, &mut source, &mut segments)?;
     }
 
-    let c = magic::compile_to_c(&source)
+    let c = magic::compile_to_c_opts(&source, unroll)
         .map_err(|e| map_diagnostic(e, &segments, src_path))?;
 
     if report_bound {
@@ -135,7 +138,7 @@ fn run() -> Result<(), String> {
             let flags_changed = fs::read_to_string(&stamp)
                 .map(|s| s.trim() != flags)
                 .unwrap_or(true);
-            let chunks = magic::compile_parts(&source, 16)
+            let chunks = magic::compile_parts_opts(&source, 16, unroll)
                 .map_err(|e| map_diagnostic(e, &segments, src_path))?;
             let cc = cc_override
                 .clone()

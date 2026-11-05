@@ -28,9 +28,14 @@ fn collect_vecs(stmts: &[Stmt], structs: &[StructDef]) -> Vec<VecInfo> {
 }
 
 pub fn emit(prog: &Program) -> String {
+    emit_opts(prog, false)
+}
+
+/// `unroll` requests full unrolling of small constant `for` loops.
+pub fn emit_opts(prog: &Program, unroll: bool) -> String {
     let mut out = header(prog);
     for f in &prog.funcs {
-        out.push_str(&definition(f, &prog.structs));
+        out.push_str(&definition(f, &prog.structs, unroll));
         out.push('\n');
     }
     out
@@ -39,6 +44,10 @@ pub fn emit(prog: &Program) -> String {
 /// Split the program into `parts` translation units that share one header.
 /// Each chunk is self-contained: includes, helpers, struct typedefs, all prototypes.
 pub fn emit_parts(prog: &Program, parts: usize) -> Vec<String> {
+    emit_parts_opts(prog, parts, false)
+}
+
+pub fn emit_parts_opts(prog: &Program, parts: usize, unroll: bool) -> Vec<String> {
     let parts = parts.max(1);
     let mut buckets: Vec<Vec<&Func>> = vec![Vec::new(); parts];
     for (i, f) in prog.funcs.iter().enumerate() {
@@ -60,7 +69,7 @@ pub fn emit_parts(prog: &Program, parts: usize) -> Vec<String> {
         }
         s.push('\n');
         for f in bucket {
-            s.push_str(&definition(f, &prog.structs));
+            s.push_str(&definition(f, &prog.structs, unroll));
             s.push('\n');
         }
         out.push(s);
@@ -286,7 +295,7 @@ fn signature(f: &Func, structs: &[StructDef]) -> String {
     format!("{} {}({})", ret, f.name, params)
 }
 
-fn definition(f: &Func, structs: &[StructDef]) -> String {
+fn definition(f: &Func, structs: &[StructDef], unroll: bool) -> String {
     let arrays = collect_arrays(&f.body, structs);
     let vecs = collect_vecs(&f.body, structs);
     let mut free_list = arrays.clone();
@@ -319,7 +328,7 @@ fn definition(f: &Func, structs: &[StructDef]) -> String {
     }
 
     for st in &f.body {
-        emit_stmt(st, 1, f.ret, f.name == "main", &free_list, structs, &consts, &mut s);
+        emit_stmt(st, 1, f.ret, f.name == "main", &free_list, structs, &consts, unroll, &mut s);
     }
 
     for a in &free_list {
@@ -332,8 +341,18 @@ fn definition(f: &Func, structs: &[StructDef]) -> String {
     s
 }
 
-fn const_int(e: &Expr, consts: &std::collections::HashMap<String, i64>) -> Option<i64> {
-    match &e.kind {
+/// `break`/`continue` bind to the nearest loop; an unrolled loop has no loop to bind to.
+/// Nested loops are skipped: their escapes stay inside them.
+fn has_escape(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|s| match &s.kind {
+        StmtKind::Break | StmtKind::Continue => true,
+        StmtKind::If { then, els, .. } => has_escape(then) || has_escape(els),
+        StmtKind::Arena { body } => has_escape(body),
+        _ => false,
+    })
+}
+
+fn const_int(e: &Expr, consts: &std::collections::HashMap<String, i64>) -> Option<i64> {    match &e.kind {
         ExprKind::Int(v) => Some(*v),
         ExprKind::Var(n) => consts.get(n).copied(),
         ExprKind::Bin { op, l, r } => {
@@ -396,6 +415,7 @@ fn emit_stmt(
     arrays: &[ArrayInfo],
     structs: &[StructDef],
     consts: &std::collections::HashMap<String, i64>,
+    unroll: bool,
     out: &mut String,
 ) {
     match &st.kind {
@@ -510,13 +530,13 @@ fn emit_stmt(
         StmtKind::If { cond, then, els } => {
             out.push_str(&format!("{}if ({}) {{\n", pad(indent), expr(cond)));
             for s in then {
-                emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, out);
+                emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, unroll, out);
             }
             out.push_str(&format!("{}}}", pad(indent)));
             if !els.is_empty() {
                 out.push_str(" else {\n");
                 for s in els {
-                    emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, out);
+                    emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, unroll, out);
                 }
                 out.push_str(&format!("{}}}", pad(indent)));
             }
@@ -525,7 +545,7 @@ fn emit_stmt(
         StmtKind::While { cond, body } => {
             out.push_str(&format!("{}while ({}) {{\n", pad(indent), expr(cond)));
             for s in body {
-                emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, out);
+                emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, unroll, out);
             }
             out.push_str(&format!("{}}}\n", pad(indent)));
         }
@@ -619,7 +639,7 @@ fn emit_stmt(
                 }
                 for s in body {
                     if !matches!(s.kind, StmtKind::ArrayLet { .. }) {
-                        emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, out);
+                        emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, unroll, out);
                     }
                 }
                 for (name, _, _, _, _) in &layout {
@@ -630,7 +650,7 @@ fn emit_stmt(
             } else {
                 out.push_str(&format!("{}{{\n", pad(indent)));
                 for s in body {
-                    emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, out);
+                    emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, unroll, out);
                 }
                 emit_frees(indent + 1, &owned, out);
                 out.push_str(&format!("{}}}\n", pad(indent)));
@@ -650,6 +670,29 @@ fn emit_stmt(
             end,
             body,
         } => {
+            // Small counted loops are fully unrolled: LLVM only vectorises straight-line
+            // code, and neither gcc nor clang will unroll a loop nest like n-body's.
+            if let (Some(a), Some(b)) = (const_int(start, consts), const_int(end, consts)) {
+                let trip = b - a;
+                if unroll && (0..=8).contains(&trip) && !has_escape(body) {
+                    for k in a..b {
+                        out.push_str(&format!("{}{{\n", pad(indent)));
+                        out.push_str(&format!(
+                            "{}const int32_t {} = {};\n",
+                            pad(indent + 1),
+                            var,
+                            k
+                        ));
+                        let mut inner = consts.clone();
+                        inner.insert(var.clone(), k);
+                        for s in body {
+                            emit_stmt(s, indent + 1, ret, is_main, arrays, structs, &inner, unroll, out);
+                        }
+                        out.push_str(&format!("{}}}\n", pad(indent)));
+                    }
+                    return;
+                }
+            }
             out.push_str(&format!(
                 "{}for (int32_t {} = {}; {} < {}; {}++) {{\n",
                 pad(indent),
@@ -660,7 +703,7 @@ fn emit_stmt(
                 var
             ));
             for s in body {
-                emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, out);
+                emit_stmt(s, indent + 1, ret, is_main, arrays, structs, consts, unroll, out);
             }
             out.push_str(&format!("{}}}\n", pad(indent)));
         }

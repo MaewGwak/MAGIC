@@ -28,6 +28,8 @@ Reproduce with `pwsh -File .\bench-all.ps1 -Rebuild`; it exits non-zero on a wro
 - The pointer-shaped workload (binary trees) is the big win: 1.85x over optimized Rust.
 - n-body gap is **closed by unrolling + an LLVM compiler**: with the six pairs written out,
   `zig cc` gives 206–222 ms (Rust 219–221) and gcc 253 ms; the loop form is 300–315 ms everywhere.
+  `--unroll` unrolls small constant `for` loops automatically: with `zig cc` the normal
+  (idiomatic-loop) source then runs at ~205–236 ms, but gcc regresses to ~440 ms, so it is opt-in.
   LLVM vectorises the unrolled straight-line code (`sqrtpd`) but does not unroll the loop nest
   itself; `#pragma GCC unroll 4` does not help either. `$CC` or `--cc` may carry arguments.
 
@@ -45,7 +47,7 @@ functions + ~70 ms link.
 
 ## Tests
 
-120 tests, all green (`cargo test`): 44 unit (lexer, parser, checker, codegen) + 19 CLI (the real
+121 tests, all green (`cargo test`): 44 unit (lexer, parser, checker, codegen) + 20 CLI (the real
 `magicc` binary: check/emit/build/run, cache, `--report`, `--version`, `--help`, multi-file, `$CC`
 with arguments) + 15 integration
 (`tests/emit.rs`, including all 14 examples compiling) + 41 end-to-end (`tests/e2e.rs`: compile with

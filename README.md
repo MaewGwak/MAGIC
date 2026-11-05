@@ -2,7 +2,7 @@
 
 A small systems language that compiles to C11 and runs anywhere a C compiler does.
 
-**Status: v0.4** — 120 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.4** — 121 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is ~2.5k lines of dependency-free Rust; programs go source → tokens → AST → type
 check → C11 → native binary.
 
@@ -44,6 +44,7 @@ magicc run   examples\fib.magic              # build and run
 magicc build big.magic --native              # -march=native (not portable)
 magicc build big.magic --dev                 # -O0 for fast iteration
 magicc build big.magic --cc "zig cc"         # pick the C compiler (may carry arguments)
+magicc build big.magic --unroll              # unroll small constant for-loops (clang/zig)
 magicc build main.magic lib.magic             # several files compile as one program, in order
 ```
 
@@ -123,14 +124,14 @@ Full tables and methodology: `BENCHMARKS.md`. Verify every checksum and get fres
 Run every gate with one command from this directory:
 
 ```powershell
-pwsh -File verify.ps1          # tests + doc counts + 41 benchmark cases (40 without Zig) + memory bounds
+pwsh -File verify.ps1          # tests + doc counts + 42 benchmark cases (41 without Zig) + memory bounds
 pwsh -File verify.ps1 -Fast    # tests + doc counts only (a few seconds)
 ```
 
 Or run them individually:
 
 ```powershell
-pwsh -File .\bench-all.ps1 -Rebuild   # 41 cases (40 without Zig): checksums, time, memory
+pwsh -File .\bench-all.ps1 -Rebuild   # 42 cases (41 without Zig): checksums, time, memory
 pwsh -File .\bench-memory.ps1         # --report bound vs measured peak RSS
 pwsh -File check-docs.ps1              # the numbers quoted in these docs still match the repo
 ```
