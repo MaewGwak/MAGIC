@@ -686,3 +686,55 @@ fn native_backend_passes_arrays_and_extra_args() {
     let run = Command::new(&exe).output().expect("run");
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "60\n8");
 }
+
+#[test]
+fn native_backend_file_io_roundtrip() {
+    if !(cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) {
+        return;
+    }
+    if !Command::new("as")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let dir = TempDir::new("nativeio");
+    let data = dir.path().join("data.bin");
+    let src = dir.path().join("io.magic");
+    let text = format!(
+        "fn main() {{\n\
+         var fd = file_open(\"{}\", \"wb\");\n\
+         var b: [u8] = [65; 3];\n\
+         file_write(fd, b, 3);\n\
+         file_close(fd);\n\
+         var rf = file_open(\"{}\", \"rb\");\n\
+         var c: [u8] = [0; 3];\n\
+         var n = file_read(rf, c, 3);\n\
+         file_close(rf);\n\
+         print(n);\n\
+         print(c[0]);\n\
+         }}\n",
+        data.display(),
+        data.display()
+    );
+    std::fs::write(&src, text).expect("write source");
+    let exe = dir.path().join("io");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run magicc");
+    assert!(
+        out.status.success(),
+        "native build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&exe).output().expect("run");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "3\n65");
+}

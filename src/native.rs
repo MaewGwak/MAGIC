@@ -384,6 +384,134 @@ impl Emitter {
         Ok(())
     }
 
+    /// File I/O builtins, mapped directly onto libc so no runtime library is
+    /// needed: the native handle is a `FILE *`.
+    fn file_builtin(&mut self, name: &str, args: &[Expr], line: usize) -> Result<bool, String> {
+        match name {
+            "file_open" if args.len() == 2 => {
+                self.expr(&args[0])?;
+                self.push("%rax");
+                self.expr(&args[1])?;
+                self.line("    mov %rax, %rsi");
+                self.pop("%rdi");
+                self.call("fopen@PLT");
+            }
+            "file_close" if args.len() == 1 => {
+                self.expr(&args[0])?;
+                self.line("    mov %rax, %rdi");
+                self.call("fclose@PLT");
+            }
+            "file_read" | "file_write" if args.len() == 3 => {
+                self.expr(&args[1])?;
+                self.push("%rax");
+                self.expr(&args[2])?;
+                self.push("%rax");
+                self.expr(&args[0])?;
+                self.line("    mov %rax, %rcx");
+                self.pop("%rdx");
+                self.pop("%rdi");
+                self.line("    mov $1, %esi");
+                let f = if name == "file_read" { "fread@PLT" } else { "fwrite@PLT" };
+                self.call(f);
+            }
+            "file_write_str" if args.len() == 2 => {
+                self.expr(&args[1])?;
+                self.push("%rax");
+                self.expr(&args[0])?;
+                self.push("%rax");
+                self.line("    mov 8(%rsp), %rdi");
+                self.call("strlen@PLT");
+                self.line("    mov %rax, %rdx");
+                self.pop("%rcx");
+                self.pop("%rdi");
+                self.line("    mov $1, %esi");
+                self.call("fwrite@PLT");
+            }
+            "file_seek" if args.len() == 3 => {
+                self.expr(&args[0])?;
+                self.push("%rax");
+                self.expr(&args[1])?;
+                self.push("%rax");
+                self.expr(&args[2])?;
+                self.line("    mov %rax, %rdx");
+                self.pop("%rsi");
+                self.pop("%rdi");
+                self.call("fseek@PLT");
+            }
+            "file_tell" if args.len() == 1 => {
+                self.expr(&args[0])?;
+                self.line("    mov %rax, %rdi");
+                self.call("ftell@PLT");
+            }
+            "file_size" if args.len() == 1 => {
+                self.expr(&args[0])?;
+                self.push("%rax");
+                self.line("    mov (%rsp), %rdi");
+                self.line("    xor %esi, %esi");
+                self.line("    mov $2, %edx");
+                self.call("fseek@PLT");
+                self.line("    mov (%rsp), %rdi");
+                self.call("ftell@PLT");
+                self.push("%rax");
+                self.line("    mov 8(%rsp), %rdi");
+                self.line("    xor %esi, %esi");
+                self.line("    xor %edx, %edx");
+                self.call("fseek@PLT");
+                self.pop("%rax");
+            }
+            "file_read_at" | "file_write_at" if args.len() == 4 => {
+                self.expr(&args[1])?;
+                self.push("%rax");
+                self.expr(&args[2])?;
+                self.push("%rax");
+                self.expr(&args[3])?;
+                self.push("%rax");
+                self.expr(&args[0])?;
+                self.line("    mov %rax, %rcx");
+                self.pop("%rdx");
+                self.pop("%rax");
+                self.pop("%rdi");
+                self.line("    add %rax, %rdi");
+                self.line("    mov $1, %esi");
+                let f = if name == "file_read_at" { "fread@PLT" } else { "fwrite@PLT" };
+                self.call(f);
+            }
+            "file_pread" | "file_pread_at" => {
+                // Correctness first: pread is fseek + fread on the native path.
+                let (buf_idx, off_idx) = if args.len() == 4 { (1, 3) } else { (1, 4) };
+                if args.len() != 4 && args.len() != 5 {
+                    return Err(format!(
+                        "native backend line {}: {} takes 4 or 5 arguments",
+                        line, name
+                    ));
+                }
+                self.expr(&args[0])?;
+                self.push("%rax");
+                self.expr(&args[off_idx])?;
+                self.line("    mov %rax, %rsi");
+                self.line("    xor %edx, %edx");
+                self.pop("%rdi");
+                self.call("fseek@PLT");
+                self.expr(&args[buf_idx])?;
+                self.push("%rax");
+                if args.len() == 5 {
+                    self.expr(&args[2])?;
+                    self.push("%rax");
+                }
+                self.expr(&args[0])?;
+                self.push("%rax");
+                self.expr(&args[if args.len() == 4 { 2 } else { 3 }])?;
+                self.line("    mov %rax, %rdx");
+                self.pop("%rcx");
+                self.pop("%rdi");
+                self.line("    mov $1, %esi");
+                self.call("fread@PLT");
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
     fn call_expr(&mut self, name: &str, args: &[Expr], line: usize) -> Result<(), String> {
         if name == "flush" && args.is_empty() {
             self.call("fflush@PLT");
@@ -437,6 +565,9 @@ impl Emitter {
             self.line(&format!("{}:", zero));
             self.line("    mov $0, %eax");
             self.line(&format!("{}:", done));
+            return Ok(());
+        }
+        if self.file_builtin(name, args, line)? {
             return Ok(());
         }
         let n = args.len();

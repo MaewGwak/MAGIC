@@ -2,6 +2,15 @@
 
 All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bumps may break.
 
+### Native backend: libc file I/O
+
+The native backend now maps `file_open`, `file_close`, `file_read`, `file_write`, `file_write_str`,
+`file_seek`, `file_tell`, `file_size`, `file_read_at`, `file_write_at`, `file_pread` and
+`file_pread_at` straight onto `fopen`/`fread`/`fwrite`/`fseek`/`ftell`/`fclose`, so `pageio`,
+`sqlscan`, `btree` and `bufpool` build and print the same checksums without a C compiler. The native
+builds are slower for now (pageio 685 ms vs 329 ms with gcc); performance work comes after feature
+parity.
+
 ## v0.8.0 — native backend: array parameters, casts and strings (2026-11-06)
 
 Array parameters work natively: the checker's existing rewrite (pointer plus length) is honoured by
