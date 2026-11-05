@@ -147,33 +147,35 @@ rejected. Integer overflow is not trapped.
 
 ## Benchmarks
 
-Full tables and methodology: `BENCHMARKS.md`. Verify every checksum and get fresh timings with:
+Eight workloads, medians of five interleaved runs on one Windows machine, all at `-O3` with no
+`-march=native`. Times move ±5% between runs; `-` means there is no port for that language yet.
 
-Run every gate with one command from this directory:
+| Workload | C | C++ | Rust | Go | Goose | MAGIC |
+|---|---:|---:|---:|---:|---:|---:|
+| sieve 100M | 414 | 428 | 429 | 441 | 443 | 429 |
+| fannkuch n=10 | 175 | 174 | 174 | - | 174 | **158** |
+| matmul 384 | 31 | 31 | 46 | 61 | - | **30** |
+| n-body 10M | 302 | 303 | **221** | 399 | - | 317 |
+| ray tracer 1536² | 47 | 47 | **46** | - | - | **46** |
+| hash table 1M | 46 | 47 | 46 | 46 | - | 47 |
+| particles 1M × 100 | 78 | 78 | 158 | 157 | - | **78** |
+| binary trees | - | - | 1371 | - | - | **731** |
+
+n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms
+with gcc, and `--unroll` with clang/zig gives 205–236 ms. The harness verifies every checksum:
 
 ```powershell
-pwsh -File verify.ps1          # tests + doc counts + 42 benchmark cases (41 without Zig) + memory bounds
+pwsh -File verify.ps1          # tests + doc counts + 42 cases (41 without Zig) + memory bounds
 pwsh -File verify.ps1 -Fast    # tests + doc counts only (a few seconds)
 ```
 
-Or run them individually:
+Run the pieces individually:
 
 ```powershell
 pwsh -File .\bench-all.ps1 -Rebuild   # 42 cases (41 without Zig): checksums, time, memory
 pwsh -File .\bench-memory.ps1         # --report bound vs measured peak RSS
-pwsh -File check-docs.ps1              # the numbers quoted in these docs still match the repo
+pwsh -File check-docs.ps1             # the numbers quoted here still match the repo
 ```
-
-| Workload | MAGIC vs best baseline |
-|---|---|
-| sieve 100M | first (412 ms vs C 414, Rust 428) |
-| fannkuch n=10 | first (142 ms) |
-| matmul 384 | tied with C at 30 ms |
-| n-body 10M | ties C; Rust's LLVM is 35% faster on this loop |
-| ray tracer 1536² | first (46 ms) |
-| hash table, 1M ops | first; **3x faster and 2x less memory than `std::HashMap`** |
-| particles, 1M structs × 100 | first; **1.9x faster than Rust, even its `iter_mut` version** |
-| binary-trees | **1.85x over optimized Rust, 25x over idiomatic** |
 
 The compiler also prints the static bound:
 
@@ -181,22 +183,6 @@ The compiler also prints the static bound:
 magicc check hash_magic.magic --report
 # memory: main <= 33554432 bytes   (exactly the two 2^21 x 8-byte tables)
 ```
-
-## Docs
-
-| File | What it covers |
-|---|---|
-| `STATUS.md` | **honest scoreboard: what is proven, what is not — start here** |
-| `CHANGELOG.md` | what shipped in v0.1 → v0.4, with the benchmark snapshot |
-| `SPECS.md` | the language: lexical, types, grammar, arrays, memory, versioning |
-| `ARENA.md` | arena design, bump allocation, fallback, the printed bound |
-| `TEST.md`, `TEST-MATRIX.md` | how to test, and all 123 tests by file |
-| `WEAKNESSES.md` | what each language forces and how MAGIC answers |
-| `GOALS.md` | win conditions per axis, hardware use, milestone ladder |
-| `PLANS.md`, `TASKS.md` | roadmap and board |
-| `KILL.md` | the numbers that would make us stop |
-| `bench-compile/RESULTS.md` | compile-speed measurements and dead ends |
-| `BENCHMARKS.md` | eight workloads, five runs each |
 
 ## Layout
 
@@ -219,3 +205,13 @@ M0 structs (done) · M1 array params (done) · M2 arena + printed bound (done) �
 mini-Minecraft (planned) · M6 OS in a VM (planned)
 
 Modules and a native LLVM/Cranelift backend come before M5.
+
+## Contributing
+
+Build and test instructions are in [CONTRIBUTING.md](CONTRIBUTING.md). Every change ships with tests
+and with docs that stay in sync: `pwsh -File verify.ps1 -Fast` runs the suite and `check-docs.ps1`.
+
+## License
+
+MAGIC is distributed under the terms of both the MIT license and the Apache License 2.0.
+See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).

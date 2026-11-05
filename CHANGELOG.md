@@ -2,6 +2,17 @@
 
 All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bumps may break.
 
+## Unreleased
+
+**Toolchain**
+- One-command installers (`install.ps1`, `install.sh`) that build from source and put `magic` and
+  `magicc` on PATH.
+- `-v`, `-version`, `-V`, `--version` and `version` all print the version.
+
+**Docs**
+- Dual MIT/Apache-2.0 license files, a `CONTRIBUTING.md`, and a compact full benchmark table in
+  `README.md`.
+
 ## v0.4 — structs of structs, growable arrays, strings
 
 **Data**
