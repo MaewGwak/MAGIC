@@ -10,6 +10,7 @@ mkdir -p "$OUT"
 
 CASES=(
   "sieve 100M|bench-suite|sieve_magic.magic"
+  "sieve odd blocks|bench-suite|sieve_magic_blockodd.magic"
   "fannkuch|bench-fannkuch|fannkuch_magic.magic"
   "matmul 384|bench-suite|matmul_magic.magic"
   "n-body 10M|bench-suite|nbody_magic.magic"
