@@ -142,6 +142,9 @@ answers real queries. Every component is benchmarked against C and matches it wi
 - Rust baselines for the database components: Rust is 1.5x faster than C on the `pageio` microbenchmark
   (211 ms vs 329 ms, because `std::fs` bypasses stdio), 0-10% faster on the B+tree, buffer pool and
   hash map, and level on the SQL tokenizer. MAGIC matches C within 0-3% on every component.
+- Page-store benchmark: a 64 KB-buffered MAGIC variant runs in 154 ms against Rust's 210 ms and C's
+  331 ms, with the same checksum; `bench-db/compare.sh` rebuilds and checks every database component
+  in C, Rust and MAGIC.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 

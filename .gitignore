@@ -84,3 +84,5 @@
 /bench-db/pageio_rs.rs
 /bench-db/bufpool_rs
 /bench-db/bufpool_rs.rs
+/bench-db/pageio_magic_fast
+/bench-db/pageio_magic_fast.c

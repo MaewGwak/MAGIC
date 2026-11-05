@@ -21,12 +21,14 @@ compare against a C implementation of the same design.
 
 | Program | Median | Result |
 |---|---:|---|
-| Rust | **211 ms** | 6367960 |
-| C | 329 ms | 6367960 |
-| MAGIC | 329 ms | 6367960 |
+| **MAGIC fast** | **154 ms** | 6367960 |
+| Rust | 210 ms | 6367960 |
+| C | 331 ms | 6367960 |
+| MAGIC | 325 ms | 6367960 |
 
-Rust's `std::fs` reads and writes without a stdio layer and is 1.5x faster here; C and MAGIC both go
-through `stdio`, so they match. Everything else is at parity.
+The fast variant moves 64 KB at a time and sums four bytes per loop turn, so it beats Rust's 8 KB
+`BufReader` by 1.35x with the same answer; the literal page-at-a-time version matches C.
+`bench-db/compare.sh` rebuilds and re-checks every component in all three languages.
 
 195 MB moved in about 325 ms, roughly 600 MB/s, with identical output. The file is 195 MB on disk;
 `pageio.dat` is ignored by git.
