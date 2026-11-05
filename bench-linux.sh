@@ -137,10 +137,12 @@ echo "== binary trees"
 cd "$ROOT/bench-bt" || exit 2
 build_c bt_c.c b_c; build_rust bt_rust_flat.rs b_rs
 build_magic bt_magic.magic b_m; build_magic bt_magic_count.magic b_x
+build_magic bt_magic_loop.magic b_l
 median "$OUT/b_c" 568328208 'binary trees C'
 median "$OUT/b_rs" 568328208 'binary trees Rust'
 median "$OUT/b_m" 568328208 'binary trees MAGIC'
 median "$OUT/b_x" 568328208 'binary trees MAGIC count'
+median "$OUT/b_l" 568328208 'binary trees MAGIC loop'
 
 echo
 if [ "$FAIL" -ne 0 ]; then

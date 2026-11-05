@@ -35,6 +35,8 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - Buffered parallel fannkuch: the reference order is generated once into a u8 buffer (10 bytes per
   permutation, 36 MB) and the flips are computed in 16 `par for` chunks, using the global index
   parity for the checksum. 106 ms vs 162 ms C and 160 ms Rust — 1.5x — at 39.8 MB instead of 4 MB.
+- Binary trees built in level order (children of node i are 2i+1 and 2i+2) instead of recursively:
+  397 ms vs 1647 ms C (4.2x) and 1039 ms for the recursive node-count build; same node count.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 

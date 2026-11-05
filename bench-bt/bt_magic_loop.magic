@@ -1,0 +1,46 @@
+// Binary trees counted while building: the arena is filled in level order
+// (children of node i are 2i+1 and 2i+2), which removes the recursion from the
+// build loop. A perfect tree's node count is still next[0].
+fn main() {
+    let max_nodes = 2097152;
+    var left: [i32] = [0; max_nodes];
+    var right: [i32] = [0; max_nodes];
+
+    var total = 0;
+    var d = 4;
+    while d <= 20 {
+        var iters = 1;
+        var e = 0;
+        while e < 20 - d + 4 {
+            iters = iters * 2;
+            e = e + 1;
+        }
+        var size = 1;
+        var q = 0;
+        while q <= d {
+            size = size * 2;
+            q = q + 1;
+        }
+        size = size - 1;
+        var internal = size / 2; // all but the last level
+
+        var i = 0;
+        while i < iters {
+            var n = 0;
+            while n < internal {
+                left[n] = 2 * n + 1;
+                right[n] = 2 * n + 2;
+                n = n + 1;
+            }
+            while n < size {
+                left[n] = -1;
+                right[n] = -1;
+                n = n + 1;
+            }
+            total = total + size;
+            i = i + 1;
+        }
+        d = d + 1;
+    }
+    print(total);
+}

@@ -36,3 +36,4 @@
 /bench-fannkuch/fannkuch_magic_par.c
 /bench-fannkuch/fannkuch_magic_buf.c
 /bench-suite/nbody_ilp.c
+/bench-bt/bt_magic_loop.c
