@@ -443,6 +443,7 @@ impl Checker {
                 start,
                 end,
                 body,
+                par: _,
             } => {
                 self.check_expr(start, Some(Ty::I32), scopes)?;
                 self.check_expr(end, Some(Ty::I32), scopes)?;

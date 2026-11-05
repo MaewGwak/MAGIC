@@ -13,6 +13,19 @@ if (Test-Path 'C:\Program Files\Go\bin') { $env:PATH = "C:\Program Files\Go\bin;
 if (Test-Path 'C:\src\goose\build') { $env:PATH = "C:\src\goose\build;$env:PATH" }
 $magicc = Join-Path $root 'target\release\magicc.exe'
 
+# Short benchmarks need a 1 ms timer; the default Windows quantum is 15.6 ms.
+$timerFixed = $false
+if ($env:OS -eq 'Windows_NT') {
+    try {
+        Add-Type -Namespace Win32 -Name Timer -MemberDefinition @'
+[DllImport("winmm.dll")] public static extern uint timeBeginPeriod(uint p);
+[DllImport("winmm.dll")] public static extern uint timeEndPeriod(uint p);
+'@
+        [Win32.Timer]::timeBeginPeriod(1) | Out-Null
+        $timerFixed = $true
+    } catch { }
+}
+
 function Run-Once([string]$Exe) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = (Resolve-Path -LiteralPath $Exe).Path
@@ -65,6 +78,7 @@ $cases = @(
     @{ name = 'ray tracer C';        dir = 'bench-suite';    exe = 'raytrace_c.exe';      src = 'raytrace_c.c';      kind = 'c';    expect = '336141.941' },
     @{ name = 'ray tracer Rust';     dir = 'bench-suite';    exe = 'raytrace_rs.exe';     src = 'raytrace_rs.rs';    kind = 'rust'; expect = '336141.941' },
     @{ name = 'ray tracer MAGIC';     dir = 'bench-suite';    exe = 'raytrace_magic.exe';   src = 'raytrace_magic.magic'; kind = 'magic'; expect = '336141.941' },
+    @{ name = 'ray tracer MAGIC par'; dir = 'bench-suite'; exe = 'raytrace_magic_par.exe'; src = 'raytrace_magic_par.magic'; kind = 'magic'; expect = '336141.941' },
     @{ name = 'ray tracer C++';      dir = 'bench-suite';    exe = 'raytrace_cpp.exe';    src = 'raytrace_cpp.cpp';  kind = 'cpp';  expect = '336141.941' },
 
     @{ name = 'hash C';              dir = 'bench-suite';    exe = 'hash_c.exe';          src = 'hash_c.c';          kind = 'c';    expect = '1500001500000' },
@@ -189,8 +203,10 @@ if ($env:magic_GATE -eq '1') {
     }
 }
 if ($failed -gt 0) {
+    if ($timerFixed) { [Win32.Timer]::timeEndPeriod(1) | Out-Null }
     Write-Host "$failed benchmark(s) failed" -ForegroundColor Red
     exit 1
 }
+if ($timerFixed) { [Win32.Timer]::timeEndPeriod(1) | Out-Null }
 Write-Host 'all benchmarks passed' -ForegroundColor Green
 

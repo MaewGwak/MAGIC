@@ -202,6 +202,25 @@ impl Parser {
         })
     }
 
+    fn parse_for(&mut self, par: bool, line: usize) -> Result<Stmt, String> {
+        let var = self.expect_ident()?;
+        self.expect(Tok::In, "'in'")?;
+        let start = self.parse_expr()?;
+        self.expect(Tok::DotDot, "'..'")?;
+        let end = self.parse_expr()?;
+        let body = self.parse_block()?;
+        Ok(Stmt {
+            kind: StmtKind::For {
+                var,
+                start,
+                end,
+                body,
+                par,
+            },
+            line,
+        })
+    }
+
     fn parse_block(&mut self) -> Result<Vec<Stmt>, String> {
         self.expect(Tok::LBrace, "'{'")?;
         let mut stmts = Vec::new();
@@ -418,21 +437,12 @@ impl Parser {
             }
             Tok::For => {
                 self.bump();
-                let var = self.expect_ident()?;
-                self.expect(Tok::In, "'in'")?;
-                let start = self.parse_expr()?;
-                self.expect(Tok::DotDot, "'..'")?;
-                let end = self.parse_expr()?;
-                let body = self.parse_block()?;
-                Ok(Stmt {
-                    kind: StmtKind::For {
-                        var,
-                        start,
-                        end,
-                        body,
-                    },
-                    line,
-                })
+                self.parse_for(false, line)
+            }
+            Tok::Par => {
+                self.bump();
+                self.expect(Tok::For, "'for'")?;
+                self.parse_for(true, line)
             }
             Tok::Break => {
                 self.bump();

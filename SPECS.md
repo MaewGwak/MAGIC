@@ -51,6 +51,7 @@ indexassign:= ident "[" expr "]" "=" expr ";"
 if         := "if" expr block ("else" (if | block))?
 while      := "while" expr block
 for        := "for" ident "in" expr ".." expr block
+parfor     := "par" for
 break      := "break" ";"
 continue   := "continue" ";"
 return     := "return" expr? ";"

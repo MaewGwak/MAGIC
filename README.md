@@ -3,7 +3,7 @@
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language that
 compiles to C11 and runs anywhere a C compiler does.
 
-**Status: v0.4** — 123 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.4** — 124 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is ~2.5k lines of dependency-free Rust; programs go source → tokens → AST → type
 check → C11 → native binary.
 
@@ -128,7 +128,7 @@ fn main() {
 |---|---|
 | Types | `i32 i64 u8 f64 bool str` |
 | Declarations | `let x = 1;` immutable, `var y: i64 = 0;` mutable |
-| Control | `if`/`else`, `while`, `for i in a..b`, `break`, `continue` |
+| Control | `if`/`else`, `while`, `for i in a..b`, `par for i in a..b` (OpenMP), `break`, `continue` |
 | Arrays | `var a: [T] = [value; count];`, checked `a[i]`, fixed size, locals only |
 | Growable arrays | `var v: [T+] = []; v.push(x); pop(v); len(v)` — doubles capacity; passable as `[T+]` params |
 | Array parameters | `fn f(a: [i32])`, passed as `(ptr, len)` |
@@ -181,21 +181,22 @@ on fannkuch (4.3 vs 4.4 MB).
 MAGIC also ships an odd-only sieve — a different algorithm with the same answer — at 190 ms and
 51.8 MB peak: 2.3x faster and 1.9x smaller than the classic sieve above. Its i-k-j matmul runs at
 15 ms and 5.8 MB: 2x faster than the classic C matmul above. Its closed-form particles run at
-15 ms and 4.1 MB: 5.2x faster and 8x smaller than the classic step loop. (At ~15 ms these are
-within one Windows timer tick, so read 15 vs 30 ms as one tick apart.)
+15 ms and 4.1 MB: 5.2x faster and 8x smaller than the classic step loop. Its parallel ray tracer
+runs at 13 ms: 3.1x faster than the classic ray tracer above. (At ~15 ms these are within one
+Windows timer tick, so read 15 vs 30 ms as one tick apart.)
 
 n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms
 with gcc, and `--unroll` with clang/zig gives 205–236 ms. The harness verifies every checksum:
 
 ```powershell
-pwsh -File verify.ps1          # tests + doc counts + 45 cases (44 without Zig) + memory bounds
+pwsh -File verify.ps1          # tests + doc counts + 46 cases (45 without Zig) + memory bounds
 pwsh -File verify.ps1 -Fast    # tests + doc counts only (a few seconds)
 ```
 
 Run the pieces individually:
 
 ```powershell
-pwsh -File .\bench-all.ps1 -Rebuild   # 45 cases (44 without Zig): checksums, time, memory
+pwsh -File .\bench-all.ps1 -Rebuild   # 46 cases (45 without Zig): checksums, time, memory
 pwsh -File .\bench-memory.ps1         # --report bound vs measured peak RSS
 pwsh -File check-docs.ps1             # the numbers quoted here still match the repo
 ```

@@ -215,6 +215,8 @@ pub enum StmtKind {
         start: Expr,
         end: Expr,
         body: Vec<Stmt>,
+        /// `par for`: iterations are independent and may run in parallel (OpenMP).
+        par: bool,
     },
     Break,
     Continue,

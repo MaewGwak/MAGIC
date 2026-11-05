@@ -20,3 +20,5 @@
 /bench-suite/sieve_magic_odd.c
 /bench-suite/matmul_magic_ikj.c
 /bench-suite/particles_magic_closed.c
+/bench-suite/matmul_magic_par.c
+/bench-suite/raytrace_magic_par.c

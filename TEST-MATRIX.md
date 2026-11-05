@@ -1,6 +1,6 @@
 # MAGIC test matrix
 
-123 tests, all green. Run with `cargo test`. Every row names the file that owns the test and
+124 tests, all green. Run with `cargo test`. Every row names the file that owns the test and
 what it proves, so the docs can link straight to it.
 
 ## Added after v0.3
@@ -159,6 +159,7 @@ These run `magicc` itself, so argument parsing, the build cache and `--report` a
 | `unroll_warns_for_gcc` | `--unroll` with gcc prints a note | yes |
 | `version_flags_are_interchangeable` | `-v`, `-version`, `-V`, `--version`, `version` all print it | yes |
 | `else_if_chain_picks_the_matching_branch` | `else if` chain → `2` | yes |
+| `par_for_runs` | `par for` fills an array, sum is `140` | yes |
 | `emit_prints_c` | stdout contains `int main(void)` | no |
 | `build_creates_an_executable_that_runs` | builds, runs, prints `42` | yes |
 | `second_build_is_up_to_date` | cache hit prints `up to date` | yes |

@@ -145,6 +145,7 @@ fn run() -> Result<(), String> {
                 .unwrap_or(true);
             let chunks = magic::compile_parts_opts(&source, 16, unroll)
                 .map_err(|e| map_diagnostic(e, &segments, src_path))?;
+            let needs_omp = chunks.iter().any(|c| c.contains("#pragma omp"));
             let cc = cc_override
                 .clone()
                 .or_else(find_cc)
@@ -172,6 +173,9 @@ fn run() -> Result<(), String> {
                         .arg("-std=c11")
                         .arg("-fno-asynchronous-unwind-tables")
                         .arg("-fno-ident");
+                    if needs_omp {
+                        cmd.arg("-fopenmp");
+                    }
                     if native {
                         cmd.arg("-march=native");
                     }
@@ -215,17 +219,20 @@ fn run() -> Result<(), String> {
                         }
                         let cc2 = cc.clone();
                         let native2 = native;
+                        let omp2 = needs_omp;
                         handles.push(std::thread::spawn(move || {
                             let mut cmd = cc_command(&cc2);
                             cmd.arg(if dev { "-O0" } else { "-O3" })
                                 .arg("-std=c11")
                                 .arg("-fno-asynchronous-unwind-tables")
-                                .arg("-fno-ident")
-                                .arg("-c");
+                                .arg("-fno-ident");
+                            if omp2 {
+                                cmd.arg("-fopenmp");
+                            }
                             if native2 {
                                 cmd.arg("-march=native");
                             }
-                            cmd.arg("-o").arg(&o_path).arg(&c_path);
+                            cmd.arg("-c").arg("-o").arg(&o_path).arg(&c_path);
                             cmd.status()
                         }));
                     }
@@ -240,6 +247,9 @@ fn run() -> Result<(), String> {
                         }
                     }
                     let mut link = cc_command(&cc);
+                    if needs_omp {
+                        link.arg("-fopenmp");
+                    }
                     link.arg("-o").arg(&exe_path);
                     for o in &objs {
                         link.arg(o);

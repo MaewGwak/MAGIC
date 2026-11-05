@@ -9,6 +9,12 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - i-k-j matmul: 15 ms vs 30 ms for the classic C matmul.
 - Closed-form particles (constant decay over 100 steps): 15 ms and 4.1 MB vs 78 ms and 34.7 MB.
   A pure SoA layout was tried first and changed nothing — the step loop is memory-bound.
+- Parallel ray tracer (`par for` over rows): 13 ms vs 40 ms, with row sums added in the same order
+  so the checksum is unchanged.
+
+**Language**
+- `par for i in a..b { ... }`: iterations must be independent; the compiler emits an OpenMP
+  parallel loop and adds `-fopenmp` automatically.
 
 **Toolchain**
 - One-command installers (`install.ps1`, `install.sh`) that build from source and put `magic` and
@@ -54,8 +60,8 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - `-fno-asynchronous-unwind-tables -fno-ident` by default: `big.exe` 201,673 → 167,105 bytes, one-function rebuild 280 → 271 ms.
 
 **Verification**
-- 123 tests: 44 unit, 22 CLI, 15 integration, 42 end-to-end.
-- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (45 cases, 44 without Zig), `bench-memory.ps1`.
+- 124 tests: 44 unit, 22 CLI, 15 integration, 43 end-to-end.
+- `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (46 cases, 45 without Zig), `bench-memory.ps1`.
 
 ## v0.3 — the memory model
 

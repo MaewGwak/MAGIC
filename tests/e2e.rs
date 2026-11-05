@@ -637,3 +637,18 @@ fn else_if_chain_picks_the_matching_branch() {
         assert_eq!(out, "2");
     }
 }
+
+#[test]
+fn par_for_runs() {
+    let src = "fn main() {\n\
+               var a: [i32] = [0; 8];\n\
+               par for i in 0..8 { a[i] = i * i; }\n\
+               var s = 0;\n\
+               for i in 0..8 { s = s + a[i]; }\n\
+               print(s);\n\
+               }";
+    let out = build_and_run("parfor", src);
+    if let Some(out) = out {
+        assert_eq!(out, "140");
+    }
+}

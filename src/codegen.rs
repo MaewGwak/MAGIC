@@ -669,28 +669,44 @@ fn emit_stmt(
             start,
             end,
             body,
+            par,
         } => {
+            if *par {
+                out.push_str(&format!("{}#pragma omp parallel for\n", pad(indent)));
+            }
             // Small counted loops are fully unrolled: LLVM only vectorises straight-line
             // code, and neither gcc nor clang will unroll a loop nest like n-body's.
-            if let (Some(a), Some(b)) = (const_int(start, consts), const_int(end, consts)) {
-                let trip = b - a;
-                if unroll && (0..=8).contains(&trip) && !has_escape(body) {
-                    for k in a..b {
-                        out.push_str(&format!("{}{{\n", pad(indent)));
-                        out.push_str(&format!(
-                            "{}const int32_t {} = {};\n",
-                            pad(indent + 1),
-                            var,
-                            k
-                        ));
-                        let mut inner = consts.clone();
-                        inner.insert(var.clone(), k);
-                        for s in body {
-                            emit_stmt(s, indent + 1, ret, is_main, arrays, structs, &inner, unroll, out);
+            if !*par {
+                if let (Some(a), Some(b)) = (const_int(start, consts), const_int(end, consts)) {
+                    let trip = b - a;
+                    if unroll && (0..=8).contains(&trip) && !has_escape(body) {
+                        for k in a..b {
+                            out.push_str(&format!("{}{{\n", pad(indent)));
+                            out.push_str(&format!(
+                                "{}const int32_t {} = {};\n",
+                                pad(indent + 1),
+                                var,
+                                k
+                            ));
+                            let mut inner = consts.clone();
+                            inner.insert(var.clone(), k);
+                            for s in body {
+                                emit_stmt(
+                                    s,
+                                    indent + 1,
+                                    ret,
+                                    is_main,
+                                    arrays,
+                                    structs,
+                                    &inner,
+                                    unroll,
+                                    out,
+                                );
+                            }
+                            out.push_str(&format!("{}}}\n", pad(indent)));
                         }
-                        out.push_str(&format!("{}}}\n", pad(indent)));
+                        return;
                     }
-                    return;
                 }
             }
             out.push_str(&format!(
