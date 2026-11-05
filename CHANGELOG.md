@@ -76,6 +76,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - Codegen experiments that did not pay off: 64-byte aligned array allocation (`posix_memalign`)
   and `restrict` on local array pointers moved binary trees by +1 ms and nothing else, so the
   allocator and pointer emission stay unchanged.
+- Parallel n-body dead end: an OpenMP `parallel for` costs 3.8 us per step and a persistent team
+  with a barrier 2.5 us, so 10M steps would spend 25-38 s in scheduling alone. Per-step parallelism
+  cannot pay for this workload at this size, which is why the serial clang AVX2 build stays.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
