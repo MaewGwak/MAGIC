@@ -52,3 +52,7 @@
 /bench-db/sqlscan_c
 /bench-db/sqlscan_magic
 /bench-db/sqlscan_magic.c
+/bench-db/sqldb_c
+/bench-db/sqldb_magic
+/bench-db/sqldb_magic.c
+/bench-db/sqldb.dat
