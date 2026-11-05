@@ -154,8 +154,9 @@ fn main() { print(helper()); }
 - Command-line files and imports mix freely; all of them compile as one program.
 - Function order does not matter (signatures are collected first); struct order does, since a struct
   can only name structs declared before it.
-- Diagnostics use the line numbers of the concatenation, not of the individual file. There are no
-  namespaces or module visibility rules yet — every declaration is global.
+- Diagnostics name the individual file and line: the loader keeps a per-file source map over the
+  concatenated program, so an error inside an imported file points at that file, not at the merge.
+- There are no namespaces or module visibility rules yet — every declaration is global.
 
 ## 5. Memory model
 

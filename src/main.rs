@@ -60,16 +60,19 @@ fn run() -> Result<(), String> {
 
     // Entry files plus everything they `import`, each included once, dependencies first.
     let mut source = String::new();
+    let mut segments: Vec<(usize, PathBuf)> = Vec::new();
     let mut visited = std::collections::HashSet::new();
     for p in &args[2..] {
-        load_source(Path::new(p), &mut visited, &mut source)?;
+        load_source(Path::new(p), &mut visited, &mut source, &mut segments)?;
     }
 
     let c = magic::compile_to_c(&source)
-        .map_err(|e| format!("{}: {}", src_path.display(), e))?;
+        .map_err(|e| map_diagnostic(e, &segments, src_path))?;
 
     if report_bound {
-        for (name, bytes) in magic::memory_report(&source)? {
+        let rows =
+            magic::memory_report(&source).map_err(|e| map_diagnostic(e, &segments, src_path))?;
+        for (name, bytes) in rows {
             if bytes > 0 {
                 println!("🔮 memory: {} <= {} bytes", name, bytes);
             }
@@ -263,6 +266,7 @@ fn load_source(
     path: &Path,
     visited: &mut std::collections::HashSet<PathBuf>,
     out: &mut String,
+    segments: &mut Vec<(usize, PathBuf)>,
 ) -> Result<(), String> {
     let canon = fs::canonicalize(path)
         .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
@@ -275,13 +279,33 @@ fn load_source(
         .map_err(|e| format!("{}: {}", path.display(), e))?;
     let dir = canon.parent().unwrap_or_else(|| Path::new("."));
     for imp in imports {
-        load_source(&dir.join(imp), visited, out)?;
+        load_source(&dir.join(imp), visited, out, segments)?;
     }
+    let start = out.bytes().filter(|b| *b == b'\n').count() + 1;
+    segments.push((start, canon.clone()));
     out.push_str(&text);
     if !text.ends_with('\n') {
         out.push('\n');
     }
     Ok(())
+}
+
+/// Rewrite `line: message` from the concatenated source into `file:line: message`.
+fn map_diagnostic(err: String, segments: &[(usize, PathBuf)], fallback: &Path) -> String {
+    if let Some((head, rest)) = err.split_once(": ") {
+        if let Ok(line) = head.parse::<usize>() {
+            if let Some((start, path)) = segments.iter().rev().find(|(s, _)| *s <= line) {
+                return format!("{}:{}: {}", display_path(path), line - start + 1, rest);
+            }
+        }
+    }
+    format!("{}: {}", fallback.display(), err)
+}
+
+/// `canonicalize` on Windows returns `\\?\C:\...`; hide that from diagnostics.
+fn display_path(path: &Path) -> String {
+    let s = path.display().to_string();
+    s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
 }
 
 fn find_cc() -> Option<String> {

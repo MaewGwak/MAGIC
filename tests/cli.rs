@@ -300,6 +300,29 @@ fn missing_import_fails() {
 }
 
 #[test]
+fn errors_point_at_the_imported_file() {
+    let dir = TempDir::new("importdiag");
+    std::fs::write(
+        dir.path().join("lib.magic"),
+        "fn helper() -> i32 { return 1; }\nfn bad() -> i32 { return \"x\"; }\n",
+    )
+    .unwrap();
+    let main = dir.path().join("main.magic");
+    std::fs::write(
+        &main,
+        "import \"lib.magic\";\nfn main() { print(helper()); }\n",
+    )
+    .unwrap();
+    let out = Command::new(magicc())
+        .args(["build", main.to_str().unwrap()])
+        .output()
+        .expect("run magicc");
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("lib.magic:2:"), "stderr: {err}");
+}
+
+#[test]
 fn cc_env_may_include_arguments() {
     if !has_compiler() {
         return;
