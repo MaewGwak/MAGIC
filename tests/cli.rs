@@ -552,3 +552,38 @@ fn changing_the_cc_rebuilds_the_program() {
     assert_ne!(before, after, "the compiler must be part of the build identity");
     assert!(after.contains("-O1"), "stamp was {after:?}");
 }
+
+#[test]
+fn native_backend_builds_and_runs() {
+    if !(cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) {
+        return;
+    }
+    let as_ok = Command::new("as")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !as_ok {
+        return;
+    }
+    let dir = TempDir::new("native");
+    let src = dir.path().join("n.magic");
+    std::fs::write(&src, "fn main() { var x = 40; print(x + 2); }\n").expect("write source");
+    let exe = dir.path().join("n");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("--backend")
+        .arg("native")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run magicc");
+    assert!(
+        out.status.success(),
+        "native build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&exe).output().expect("run native binary");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
+}

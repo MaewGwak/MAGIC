@@ -168,3 +168,10 @@ fn unused_functions_are_dropped() {
     .unwrap();
     assert!(!c.contains("dead"), "unreachable function was emitted");
 }
+
+#[test]
+fn native_emits_x86_64() {
+    let asm = magic::compile_to_asm("fn main() { print(7); }").unwrap();
+    assert!(asm.contains(".globl main"), "missing main symbol");
+    assert!(asm.contains("printf@PLT"), "missing printf call");
+}

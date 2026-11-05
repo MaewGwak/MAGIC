@@ -39,7 +39,7 @@ move ±5% between runs on this machine, so treat a 1–15 ms gap as a tie.
 
 ## Linux (Fedora 44, Ryzen AI 7 350)
 
-The same gates run natively here: `./verify.sh` covers 132 tests, the doc counts, a 39-case matrix
+The same gates run natively here: `./verify.sh` covers 134 tests, the doc counts, a 39-case matrix
 with checksums and the memory bounds; `./bench-linux.sh` and `./bench-memory.sh` run the pieces.
 GitHub Actions runs the fast gates, the matrix and the memory bounds on Ubuntu.
 
@@ -72,6 +72,9 @@ beats all four baselines by at least 4.5x.
 So a cold build beats rustc when the C compiler is clang (`CC=clang magicc build`), and an
 incremental edit beats it with either compiler.
 
+The native backend (`--backend native`, Linux x86-64) compiles the same program in 41 ms with no C
+compiler in the path, against 96 ms for the C backend with clang.
+
 Against Goose and rustc on the same synthetic 2,000-function program: `magicc build` now takes 91 ms
 (gcc) or 95 ms (clang) cold, against 121 ms for `goose build` (warm, `-O2`) and 216 ms for `rustc -O`.
 The gain is dead-function elimination: only the 21 functions `main` can reach are emitted, so the
@@ -96,7 +99,7 @@ functions + ~70 ms link.
 
 ## Tests
 
-132 tests, all green (`cargo test`): 44 unit (lexer, parser, checker, codegen) + 22 CLI (the real
+134 tests, all green (`cargo test`): 44 unit (lexer, parser, checker, codegen) + 22 CLI (the real
 `magicc` binary: check/emit/build/run, cache, `--report`, `--version`, `--help`, multi-file, `$CC`
 with arguments) + 15 integration
 (`tests/emit.rs`, including all 15 examples compiling) + 41 end-to-end (`tests/e2e.rs`: compile with

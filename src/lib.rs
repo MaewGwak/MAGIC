@@ -3,6 +3,7 @@
 pub mod ast;
 pub mod codegen;
 pub mod lexer;
+pub mod native;
 pub mod parser;
 pub mod types;
 
@@ -45,6 +46,16 @@ pub fn compile_parts_opts(src: &str, parts: usize, unroll: bool) -> Result<Vec<S
         parts.max(1)
     };
     Ok(codegen::emit_parts_opts(&program, n, unroll))
+}
+
+/// Compile MAGIC source to x86-64 assembly (Linux, System V ABI).
+pub fn compile_to_asm(src: &str) -> Result<String, String> {
+    let tokens = lexer::Lexer::new(src).tokenize()?;
+    let mut program = parser::Parser::new(tokens).parse_program()?;
+    types::Checker::check(&mut program)?;
+    types::lower_calls(&mut program);
+    codegen::retain_reachable(&mut program);
+    native::emit(&program)
 }
 
 /// Static upper bound on the bytes each function's arrays can occupy.

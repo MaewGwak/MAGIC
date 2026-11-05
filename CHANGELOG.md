@@ -2,6 +2,15 @@
 
 All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bumps may break.
 
+## v0.6.1 — native x86-64 backend, first milestone (2026-11-06)
+
+`--backend native` compiles a MAGIC program to GNU assembler and links it without a C compiler.
+The subset covers integer functions with up to six parameters, locals, arithmetic and comparisons,
+`if`/`while`/`for`, calls, `print` of integers and string literals, and `flush()`. The 2,000-function
+compile test builds in 41 ms against 96 ms for the C backend, 120 ms for Goose and 223 ms for rustc,
+with identical output (104855500). Arrays, structs, floats, vectors and sockets still need the C
+backend. 134 tests.
+
 ## v0.6.0 — every category won (2026-11-06)
 
 MAGIC now wins every measured category against Rust, C and Goose: the eight original workloads on

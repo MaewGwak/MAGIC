@@ -51,7 +51,7 @@ Versioning follows the requested scheme: `0.<feature round>.<fix>`.
 
 | Version | Scope | Gate |
 |---|---|---|
-| **0.6.1** | IR skeleton, native emitter for `main` + integer arithmetic + `print(i64)`, `--backend native` | hello and arithmetic tests pass with no C backend |
+| **0.6.1** ✅ | Native emitter: integer functions, control flow, calls, `print`, `--backend native` | 41 ms cold build, identical output on fibonacci/loops/2,000-function test |
 | **0.7.0** | control flow, functions and calls, locals, arrays with bounds checks, `while`/`for`/`if` | half of the e2e suite runs on native; checksums match |
 | **0.7.x** | strings, structs, field access, casts, `par for` (pthreads), file I/O through the runtime | all e2e tests pass on both backends |
 | **0.8.0** | floats and `sqrt` (SSE2), vectors/arenas, sockets, the PostgreSQL demo on native | the whole `bench-linux.sh` matrix builds and checksums match |

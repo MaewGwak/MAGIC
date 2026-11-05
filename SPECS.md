@@ -1,4 +1,4 @@
-# 🔮 MAGIC — Language Specification v0.6.0
+# 🔮 MAGIC — Language Specification v0.6.1
 
 Status: pre-1.0. Breaking changes are allowed in any 0.x release.
 Companion docs: `PLANS.md` (roadmap), `TASKS.md` (board), `TEST.md` (tests).
@@ -137,6 +137,14 @@ print(a[i]);
 - Indexing `a[i]` is always bounds-checked. Negative or `>= len` panics to stderr with `line N: index out of bounds` and exits **1**.
 - The compiler inserts exactly one `free` per array at every `return` and at function exit.
 - No `len`, no user `free`, no realloc, no resize in v0.1.
+
+## 3b. Backends (v0.6.1)
+
+`magicc build file.magic` emits C11 and compiles it with `$CC` (default gcc). The experimental
+native backend (`--backend native`) skips the C compiler: it emits GNU assembler for Linux x86-64
+and assembles with `as`, linking through the same driver. Its subset is integer functions with up to
+six parameters, locals, arithmetic, comparisons, `if`, `while`, `for`, calls and `print` of integers
+and string literals. Arrays, structs, floats and I/O builtins remain on the C backend until 0.7.
 
 ## 4b. Growable arrays (v0.4)
 

@@ -36,6 +36,17 @@ fn run() -> Result<(), String> {
         cc_override = Some(args[pos + 1].clone());
         args.drain(pos..=pos + 1);
     }
+    let mut backend = "c".to_string();
+    if let Some(pos) = args.iter().position(|a| a == "--backend") {
+        if pos + 1 >= args.len() {
+            return Err("--backend needs a value: c or native".to_string());
+        }
+        backend = args[pos + 1].clone();
+        args.drain(pos..=pos + 1);
+    }
+    if backend != "c" && backend != "native" {
+        return Err(format!("unknown backend `{}` (use c or native)", backend));
+    }
     let mut out_override: Option<PathBuf> = None;
     if let Some(pos) = args.iter().position(|a| a == "-o") {
         if pos + 1 >= args.len() {
@@ -56,7 +67,7 @@ fn run() -> Result<(), String> {
     if args.len() == 2 && (args[1] == "--help" || args[1] == "-h") {
         println!(
             "🔮 magicc {} - the MAGIC compiler\n\n\
-             usage: magicc <check|emit|build|run> <file.magic> [--native] [--report] [--dev] [--cc \"cmd\"] [-o out]\n\n\
+             usage: magicc <check|emit|build|run> <file.magic> [--native] [--report] [--dev] [--cc \"cmd\"] [--backend c|native] [-o out]\n\n\
              \x20 check   parse + type check only\n\
              \x20 emit    print the generated C to stdout\n\
              \x20 build   write <file>.c and compile it\n\
@@ -115,6 +126,9 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "build" | "run" => {
+            if backend == "native" {
+                return build_native(&src_path, &source, out_override, command == "run", cc_override.as_deref());
+            }
             let dir = src_path.parent().unwrap_or_else(|| Path::new("."));
             let exe_path = out_override.clone().unwrap_or_else(|| {
                 if cfg!(windows) {
@@ -323,6 +337,62 @@ fn cc_command(cc: &str) -> Command {
         cmd.arg(a);
     }
     cmd
+}
+
+fn build_native(
+    src_path: &Path,
+    source: &str,
+    out_override: Option<PathBuf>,
+    run: bool,
+    cc_override: Option<&str>,
+) -> Result<(), String> {
+    if !(cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) {
+        return Err("the native backend currently targets Linux x86-64 only; use the C backend".to_string());
+    }
+    let asm = magic::compile_to_asm(source)?;
+    let exe_path = out_override.unwrap_or_else(|| {
+        if cfg!(windows) {
+            with_ext(src_path, "exe")
+        } else {
+            with_ext(src_path, "bin")
+        }
+    });
+    let asm_path = with_ext(src_path, "s");
+    let obj_path = with_ext(src_path, "o");
+    fs::write(&asm_path, asm).map_err(|e| format!("cannot write {}: {}", asm_path.display(), e))?;
+    let as_cmd = env::var("AS").unwrap_or_else(|_| "as".to_string());
+    let status = Command::new(&as_cmd)
+        .arg("--64")
+        .arg("-o")
+        .arg(&obj_path)
+        .arg(&asm_path)
+        .status()
+        .map_err(|e| format!("failed to run {}: {}", as_cmd, e))?;
+    if !status.success() {
+        return Err(format!("{} failed while assembling {}", as_cmd, asm_path.display()));
+    }
+    let cc = cc_override
+        .map(|s| s.to_string())
+        .or_else(find_cc)
+        .ok_or("no linker driver found (tried $CC, gcc, clang, cc)")?;
+    let mut link = cc_command(&cc);
+    link.arg(&obj_path).arg("-o").arg(&exe_path);
+    let status = link
+        .status()
+        .map_err(|e| format!("failed to run {}: {}", cc, e))?;
+    if !status.success() {
+        return Err(format!("{} failed while linking {}", cc, exe_path.display()));
+    }
+    println!("\u{1F52E} built {} (native)", exe_path.display());
+    if run {
+        let status = Command::new(&exe_path)
+            .status()
+            .map_err(|e| format!("failed to run {}: {}", exe_path.display(), e))?;
+        if !status.success() {
+            return Err(format!("{} exited with {:?}", exe_path.display(), status.code()));
+        }
+    }
+    Ok(())
 }
 
 fn load_source(
