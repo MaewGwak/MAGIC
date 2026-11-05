@@ -121,6 +121,9 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - `magic-db` CLI: `dbcli_magic.magic` executes `CREATE`/`INSERT`/`SELECT COUNT`/`SUM`/`WHERE id = k`
   from a file or stdin against a heap file, persists new rows, and a second process sees them
   (`bench-db/demo.sh` checks the transcript).
+- `file_read_at(fd, buf, off, n)` and `file_write_at` fill or flush a slice of a buffer, so a page
+  pool writes frames in place. A 64-frame LRU buffer pool over 512 pages and 200,000 accesses gives
+  identical hits (24,997), misses (175,003), checksum and time (128 ms) in MAGIC and C.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
