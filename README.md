@@ -2,7 +2,7 @@
 
 A small systems language that compiles to C11 and runs anywhere a C compiler does.
 
-**Status: v0.4** — 117 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.4** — 118 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is ~2.5k lines of dependency-free Rust; programs go source → tokens → AST → type
 check → C11 → native binary.
 
@@ -123,14 +123,14 @@ Full tables and methodology: `BENCHMARKS.md`. Verify every checksum and get fres
 Run every gate with one command from this directory:
 
 ```powershell
-pwsh -File verify.ps1          # tests + doc counts + 37 benchmark cases + memory bounds
+pwsh -File verify.ps1          # tests + doc counts + 38 benchmark cases (37 without Zig) + memory bounds
 pwsh -File verify.ps1 -Fast    # tests + doc counts only (a few seconds)
 ```
 
 Or run them individually:
 
 ```powershell
-pwsh -File .\bench-all.ps1 -Rebuild   # 37 cases: checksums, time, memory
+pwsh -File .\bench-all.ps1 -Rebuild   # 38 cases (37 without Zig): checksums, time, memory
 pwsh -File .\bench-memory.ps1         # --report bound vs measured peak RSS
 pwsh -File check-docs.ps1              # the numbers quoted in these docs still match the repo
 ```

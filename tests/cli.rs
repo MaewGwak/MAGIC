@@ -323,6 +323,30 @@ fn errors_point_at_the_imported_file() {
 }
 
 #[test]
+fn output_flag_names_the_binary() {
+    if !has_compiler() {
+        return;
+    }
+    let dir = TempDir::new("outflag");
+    let src = dir.path().join("o.magic");
+    std::fs::write(&src, "fn main() { print(11); }\n").unwrap();
+    let out_name = if cfg!(windows) { "custom.exe" } else { "custom.bin" };
+    let out_path = dir.path().join(out_name);
+    let out = Command::new(magicc())
+        .args(["build", src.to_str().unwrap(), "-o", out_path.to_str().unwrap()])
+        .output()
+        .expect("run magicc");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out_path.exists());
+    let run = Command::new(&out_path).output().expect("run built program");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "11");
+}
+
+#[test]
 fn cc_flag_overrides_cc_env() {
     if !has_compiler() {
         return;

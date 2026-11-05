@@ -34,6 +34,14 @@ fn run() -> Result<(), String> {
         cc_override = Some(args[pos + 1].clone());
         args.drain(pos..=pos + 1);
     }
+    let mut out_override: Option<PathBuf> = None;
+    if let Some(pos) = args.iter().position(|a| a == "-o") {
+        if pos + 1 >= args.len() {
+            return Err("-o needs a path, e.g. -o out.exe".to_string());
+        }
+        out_override = Some(PathBuf::from(&args[pos + 1]));
+        args.drain(pos..=pos + 1);
+    }
     if args.len() == 2 && (args[1] == "--version" || args[1] == "-V") {
         println!("magicc {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -41,7 +49,7 @@ fn run() -> Result<(), String> {
     if args.len() == 2 && (args[1] == "--help" || args[1] == "-h") {
         println!(
             "🔮 magicc {} - the MAGIC compiler\n\n\
-             usage: magicc <check|emit|build|run> <file.magic> [--native] [--report] [--dev] [--cc \"cmd\"]\n\n\
+             usage: magicc <check|emit|build|run> <file.magic> [--native] [--report] [--dev] [--cc \"cmd\"] [-o out]\n\n\
              \x20 check   parse + type check only\n\
              \x20 emit    print the generated C to stdout\n\
              \x20 build   write <file>.c and compile it\n\
@@ -49,7 +57,8 @@ fn run() -> Result<(), String> {
              \x20 --native  add -march=native to gcc\n\
              \x20 --report  print the static memory bound\n\
              \x20 --dev     compile at -O0 for fast iteration\n\
-             \x20 --cc      C compiler command, may carry arguments (e.g. \"zig cc\")",
+             \x20 --cc      C compiler command, may carry arguments (e.g. \"zig cc\")\n\
+             \x20 -o        output executable path (default: <file>.exe)",
             env!("CARGO_PKG_VERSION")
         );
         return Ok(());
@@ -98,11 +107,25 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "build" | "run" => {
-            let stem = src_path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "out".to_string());
             let dir = src_path.parent().unwrap_or_else(|| Path::new("."));
+            let exe_path = out_override.clone().unwrap_or_else(|| {
+                if cfg!(windows) {
+                    with_ext(src_path, "exe")
+                } else {
+                    with_ext(src_path, "bin")
+                }
+            });
+            let stem = if out_override.is_some() {
+                exe_path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "out".to_string())
+            } else {
+                src_path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "out".to_string())
+            };
             let flags = format!(
                 "{}{}-nou",
                 if dev { "O0" } else { "O3" },
@@ -113,12 +136,7 @@ fn run() -> Result<(), String> {
                 .map(|s| s.trim() != flags)
                 .unwrap_or(true);
             let chunks = magic::compile_parts(&source, 16)
-                .map_err(|e| format!("{}: {}", src_path.display(), e))?;
-            let exe_path = if cfg!(windows) {
-                with_ext(src_path, "exe")
-            } else {
-                with_ext(src_path, "bin")
-            };
+                .map_err(|e| map_diagnostic(e, &segments, src_path))?;
             let cc = cc_override
                 .clone()
                 .or_else(find_cc)

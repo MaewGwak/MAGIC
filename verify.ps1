@@ -1,7 +1,7 @@
 # Runs every verification gate in order and stops at the first failure:
 #   1. cargo test        — the 108-test suite (unit, CLI, integration, e2e)
 #   2. check-docs.ps1    — the numbers quoted in the docs match the repo
-#   3. bench-all.ps1     — 37 benchmark cases, checksums, coarse performance gate
+#   3. bench-all.ps1     — 38 benchmark cases (37 without Zig), checksums, coarse performance gate
 #   4. bench-memory.ps1  — every --report bound is <= measured peak RSS
 #
 # Use -Fast to run only the first two gates (a few seconds), for every commit.

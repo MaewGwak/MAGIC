@@ -80,6 +80,16 @@ $cases = @(
     @{ name = 'binary trees MAGIC';   dir = 'bench-bt';       exe = 'bt_magic.exe';         src = 'bt_magic.magic';      kind = 'magic'; expect = '568328208' }
 )
 
+$zig = Get-ChildItem "$env:TEMP\zig-dist" -Recurse -Filter zig.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($zig) {
+    $cases += @{
+        name = 'n-body unrolled MAGIC (zig)'; dir = 'bench-suite'
+        exe = 'nbody_unrolled_zig.exe'; src = 'nbody_unrolled.magic'
+        kind = 'magic'; cc = "$($zig.FullName) cc"; out = 'nbody_unrolled_zig.exe'
+        expect = '11211.531383844'
+    }
+}
+
 if ($Rebuild) {
     if (-not (Test-Path $magicc)) { Write-Host "magicc not found at $magicc" -ForegroundColor Red; exit 1 }
     $buildFailed = 0
@@ -87,7 +97,12 @@ if ($Rebuild) {
         $dir = Join-Path $root $c.dir
         Push-Location $dir
         switch ($c.kind) {
-            'magic' { & $magicc build $c.src 2>&1 | Out-Null }
+            'magic' {
+                $extra = @()
+                if ($c.cc)  { $extra += @('--cc', $c.cc) }
+                if ($c.out) { $extra += @('-o', $c.out) }
+                & $magicc build $c.src @extra 2>&1 | Out-Null
+            }
             'rust' { rustc -C opt-level=3 -o $c.exe $c.src 2>&1 | Out-Null }
             'c'    { gcc -O3 -o $c.exe $c.src 2>&1 | Out-Null }
             'cpp'  { g++ -O3 -o $c.exe $c.src 2>&1 | Out-Null }
