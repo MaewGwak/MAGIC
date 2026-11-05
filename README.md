@@ -207,7 +207,7 @@ The sieve row uses 2.3 MB instead of 95 MB. The n-body row uses clang with `-mar
 without clang the n-body build is 605 ms (gcc). Goose builds from source with CMake on Linux and
 `./bench-linux.sh` picks it up from `PATH` or `~/tools/goose/build/goose`; its sieve and fannkuch
 programs are the ones shipped here. `./verify.sh` runs the tests, the doc counts and this matrix;
-`./bench-linux.sh` alone runs 40 cases across C, C++, Rust, Go, Goose and MAGIC.
+`./bench-linux.sh` alone runs 57 cases across C, C++, Rust, Go, Goose and MAGIC.
 
 
 n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms
