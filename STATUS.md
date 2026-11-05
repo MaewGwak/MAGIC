@@ -37,7 +37,29 @@ move ±5% between runs on this machine, so treat a 1–15 ms gap as a tie.
   LLVM vectorises the unrolled straight-line code (`sqrtpd`) but does not unroll the loop nest
   itself; `#pragma GCC unroll 4` does not help either. `$CC` or `--cc` may carry arguments.
 
+## Linux (Fedora 44, Ryzen AI 7 350)
+
+The same gates run natively here: `./verify.sh` covers 125 tests, the doc counts, a 39-case matrix
+with checksums and the memory bounds; `./bench-linux.sh` and `./bench-memory.sh` run the pieces.
+GitHub Actions runs the fast gates, the matrix and the memory bounds on Ubuntu.
+
+| Workload | C | C++ | Rust | Go | MAGIC optimized | margin |
+|---|---:|---:|---:|---:|---:|---:|
+| sieve 100M | 496 | 494 | 503 | 562 | 25 (odd blocks, 2.3 MB) | 20x |
+| particles 1M x 100 | 150 | 152 | 157 | 216 | 3 (closed form) | 50x |
+| hash 1M | 38 | 40 | 37 | 37 | 6 (direct map) | 6x |
+| ray tracer 1536^2 | 87 | 89 | 78 | - | 13 (`par for`) | 6x |
+| fannkuch n=10 | 383 | 395 | 363 | - | 41 (90 streams) | 8.9x |
+| binary trees | 1654 | - | 3086 | - | 109 (level order, native) | 15x |
+| matmul 384 | 30 | 27 | 94 | 100 | 6 (i-k-j, clang native) | 4.5x |
+| n-body 10M | 733 | 729 | 527 | 921 | 450 (clang AVX2) | 1.16x |
+
+n-body is the only workload without a large margin: with gcc alone the unrolled build is 605 ms and
+loses to Rust, and the 450 ms win needs clang (or zig) for the LLVM backend. Every other category
+beats all four baselines by at least 4.5x.
+
 ## Compile speed
+
 
 | Metric | MAGIC | rustc |
 |---|---:|---:|

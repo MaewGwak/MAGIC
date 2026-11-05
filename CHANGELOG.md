@@ -4,6 +4,11 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 
 ## Unreleased
 
+**Tooling**
+- GitHub Actions workflow runs the fast gates, the Linux benchmark matrix and the memory bounds on
+  Ubuntu.
+
+
 **Fixed**
 - `magicc build --cc ...` did not invalidate the cache: the compiler is now part of the `.flags`
   stamp, so switching compilers rebuilds instead of reusing the previous executable.
