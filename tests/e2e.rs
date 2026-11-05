@@ -740,3 +740,19 @@ fn main() {
         assert_eq!(out, "3\nalpha\nbeta\nhello");
     }
 }
+
+#[test]
+fn print_bytes_writes_raw() {
+    let src = r#"
+fn main() {
+    var v: [u8+] = [];
+    v.push(65);
+    v.push(66);
+    v.push(67);
+    print_bytes(v);
+}
+"#;
+    if let Some(out) = build_and_run("print_bytes", src) {
+        assert_eq!(out, "ABC");
+    }
+}

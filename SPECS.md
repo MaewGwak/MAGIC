@@ -100,6 +100,7 @@ primary    := int | float | string | "true" | "false"
 | `argc()` | → `i32` | number of command-line arguments, including the program name |
 | `arg(i)` | integer → `str` | argument `i`, or `""` when out of range |
 | `env(name)` | `str` → `str` | environment variable, or `""` when unset |
+| `print_bytes(a)` | `[u8]` or `[u8+]` → void | writes the bytes to stdout with no newline |
 
 No other builtins. A user function cannot shadow `sqrt`; the checker resolves it first.
 

@@ -48,3 +48,7 @@
 /bench-db/btree_c
 /bench-db/btree_magic
 /bench-db/btree_magic.c
+/bench-db/sql.dat
+/bench-db/sqlscan_c
+/bench-db/sqlscan_magic
+/bench-db/sqlscan_magic.c

@@ -713,6 +713,22 @@ impl Checker {
                     self.check_expr(&args[1], Some(Ty::Str), scopes)?;
                     return Ok(Ty::Bool);
                 }
+                if name == "print_bytes" {
+                    if args.len() != 1 {
+                        return Err(format!("{}: print_bytes takes 1 argument", e.line));
+                    }
+                    let ok = match &args[0].kind {
+                        ExprKind::Var(n) => lookup_array(scopes, n) == Some(Ty::U8),
+                        _ => false,
+                    };
+                    if !ok {
+                        return Err(format!(
+                            "{}: print_bytes needs a [u8] array or vec",
+                            e.line
+                        ));
+                    }
+                    return Ok(Ty::Void);
+                }
                 if name == "argc" {
                     if !args.is_empty() {
                         return Err(format!("{}: argc takes no arguments", e.line));

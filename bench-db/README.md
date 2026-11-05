@@ -10,7 +10,7 @@ compare against a C implementation of the same design.
 | 1 | Page store: fixed 4 KB pages over `file_*` builtins | **done** |
 | 2 | Buffer pool: page cache with pin/unpin and LRU eviction | next |
 | 3 | B+tree: 64-key nodes, insert/search, leaf and root splits | **in-memory done** |
-| 4 | SQL tokenizer and parser (SELECT/INSERT/CREATE TABLE) | |
+| 4 | SQL tokenizer and parser (SELECT/INSERT/CREATE TABLE) | **tokenizer done** |
 | 5 | Executor: sequential scan, index scan, simple aggregates | |
 | 6 | Persistence: catalog and heap files, crash-safe writes | |
 | 7 | Wire protocol or CLI REPL | |
@@ -35,6 +35,15 @@ compare against a C implementation of the same design.
 | MAGIC | **102 ms** | 232236827703744 | 4716 |
 
 The B+tree is within 4% of C on the same algorithm, with identical checksums and node counts.
+
+`sqlscan`: tokenize 100,000 `INSERT` statements (3.77 MB) into identifiers, numbers and punctuation.
+
+| Program | Median | Tokens | Number sum |
+|---|---:|---:|---:|
+| C | 8 ms | 1,000,000 | 39999600000 |
+| MAGIC | **8 ms** | 1,000,000 | 39999600000 |
+
+The byte-level lexer is at C parity; mutable byte strings are `[u8+]` vecs plus `print_bytes`.
 
 Build and run:
 

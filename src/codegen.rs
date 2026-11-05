@@ -204,6 +204,12 @@ fn header_base(prog: &Program) -> String {
          }\n\n",
     );
 
+    out.push_str(
+        "static void magic_print_bytes(const uint8_t *p, int64_t n) {\n\
+         \x20   fwrite(p, 1, (size_t)n, stdout);\n\
+         }\n\n",
+    );
+
     for s in &prog.structs {
         out.push_str("typedef struct {\n");
         for (fname, fty) in &s.fields {
@@ -931,6 +937,13 @@ fn expr(e: &Expr) -> String {
                     expr(&args[1]),
                     expr(&args[0])
                 );
+            }
+            if name == "print_bytes" && args.len() == 1 {
+                let var = match &args[0].kind {
+                    ExprKind::Var(n) => n.clone(),
+                    _ => String::new(),
+                };
+                return format!("magic_print_bytes((const uint8_t*)({}), {}_len)", var, var);
             }
             if name == "argc" && args.is_empty() {
                 return "(int32_t)magic_argc_v".to_string();

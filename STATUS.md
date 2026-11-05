@@ -39,7 +39,7 @@ move ±5% between runs on this machine, so treat a 1–15 ms gap as a tie.
 
 ## Linux (Fedora 44, Ryzen AI 7 350)
 
-The same gates run natively here: `./verify.sh` covers 127 tests, the doc counts, a 39-case matrix
+The same gates run natively here: `./verify.sh` covers 128 tests, the doc counts, a 39-case matrix
 with checksums and the memory bounds; `./bench-linux.sh` and `./bench-memory.sh` run the pieces.
 GitHub Actions runs the fast gates, the matrix and the memory bounds on Ubuntu.
 
@@ -90,7 +90,7 @@ functions + ~70 ms link.
 
 ## Tests
 
-127 tests, all green (`cargo test`): 44 unit (lexer, parser, checker, codegen) + 22 CLI (the real
+128 tests, all green (`cargo test`): 44 unit (lexer, parser, checker, codegen) + 22 CLI (the real
 `magicc` binary: check/emit/build/run, cache, `--report`, `--version`, `--help`, multi-file, `$CC`
 with arguments) + 15 integration
 (`tests/emit.rs`, including all 14 examples compiling) + 41 end-to-end (`tests/e2e.rs`: compile with
