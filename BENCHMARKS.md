@@ -19,6 +19,15 @@ loss in loop form is n-body (~300 ms vs Rust ~220): LLVM vectorises the unrolled
 but does not unroll the loop nest. Writing the six pairs out closes it — `zig cc` 206–222 ms, gcc
 253 ms. `$CC` may carry arguments (`zig cc`). Memory is lowest or tied-lowest in most workloads.
 
+Other baselines (same build rules):
+
+| Workload | C++ | Go | Goose | MAGIC |
+|---|---:|---:|---:|---:|
+| sieve 100M | 412 | 459 | 429 | **412** |
+| fannkuch | 174 | — | 173 | **157** |
+
+MAGIC is fastest or tied in both, with the lowest memory (99.5 MB and 4.1 MB).
+
 ## 7. Hash table — 1M inserts + 1M lookups
 
 | Implementation | Min (ms) | Median (ms) | Peak (MB) |

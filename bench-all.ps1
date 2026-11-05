@@ -9,6 +9,8 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 $gccDir = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter gcc.exe -ErrorAction SilentlyContinue | Select-Object -First 1).Directory.FullName
 if ($gccDir) { $env:PATH = "$env:USERPROFILE\.cargo\bin;$gccDir;$env:PATH" }
+if (Test-Path 'C:\Program Files\Go\bin') { $env:PATH = "C:\Program Files\Go\bin;$env:PATH" }
+if (Test-Path 'C:\src\goose\build') { $env:PATH = "C:\src\goose\build;$env:PATH" }
 $magicc = Join-Path $root 'target\release\magicc.exe'
 
 function Run-Once([string]$Exe) {
@@ -35,10 +37,15 @@ $cases = @(
     @{ name = 'sieve 100M C';        dir = 'bench-suite';    exe = 'sieve_c.exe';         src = 'sieve_c.c';         kind = 'c';    expect = '5761455' },
     @{ name = 'sieve 100M Rust';     dir = 'bench-suite';    exe = 'sieve_rs.exe';        src = 'sieve_rs.rs';       kind = 'rust'; expect = '5761455' },
     @{ name = 'sieve 100M MAGIC';     dir = 'bench-suite';    exe = 'sieve_magic.exe';      src = 'sieve_magic.magic';   kind = 'magic'; expect = '5761455' },
+    @{ name = 'sieve 100M C++';      dir = 'bench-suite';    exe = 'sieve_cpp.exe';       src = 'sieve_cpp.cpp';     kind = 'cpp';  expect = '5761455' },
+    @{ name = 'sieve 100M Go';       dir = 'bench-suite';    exe = 'sieve_go.exe';        src = 'sieve_go.go';       kind = 'go';   expect = '5761455' },
+    @{ name = 'sieve 100M Goose';    dir = 'bench-suite';    exe = 'sieve_goose.exe';     src = 'sieve_goose.goose'; kind = 'goose'; expect = '5761455' },
 
     @{ name = 'fannkuch C';          dir = 'bench-fannkuch'; exe = 'fannkuch_c.exe';      src = 'fannkuch_c.c';      kind = 'c';    expect = "73196`n38" },
     @{ name = 'fannkuch Rust';       dir = 'bench-fannkuch'; exe = 'fannkuch_rs.exe';     src = 'fannkuch_rs.rs';    kind = 'rust'; expect = "73196`n38" },
     @{ name = 'fannkuch MAGIC';       dir = 'bench-fannkuch'; exe = 'fannkuch_magic.exe';   src = 'fannkuch_magic.magic'; kind = 'magic'; expect = "73196`n38" },
+    @{ name = 'fannkuch C++';        dir = 'bench-fannkuch'; exe = 'fannkuch_cpp.exe';    src = 'fannkuch_cpp.cpp';  kind = 'cpp';  expect = "73196`n38" },
+    @{ name = 'fannkuch Goose';      dir = 'bench-fannkuch'; exe = 'fannkuch_goose.exe';  src = 'fannkuch_goose.goose'; kind = 'goose'; expect = "73196`n38" },
 
     @{ name = 'matmul C';            dir = 'bench-suite';    exe = 'matmul_c.exe';        src = 'matmul_c.c';        kind = 'c';    expect = '326316140' },
     @{ name = 'matmul Rust';         dir = 'bench-suite';    exe = 'matmul_rs.exe';       src = 'matmul_rs.rs';      kind = 'rust'; expect = '326316140' },
@@ -77,6 +84,9 @@ if ($Rebuild) {
             'magic' { & $magicc build $c.src 2>&1 | Out-Null }
             'rust' { rustc -C opt-level=3 -o $c.exe $c.src 2>&1 | Out-Null }
             'c'    { gcc -O3 -o $c.exe $c.src 2>&1 | Out-Null }
+            'cpp'  { g++ -O3 -o $c.exe $c.src 2>&1 | Out-Null }
+            'go'   { go build -o $c.exe $c.src 2>&1 | Out-Null }
+            'goose' { goose build $c.src 2>&1 | Out-Null }
         }
         $code = $LASTEXITCODE
         Pop-Location
