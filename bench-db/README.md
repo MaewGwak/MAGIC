@@ -21,8 +21,12 @@ compare against a C implementation of the same design.
 
 | Program | Median | Result |
 |---|---:|---|
-| C | 327 ms | 6367960 |
-| MAGIC | **323 ms** | 6367960 |
+| Rust | **211 ms** | 6367960 |
+| C | 329 ms | 6367960 |
+| MAGIC | 329 ms | 6367960 |
+
+Rust's `std::fs` reads and writes without a stdio layer and is 1.5x faster here; C and MAGIC both go
+through `stdio`, so they match. Everything else is at parity.
 
 195 MB moved in about 325 ms, roughly 600 MB/s, with identical output. The file is 195 MB on disk;
 `pageio.dat` is ignored by git.
@@ -42,8 +46,9 @@ lower bound or index a node at the wrong stride; both are covered by the shipped
 
 | Program | Median | Tokens | Number sum |
 |---|---:|---:|---:|
+| Rust | **8 ms** | 1,000,000 | 39999600000 |
 | C | 8 ms | 1,000,000 | 39999600000 |
-| MAGIC | **8 ms** | 1,000,000 | 39999600000 |
+| MAGIC | 8 ms | 1,000,000 | 39999600000 |
 
 The byte-level lexer is at C parity; mutable byte strings are `[u8+]` vecs plus `print_bytes`.
 
@@ -64,10 +69,10 @@ scan, parity on the index).
 
 `hashmap`: open addressing over two `i64` arrays, 1,000,000 inserts and lookups.
 
-| | C | MAGIC |
-|---|---:|---:|
-| time | 37 ms | 38 ms |
-| checksum | 1500001500000 | 1500001500000 |
+| | Rust | C | MAGIC |
+|---|---:|---:|---:|
+| time | **34 ms** | 38 ms | 38 ms |
+| checksum | 1500001500000 | 1500001500000 | 1500001500000 |
 
 The same map lives in `examples/hashmap.magic` as the language's collections pattern (no builtin
 container type is needed).
@@ -91,12 +96,12 @@ B+tree over the keys, and answers 10,000 point lookups with the index or with a 
 `bufpool`: 512 disk pages of 4 KB, 64 frames, LRU eviction, 200,000 random accesses (the LCG's high
 bits choose the page, so the low bits do not cycle).
 
-| | C | MAGIC |
-|---|---:|---:|
-| hits | 24,997 | 24,997 |
-| misses | 175,003 | 175,003 |
-| checksum | 25,510,321 | 25,510,321 |
-| time | 128 ms | 128 ms |
+| | Rust | C | MAGIC |
+|---|---:|---:|---:|
+| hits | 24,997 | 24,997 | 24,997 |
+| misses | 175,003 | 175,003 | 175,003 |
+| checksum | 25,510,321 | 25,510,321 | 25,510,321 |
+| time | **121 ms** | 125 ms | 128 ms |
 
 Identical results and identical time: the pool is a few arrays and a linear scan, which both
 languages compile to the same loop.

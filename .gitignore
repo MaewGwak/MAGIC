@@ -74,3 +74,13 @@
 /bench-db/pgserver_magic
 /bench-db/pgserver_magic.c
 /examples/*.bin
+/bench-db/btree_rs
+/bench-db/btree_rs.rs
+/bench-db/hashmap_rs
+/bench-db/hashmap_rs.rs
+/bench-db/sqlscan_rs
+/bench-db/sqlscan_rs.rs
+/bench-db/pageio_rs
+/bench-db/pageio_rs.rs
+/bench-db/bufpool_rs
+/bench-db/bufpool_rs.rs

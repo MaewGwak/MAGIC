@@ -139,6 +139,9 @@ answers real queries. Every component is benchmarked against C and matches it wi
 - Collections pattern: `examples/hashmap.magic` is an open-addressing i64 map over arrays, and the
   same code benchmarked at 1,000,000 inserts plus lookups runs in 38 ms against C's 37 ms with an
   identical checksum.
+- Rust baselines for the database components: Rust is 1.5x faster than C on the `pageio` microbenchmark
+  (211 ms vs 329 ms, because `std::fs` bypasses stdio), 0-10% faster on the B+tree, buffer pool and
+  hash map, and level on the SQL tokenizer. MAGIC matches C within 0-3% on every component.
 - The harness now times with a precise wall clock (WaitForExit) while sampling peak memory in a
   second run, so sub-15 ms results are real.
 
