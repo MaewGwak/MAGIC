@@ -428,6 +428,7 @@ fn examples_produce_expected_output() {
         ("cast", "3\n7"),
         ("fib", "832040"),
         ("for", "45"),
+        ("hashmap", "2500\n1000000\n-1"),
         ("hello", "Hello, MAGIC!"),
         ("tokenize", "43\n8\n35"),
         ("inventory", "103\n4\n60"),
