@@ -30,6 +30,11 @@ struct Emitter {
     frame: i64,
     ret_label: String,
     loops: Vec<(String, String)>,
+    /// Trivial functions: (parameter names, body expression) for inlining.
+    inlinable: HashMap<String, (Vec<String>, Expr)>,
+    /// Parameter substitution scopes while emitting an inlined body.
+    subst: Vec<HashMap<String, Expr>>,
+    inline_depth: usize,
 }
 
 fn align16(n: i64) -> i64 {
@@ -52,6 +57,9 @@ impl Emitter {
             frame: 0,
             ret_label: String::new(),
             loops: Vec::new(),
+            inlinable: HashMap::new(),
+            subst: Vec::new(),
+            inline_depth: 0,
         }
     }
 
@@ -112,6 +120,37 @@ impl Emitter {
             ExprKind::Int(v) => Some(*v),
             ExprKind::Var(n) => consts.get(n).copied(),
             ExprKind::Un { op: UnOp::Neg, e } => Self::const_int(e, consts).map(|v| -v),
+            ExprKind::Cast { e, ty } => {
+                let v = Self::const_int(e, consts)?;
+                Some(match ty {
+                    Ty::I32 => v as i32 as i64,
+                    Ty::U8 => v as u8 as i64,
+                    Ty::Bool => (v != 0) as i64,
+                    _ => v,
+                })
+            }
+            ExprKind::Bin { op, l, r } => {
+                let a = Self::const_int(l, consts)?;
+                let b = Self::const_int(r, consts)?;
+                Some(match op {
+                    BinOp::Add => a.checked_add(b)?,
+                    BinOp::Sub => a.checked_sub(b)?,
+                    BinOp::Mul => a.checked_mul(b)?,
+                    BinOp::Div => {
+                        if b == 0 {
+                            return None;
+                        }
+                        a.checked_div(b)?
+                    }
+                    BinOp::Rem => {
+                        if b == 0 {
+                            return None;
+                        }
+                        a.checked_rem(b)?
+                    }
+                    _ => return None,
+                })
+            }
             _ => None,
         }
     }
@@ -226,20 +265,15 @@ impl Emitter {
             .ok_or_else(|| format!("native backend line {}: unknown array `{}`", line, name))?;
         let len_slot = self.array_len_slot.get(name).copied();
         let msg = self.panic_msg(line, "index out of bounds");
-        let nonneg = self.fresh("idxnn");
         let ok = self.fresh("idxok");
-        self.line(&format!("    cmp $0, {}", idx));
-        self.line(&format!("    jge {}", nonneg));
-        self.line(&format!("    lea {}(%rip), %rdi", msg));
-        self.call(".Lmagic_panic");
-        self.line(&format!("{}:", nonneg));
+        // One unsigned compare catches both negative and too-large indexes.
         if let Some(len_off) = len_slot {
             self.line(&format!("    mov -{}(%rbp), %r11", len_off));
             self.line(&format!("    cmp %r11, {}", idx));
         } else {
             self.line(&format!("    cmp ${}, {}", len, idx));
         }
-        self.line(&format!("    jl {}", ok));
+        self.line(&format!("    jb {}", ok));
         self.line(&format!("    lea {}(%rip), %rdi", msg));
         self.call(".Lmagic_panic");
         self.line(&format!("{}:", ok));
@@ -282,7 +316,27 @@ impl Emitter {
                 self.line(&format!("    lea {}(%rip), %rax", label));
             }
             ExprKind::Var(n) => {
-                if let Some(off) = self.locals.get(n) {
+                let found = self
+                    .subst
+                    .iter()
+                    .rposition(|scope| scope.contains_key(n));
+                if let Some(idx) = found {
+                    if self.inline_depth > 8 {
+                        return Err(format!(
+                            "native backend line {}: inlining nested too deeply",
+                            e.line
+                        ));
+                    }
+                    // Remove this scope while emitting the replacement, so an
+                    // argument with the same name as the parameter resolves to
+                    // the caller's variable instead of recursing forever.
+                    let scope = self.subst.remove(idx);
+                    let replacement = scope[n].clone();
+                    self.inline_depth += 1;
+                    self.expr(&replacement)?;
+                    self.inline_depth -= 1;
+                    self.subst.insert(idx, scope);
+                } else if let Some(off) = self.locals.get(n) {
                     self.line(&format!("    mov -{}(%rbp), %rax", *off));
                 } else if let Some((off, _, _)) = self.arrays.get(n) {
                     self.line(&format!("    mov -{}(%rbp), %rax", *off));
@@ -512,6 +566,43 @@ impl Emitter {
         Ok(true)
     }
 
+    fn trivial_expr(e: &Expr, params: &std::collections::HashSet<String>) -> bool {
+        match &e.kind {
+            ExprKind::Int(_) | ExprKind::Bool(_) => true,
+            ExprKind::Var(n) => params.contains(n),
+            ExprKind::Bin { l, r, .. } => Self::trivial_expr(l, params) && Self::trivial_expr(r, params),
+            ExprKind::Un { e, .. } => Self::trivial_expr(e, params),
+            ExprKind::Cast { e, .. } => Self::trivial_expr(e, params),
+            _ => false,
+        }
+    }
+
+    fn collect_inlinable(prog: &Program) -> HashMap<String, (Vec<String>, Expr)> {
+        let mut out = HashMap::new();
+        for f in &prog.funcs {
+            if f.body.len() != 1 {
+                continue;
+            }
+            let StmtKind::Return(Some(e)) = &f.body[0].kind else {
+                continue;
+            };
+            let params: Vec<String> = f
+                .params
+                .iter()
+                .filter(|(_, p)| matches!(p, ParamTy::Scalar(_)))
+                .map(|(n, _)| n.clone())
+                .collect();
+            if params.len() != f.params.len() {
+                continue;
+            }
+            let set: std::collections::HashSet<String> = params.iter().cloned().collect();
+            if Self::trivial_expr(e, &set) {
+                out.insert(f.name.clone(), (params, e.clone()));
+            }
+        }
+        out
+    }
+
     fn call_expr(&mut self, name: &str, args: &[Expr], line: usize) -> Result<(), String> {
         if name == "flush" && args.is_empty() {
             self.call("fflush@PLT");
@@ -569,6 +660,36 @@ impl Emitter {
         }
         if self.file_builtin(name, args, line)? {
             return Ok(());
+        }
+        if let Some((params, body)) = self.inlinable.get(name).cloned() {
+            if params.len() == args.len()
+                && args.iter().all(|a| {
+                    matches!(
+                        a.kind,
+                        ExprKind::Int(_)
+                            | ExprKind::Bool(_)
+                            | ExprKind::Var(_)
+                            | ExprKind::Bin { .. }
+                            | ExprKind::Un { .. }
+                            | ExprKind::Cast { .. }
+                            | ExprKind::Index { .. }
+                            | ExprKind::ArrayLen(_)
+                    )
+                })
+                && self.inline_depth < 8
+            {
+                let scope: HashMap<String, Expr> = params
+                    .iter()
+                    .cloned()
+                    .zip(args.iter().cloned())
+                    .collect();
+                self.subst.push(scope);
+                self.inline_depth += 1;
+                let r = self.expr(&body);
+                self.inline_depth -= 1;
+                self.subst.pop();
+                return r;
+            }
         }
         let n = args.len();
         if n > 6 {
@@ -923,6 +1044,7 @@ impl Emitter {
 
 pub fn emit(prog: &Program) -> Result<String, String> {
     let mut e = Emitter::new();
+    e.inlinable = Emitter::collect_inlinable(prog);
     e.line(".text");
     for f in &prog.funcs {
         e.func(f)?;
