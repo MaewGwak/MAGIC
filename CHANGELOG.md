@@ -22,13 +22,13 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - `import "lib.magic";` pulls files in, deduplicated by canonical path and dependencies-first
   (no namespaces yet). Diagnostics are mapped back to the file and line that produced them.
 - `$CC` may carry arguments, e.g. `zig cc`; the unrolled n-body reaches 206–222 ms under LLVM
-  (Rust 219–221) and 253 ms under GCC.
+  (Rust 219–221) and 253 ms under GCC. `--cc "zig cc"` overrides `$CC` per invocation.
 - `magicc --version`, `--help`; the usage line reads the crate version.
 - `--report` sizes array counts written as expressions (`n * n`) and struct elements (C layout, including padding).
 - `-fno-asynchronous-unwind-tables -fno-ident` by default: `big.exe` 201,673 → 167,105 bytes, one-function rebuild 280 → 271 ms.
 
 **Verification**
-- 116 tests: 44 unit, 16 CLI, 15 integration, 41 end-to-end.
+- 117 tests: 44 unit, 17 CLI, 15 integration, 41 end-to-end.
 - `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (37 cases), `bench-memory.ps1`.
 
 ## v0.3 — the memory model

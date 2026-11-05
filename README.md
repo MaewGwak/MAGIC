@@ -2,7 +2,7 @@
 
 A small systems language that compiles to C11 and runs anywhere a C compiler does.
 
-**Status: v0.4** — 116 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.4** — 117 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is ~2.5k lines of dependency-free Rust; programs go source → tokens → AST → type
 check → C11 → native binary.
 
@@ -43,6 +43,7 @@ magicc build examples\hello.magic            # write hello.c, compile
 magicc run   examples\fib.magic              # build and run
 magicc build big.magic --native              # -march=native (not portable)
 magicc build big.magic --dev                 # -O0 for fast iteration
+magicc build big.magic --cc "zig cc"         # pick the C compiler (may carry arguments)
 magicc build main.magic lib.magic             # several files compile as one program, in order
 ```
 

@@ -26,6 +26,14 @@ fn run() -> Result<(), String> {
     let report_bound = args.iter().any(|a| a == "--report");
     let dev = args.iter().any(|a| a == "--dev");
     args.retain(|a| a != "--native" && a != "--report" && a != "--dev");
+    let mut cc_override: Option<String> = None;
+    if let Some(pos) = args.iter().position(|a| a == "--cc") {
+        if pos + 1 >= args.len() {
+            return Err("--cc needs a command, e.g. --cc \"zig cc\"".to_string());
+        }
+        cc_override = Some(args[pos + 1].clone());
+        args.drain(pos..=pos + 1);
+    }
     if args.len() == 2 && (args[1] == "--version" || args[1] == "-V") {
         println!("magicc {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -33,14 +41,15 @@ fn run() -> Result<(), String> {
     if args.len() == 2 && (args[1] == "--help" || args[1] == "-h") {
         println!(
             "🔮 magicc {} - the MAGIC compiler\n\n\
-             usage: magicc <check|emit|build|run> <file.magic> [--native] [--report] [--dev]\n\n\
+             usage: magicc <check|emit|build|run> <file.magic> [--native] [--report] [--dev] [--cc \"cmd\"]\n\n\
              \x20 check   parse + type check only\n\
              \x20 emit    print the generated C to stdout\n\
              \x20 build   write <file>.c and compile it\n\
              \x20 run     build, then run\n\n\
              \x20 --native  add -march=native to gcc\n\
              \x20 --report  print the static memory bound\n\
-             \x20 --dev     compile at -O0 for fast iteration",
+             \x20 --dev     compile at -O0 for fast iteration\n\
+             \x20 --cc      C compiler command, may carry arguments (e.g. \"zig cc\")",
             env!("CARGO_PKG_VERSION")
         );
         return Ok(());
@@ -110,7 +119,10 @@ fn run() -> Result<(), String> {
             } else {
                 with_ext(src_path, "bin")
             };
-            let cc = find_cc().ok_or("no C compiler found (tried $CC, gcc, clang, cc)")?;
+            let cc = cc_override
+                .clone()
+                .or_else(find_cc)
+                .ok_or("no C compiler found (tried $CC, gcc, clang, cc)")?;
 
             if chunks.len() == 1 {
                 let c_path = with_ext(src_path, "c");

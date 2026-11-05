@@ -323,6 +323,26 @@ fn errors_point_at_the_imported_file() {
 }
 
 #[test]
+fn cc_flag_overrides_cc_env() {
+    if !has_compiler() {
+        return;
+    }
+    let dir = TempDir::new("ccflag");
+    let src = dir.path().join("f.magic");
+    std::fs::write(&src, "fn main() { print(6 * 7); }\n").unwrap();
+    let out = Command::new(magicc())
+        .args(["build", src.to_str().unwrap(), "--cc", "gcc -O1"])
+        .env("CC", "definitely-not-a-compiler")
+        .output()
+        .expect("run magicc");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
 fn cc_env_may_include_arguments() {
     if !has_compiler() {
         return;
