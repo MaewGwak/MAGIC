@@ -29,7 +29,7 @@ All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bu
 - `-fno-asynchronous-unwind-tables -fno-ident` by default: `big.exe` 201,673 → 167,105 bytes, one-function rebuild 280 → 271 ms.
 
 **Verification**
-- 118 tests: 44 unit, 18 CLI, 15 integration, 41 end-to-end.
+- 119 tests: 44 unit, 19 CLI, 15 integration, 41 end-to-end.
 - `verify.ps1` (+ `-Fast`), `check-docs.ps1`, `bench-all.ps1` (41 cases, 40 without Zig), `bench-memory.ps1`.
 
 ## v0.3 — the memory model
