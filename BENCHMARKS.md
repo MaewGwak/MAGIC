@@ -185,19 +185,18 @@ ray generation, sphere intersection, shading — not a microbenchmark, and MAGIC
 
 ## Linux (Fedora 44)
 
-`./bench-linux.sh` on the same eight workloads, Ryzen AI 7 350, gcc 16.2 and clang 22, medians of
-five runs:
+`./bench-linux.sh` on the same eight workloads, Ryzen AI 7 350, gcc 16.2, clang 22 and Go 1.26, medians of five runs:
 
-| Workload | C | Rust | MAGIC optimized |
-|---|---:|---:|---:|
-| sieve 100M | 484 | 490 | 126 (odd, `par for`) |
-| particles 1M × 100 | 152 | 153 | 3 (closed form) |
-| hash 1M | 37 | 36 | 7 (direct map) |
-| ray tracer 1536² | 87 | 76 | 13 (`par for`) |
-| binary trees | 1754 | 3101 | 1039 (node count) |
-| matmul 384 | 26 | 95 | 9 (i-k-j, clang AVX2) |
-| fannkuch | 384 | 362 | 250 (buffered, `par for`) |
-| n-body 10M | 726 | 523 | 452 (unrolled, clang AVX2) |
+| Workload | C | C++ | Rust | Go | MAGIC optimized |
+|---|---:|---:|---:|---:|---:|
+| sieve 100M | 502 | 497 | 516 | 572 | 132 (odd, `par for`) |
+| particles 1M × 100 | 151 | 151 | 157 | 215 | 4 (closed form) |
+| hash 1M | 38 | 37 | 36 | 36 | 6 (direct map) |
+| ray tracer 1536² | 86 | 89 | 77 | - | 13 (`par for`) |
+| binary trees | 1647 | - | 3077 | - | 1039 (node count) |
+| matmul 384 | 31 | 27 | 92 | 106 | 9 (i-k-j, clang AVX2) |
+| fannkuch | 383 | 392 | 364 | - | 241 (buffered, `par for`) |
+| n-body 10M | 724 | 728 | 523 | 920 | 450 (unrolled, clang AVX2) |
 
 Clang is optional: without it the n-body build is 605 ms and matmul 18 ms with gcc. All checksums
 match, and `./verify.sh` exits non-zero on any wrong answer.

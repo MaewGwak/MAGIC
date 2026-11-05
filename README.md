@@ -188,18 +188,19 @@ parallel fannkuch (106 ms vs 162 ms for C — **1.5x** — at ~40 MB). Times are
 medians of five interleaved runs; the harness now times with a precise wall clock, so sub-15 ms
 readings are real rather than timer ticks.
 
-On Linux (Fedora 44, Ryzen AI 7 350, gcc 16.2, clang 22) the same variants win:
+On Linux (Fedora 44, Ryzen AI 7 350, gcc 16.2, clang 22, Go 1.26) the same variants win against
+all five baselines:
 
-| Workload | C | Rust | MAGIC optimized | margin |
-|---|---:|---:|---:|---:|
-| sieve 100M | 484 | 490 | 126 | 3.8x |
-| particles 1M × 100 | 152 | 153 | 3 | 50x |
-| hash 1M | 37 | 36 | 7 | 5.3x |
-| ray tracer 1536² | 87 | 76 | 13 | 5.8x |
-| binary trees | 1754 | 3101 | 1039 | 1.7x |
-| matmul 384 | 26 | 95 | 9 | 2.9x |
-| fannkuch | 384 | 362 | 250 | 1.5x |
-| n-body 10M | 726 | 523 | 452 | 1.16x |
+| Workload | C | C++ | Rust | Go | MAGIC optimized | margin |
+|---|---:|---:|---:|---:|---:|---:|
+| sieve 100M | 502 | 497 | 516 | 572 | 132 | 3.8x |
+| particles 1M × 100 | 151 | 151 | 157 | 215 | 4 | 37x |
+| hash 1M | 38 | 37 | 36 | 36 | 6 | 6x |
+| ray tracer 1536² | 86 | 89 | **77** | - | 13 | 5.9x |
+| binary trees | 1647 | - | 3077 | - | 1039 | 1.6x |
+| matmul 384 | 31 | 27 | 92 | 106 | 9 | 3x |
+| fannkuch | 383 | 392 | 364 | - | 241 | 1.5x |
+| n-body 10M | 724 | 728 | **523** | 920 | 450 | 1.16x |
 
 The n-body and matmul rows use clang for their AVX2 builds; without clang the n-body build is
 605 ms (gcc). `./verify.sh` runs the tests, the doc counts and this matrix.
