@@ -15,3 +15,6 @@
 *.s
 /bench-suite/nbody_unrolled.c
 /bench-suite/nbody_unrollpragma.c
+/bench-suite/nu_*.c
+/bench-suite/odd_small.c
+/bench-suite/sieve_magic_odd.c
