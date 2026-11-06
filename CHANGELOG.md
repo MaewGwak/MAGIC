@@ -30,6 +30,15 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.41 — scaled-index cache and displacement addressing in the IR (2026-11-06)
+
+`IndexField` accesses inside a block now share a cached `index * struct_size` register (up to four
+entries) and use the field offset as an x86 displacement, so a struct update no longer recomputes the
+scale for every field. A bug where float struct stores took the source through the integer operand
+path (producing garbage) was caught by the extended float corpus and fixed before release. Medians:
+particles 735 → 605 ms, raytrace 277 → 257 ms, vecpart 170 → 158 ms; matmul, sieve, btree and nbody
+are unchanged (nbody A/B confirmed identical timing at ~2.07 s).
+
 ## v0.8.40 — local value numbering in the IR (2026-11-06)
 
 A new CSE pass merges duplicate constants, variable loads and pure arithmetic inside each basic
