@@ -1,4 +1,13 @@
-## v1.0.0 — real 1.0.0: best-practical backend (2026-11-07)
+## v0.12.0 — 1.0.0 withheld until best-of win (2026-11-07)
+
+The 1.0.0 version/tag is withdrawn. A no-bias best-of-language suite (`bench-best/RESULTS.md`)
+shows MAGIC does not yet beat the best C/C++/Rust: it loses fannkuch (Rust 9.01 ms vs MAGIC C
+17.15 ms) and raytrace (C/C++ 3.23 ms vs MAGIC 7.29 ms), while the rest are ties at the
+process/start-up floor. 1.0.0 will be re-tagged only after a measured best-of win. Current work:
+implement the missing SIMD/algorithm pieces (fannkuch PSHUFB/SIMD, raytrace AVX2/intrinsics) and
+strengthen the native/default path without weakening baselines or exact outputs.
+
+## v1.0.0 — withdrawn (best-of win not established)
 
 Owner-confirmed 1.0.0, rolling in the intermediate 1.0.1–1.0.4 documentation and optimization
 commits; those intermediate tags are removed so `v1.0.0` is the single release tag. The optimized
