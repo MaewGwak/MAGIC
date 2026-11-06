@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.10 (0.10.5)** — 169 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.10 (0.10.6)** — 169 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -168,7 +168,7 @@ shipped for that workload and is always named.
 | ray tracer 1536² | 42 | 44 | 35 | 120 | **22** (`par for`) | **win** |
 | hash 1M | 28 | 32 | 25 | 39 | 30 (`par for`) | 1.20x |
 | particles 1M × 100 | 72 | 72 | 143 | **84** (2-step fusion) | 135 (`par for`) | 1.17x |
-| n-body 10M | 310 | 308 | 223 | 873 | 869 | 3.90x |
+| n-body 10M | 309 | 312 | **224** | **613** (loop) | 613 | 2.74x |
 | binary trees | 725 | — | 1333 | 3904 | **467** (native loop) | **win** |
 | matmul 384 | 12 | 15 | 42 | **9** (interchange SIMD) | 10 (i-k-j) | **win** |
 
@@ -177,7 +177,7 @@ Cold compilation of the 2,000-function source is 25 ms versus 47 ms for gcc, 109
 69 ms for Goose; incremental rebuild after one edit is 10 ms.
 
 The speed goal is **partially met**: three outright wins and hash inside 1.25x, but matmul, binary
-trees and n-body still trail (particles is now inside 1.25x). The memory win is proven on all eight workloads. The static runtime also implements syscall-backed file I/O and TCP (`net_listen/port/connect/accept/read/write/close`). It formats `print_prec` via fixed-point (precision <= 9, overflow and larger precisions exit with an error) and rejects `%g`/`print` of floats explicitly.
+n-body native IR still trails (particles is inside 1.25x). The memory win is proven on all eight workloads. The static runtime also implements syscall-backed file I/O and TCP (`net_listen/port/connect/accept/read/write/close`). It formats `print_prec` via fixed-point (precision <= 9, overflow and larger precisions exit with an error) and rejects `%g`/`print` of floats explicitly.
 Full tables, methodology and honest gaps: [`BENCHMARKS.md`](BENCHMARKS.md).
 
 ```bash

@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.6 — in-place float destinations (2026-11-06)
+
+The float emitter now reuses an operand register for the result when that operand is dead at the
+instruction (`x_dead` + `xdst_at`, plus FNeg/Sqrt). This cuts register pressure: n-body 760 -> 608–629
+ms, raytrace 102 -> 80–86 ms, particles 84 -> 79–87, vecpart unchanged. N-body is still 2.7x behind
+Rust's 224 ms but now close to twice C's 309 ms. All gates pass, 169 tests, parity 60/60, static and
+static-memory green.
+
 ## v0.10.5 — native-IR binary-tree loop win (2026-11-06)
 
 The matrix now builds `bt_magic_loop.magic` with the native IR backend instead of the C backend:

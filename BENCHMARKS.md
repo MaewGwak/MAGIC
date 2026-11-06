@@ -63,7 +63,7 @@ baseline, lower is better.
 | hash 1M | 28 | 32 | 25 | 39 | 30 (`par for`) | 1.20 | within 1.25x |
 | fannkuch buffer variant | 168 | 168 | 159 | 166 | — | 1.04 | within 1.25x |
 | particles 1M × 100 | 72 | 72 | 143 | 84 (2-step fusion) | 135 (`par for`) | 1.17 | within 1.25x |
-| n-body 10M steps | 310 | 308 | 223 | 873 | 869 (loop) | 3.90 | loss |
+| n-body 10M steps | 309 | 312 | **224** | **613** (loop) | 613 | 2.74 | loss |
 | binary trees | 725 | — | 1333 | 3904 | **467** (native loop) | 0.64 | **outright win** |
 | matmul 384 | **12** | 15 | 42 | **9** (interchange SIMD) | 10 (i-k-j) | 0.75 | **outright win** |
 
@@ -73,7 +73,7 @@ What this says:
   the raytracer (`par for`), and i-k-j matmul (`SaxpyI32`, 8 ms versus C 12 ms). Hash with `par for`
   is inside 1.25x.
 - The speed goal is met for seven workloads via the best variant (five native compiler wins plus hash
-  direct and particles closed); n-body native IR is 3.4x behind, but its C-backend AVX2 build is
+  direct and particles closed); n-body native IR is 2.7x behind, but its C-backend AVX2 build is
   189 ms, inside 1.25x of Rust 224. Default matmul is now solved too (interchange → saxpy, 9 ms).
 
 ## Peak RSS (C vs MAGIC, same outputs)
@@ -162,7 +162,7 @@ One `bench-linux.sh` run on the Ryzen AI 7 350 host, medians of the harness:
 | sieve 100M | 431 | 437 | 433 | 450 | **385** | 33 (block odd) |
 | fannkuch 10 | **160** (Rust) | 186 | 160 | 175 | 263 | **69** (blocks) |
 | matmul 384 | **12** | 12 | 40 | 39 | **9** | 9 |
-| n-body 5M | 309 | 312 | **224** | 308 | 772 (loop) | 772 |
+| n-body 5M | 309 | 312 | **224** | 308 | **613** (loop) | 613 |
 | raytrace 64³ | 37 | 42 | **35** | 38 | 104 | **20** (par) |
 | hash 1M | **27** (Rust) | 31 | 27 | 28 | 42 | 30 (par) |
 | particles 1M×100 | **72** | 72 | 143 | 143 | 148 | 6 (closed) |

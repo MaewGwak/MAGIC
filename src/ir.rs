@@ -4324,6 +4324,11 @@ impl<'a> RegAlloc<'a> {
         idx
     }
 
+    fn xdst_at(&mut self, v: Value, idx: usize) -> usize {
+        self.xmap.insert(v, (idx, true));
+        idx
+    }
+
     fn xdst_excluding(&mut self, v: Value, protected: &[usize]) -> usize {
         let idx = self.xalloc_excluding(protected);
         self.xmap.insert(v, (idx, true));
@@ -5132,7 +5137,14 @@ fn emit_fast_block(
             Instr::FBin { dst, op, l, r } => {
                 let a = ra.xoperand(*l);
                 let b = ra.xoperand_excluding(*r, &[a]);
-                let d = ra.xdst_excluding(*dst, &[a, b]);
+                let commutative = matches!(op, Op::Add | Op::Mul);
+                let dead_a = ra.x_dead(*l, ii);
+                let dead_b = if commutative && dead_a.is_none() { ra.x_dead(*r, ii) } else { None };
+                let d = match (dead_a, dead_b) {
+                    (Some(i), _) => ra.xdst_at(*dst, i),
+                    (None, Some(i)) => ra.xdst_at(*dst, i),
+                    (None, None) => ra.xdst_excluding(*dst, &[a, b]),
+                };
                 let m = match op {
                     Op::Add => "addsd",
                     Op::Sub => "subsd",
@@ -5159,8 +5171,13 @@ fn emit_fast_block(
             }
             Instr::FNeg { dst, a } => {
                 let s = ra.xoperand(*a);
-                let d = ra.xdst_excluding(*dst, &[s]);
-                ra.out.push_str(&format!("    movapd {}, {}\n", XMM[s], XMM[d]));
+                let d = match ra.x_dead(*a, ii) {
+                    Some(i) => ra.xdst_at(*dst, i),
+                    None => ra.xdst_excluding(*dst, &[s]),
+                };
+                if d != s {
+                    ra.out.push_str(&format!("    movapd {}, {}\n", XMM[s], XMM[d]));
+                }
                 ra.out.push_str(&format!("    xorpd .Lf64sign(%rip), {}\n", XMM[d]));
                 ra.xdef_store(*dst, d);
                 ra.free_dead(ii);
@@ -5204,8 +5221,13 @@ fn emit_fast_block(
             }
             Instr::Sqrt { dst, a } => {
                 let s = ra.xoperand(*a);
-                let d = ra.xdst_excluding(*dst, &[s]);
-                ra.out.push_str(&format!("    movapd {}, {}\n", XMM[s], XMM[d]));
+                let d = match ra.x_dead(*a, ii) {
+                    Some(i) => ra.xdst_at(*dst, i),
+                    None => ra.xdst_excluding(*dst, &[s]),
+                };
+                if d != s {
+                    ra.out.push_str(&format!("    movapd {}, {}\n", XMM[s], XMM[d]));
+                }
                 ra.out.push_str(&format!("    sqrtsd {}, {}\n", XMM[d], XMM[d]));
                 ra.xdef_store(*dst, d);
                 ra.free_dead(ii);
