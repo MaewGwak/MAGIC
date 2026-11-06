@@ -387,6 +387,20 @@ fn main() {
 "#,
         ),
         (
+            "scalarize_const_arrays",
+            r#"
+fn main() {
+    var a: [i32] = [7; 4];
+    var b: [f64] = [0.0; 3];
+    a[0] = a[1] + 5;
+    a[2] = a[0] * 2;
+    b[0] = 1.5; b[1] = b[0] * 2.0; b[2] = b[1] + b[0];
+    print(a[0]); print(a[2]); print(a[3]);
+    print_prec(b[0] + b[1] + b[2], 3);
+}
+"#,
+        ),
+        (
             "const_small_loop_unroll",
             r#"
 fn main() {

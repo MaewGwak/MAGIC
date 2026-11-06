@@ -2136,7 +2136,7 @@ impl Builder {
                 // machinery and, more importantly, turns every index into a
                 // constant so the bounds prover can drop its checks (n-body's
                 // four-body nests are the motivating case).
-                if self.suppress_unroll == 0 {
+                if true {
                 if let (Some(a), Some(b)) = (self.const_eval(start), self.const_eval(end)) {
                     let n = b.saturating_sub(a);
                     if (0..=8).contains(&n)
@@ -2145,7 +2145,6 @@ impl Builder {
                             stmt_has_break(st) || stmt_has_continue(st) || stmt_declares_name(st, var) || stmt_has_loop(st)
                         })
                     {
-                        self.suppress_unroll += 1;
                         for k in a..b {
                             let cv = self.value();
                             self.push(Instr::Const { dst: cv, v: k });
@@ -2161,7 +2160,6 @@ impl Builder {
                             self.subst_consts.pop();
                             self.subst_stack.pop();
                         }
-                        self.suppress_unroll -= 1;
                         return Ok(());
                     }
                 }
@@ -5429,6 +5427,147 @@ fn compress_i32_variable_traffic(prog: &mut IrProgram) {
 /// Replace signed `/` and `%` by a positive power-of-two constant with the
 /// classic sign-correction + shift sequence, avoiding a hardware division
 /// (hash and tree probes use `x % (1 << k)` inside their hottest loops).
+/// Replace a small array whose every access has a constant index with
+/// individual scalar slots. Combined with full unrolling this turns the
+/// n-body four-body arrays into straight-line scalar code with no pointer,
+/// bounds or scaling work.
+fn scalarize_const_arrays(prog: &mut IrProgram) {
+    for f in &mut prog.funcs {
+        let mut vals: HashMap<Value, i64> = HashMap::new();
+        let mut vc: HashMap<usize, i64> = HashMap::new();
+        for _ in 0..6 {
+            vals = compute_value_consts(f, &vc);
+            let next = compute_var_consts(f, &vals);
+            if next == vc {
+                break;
+            }
+            vc = next;
+        }
+        let mut candidates: Vec<(usize, Ty, i64)> = Vec::new();
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                if let Instr::Alloc { ptr_var, elem, len, arena, .. } = ins {
+                    if *arena {
+                        continue;
+                    }
+                    if let Some(n) = vals.get(len).copied() {
+                        if n > 0 && n <= 16 && !matches!(elem, Ty::Struct(_)) {
+                            candidates.push((*ptr_var, *elem, n));
+                        }
+                    }
+                }
+            }
+        }
+        for (p, elem, n) in candidates {
+            let mut ok = true;
+            let mut fill: Option<Value> = None;
+            for b in &f.blocks {
+                for ins in &b.instrs {
+                    match ins {
+                        Instr::Alloc { ptr_var, .. } if *ptr_var == p => {}
+                        Instr::Fill { ptr_var, value, .. } if *ptr_var == p => fill = Some(*value),
+                        Instr::IndexLoad { ptr_var, idx, .. } if *ptr_var == p => {
+                            match vals.get(idx).copied() {
+                                Some(k) if k >= 0 && k < n => {}
+                                _ => ok = false,
+                            }
+                        }
+                        Instr::IndexStore { ptr_var, idx, .. } if *ptr_var == p => {
+                            match vals.get(idx).copied() {
+                                Some(k) if k >= 0 && k < n => {}
+                                _ => ok = false,
+                            }
+                        }
+                        Instr::BoundsCheck { .. } => {}
+                        other => {
+                            if instr_mentions_var(other, p) {
+                                ok = false;
+                            }
+                        }
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let base = f.nvars;
+            f.nvars += n as usize;
+            for _ in 0..n {
+                f.var_ty.push(elem);
+            }
+            let mut zero: Option<Value> = None;
+            for b in f.blocks.iter_mut() {
+                let old = std::mem::take(&mut b.instrs);
+                let mut out = Vec::with_capacity(old.len() + n as usize);
+                for ins in old {
+                    match ins {
+                        Instr::Alloc { ptr_var, .. } if ptr_var == p => {
+                            if fill.is_none() {
+                                if zero.is_none() {
+                                    let z = Value(f.nvalues as u32);
+                                    f.nvalues += 1;
+                                    f.vty.push(elem);
+                                    out.push(Instr::Const { dst: z, v: 0 });
+                                    zero = Some(z);
+                                }
+                                let src = zero.unwrap();
+                                for k in 0..n {
+                                    out.push(Instr::StoreVar { var: base + k as usize, src });
+                                }
+                            }
+                        }
+                        Instr::Fill { ptr_var, value, .. } if ptr_var == p => {
+                            for k in 0..n {
+                                out.push(Instr::StoreVar { var: base + k as usize, src: value });
+                            }
+                        }
+                        Instr::IndexLoad { dst, ptr_var, idx, .. } if ptr_var == p => {
+                            let k = vals[&idx] as usize;
+                            out.push(Instr::LoadVar { dst, var: base + k });
+                        }
+                        Instr::IndexStore { ptr_var, idx, src, .. } if ptr_var == p => {
+                            let k = vals[&idx] as usize;
+                            out.push(Instr::StoreVar { var: base + k, src });
+                        }
+                        other => out.push(other),
+                    }
+                }
+                b.instrs = out;
+            }
+        }
+    }
+}
+
+fn instr_mentions_var(ins: &Instr, p: usize) -> bool {
+    match ins {
+        Instr::LoadVar { var, .. } | Instr::StoreVar { var, .. } => *var == p,
+        Instr::Alloc { ptr_var, .. }
+        | Instr::Fill { ptr_var, .. }
+        | Instr::IndexLoad { ptr_var, .. }
+        | Instr::IndexStore { ptr_var, .. }
+        | Instr::IndexFieldLoad { ptr_var, .. }
+        | Instr::IndexFieldStore { ptr_var, .. }
+        | Instr::VecNew { ptr_var, .. }
+        | Instr::VecReserve { ptr_var, .. }
+        | Instr::VecPushScalar { ptr_var, .. }
+        | Instr::VecPushStruct { ptr_var, .. }
+        | Instr::Aos2Step { ptr_var, .. }
+        | Instr::CopySlots { ptr_var, .. } => *ptr_var == p,
+        Instr::AddrVar { var_index, .. }
+        | Instr::StructInit { var_index, .. }
+        | Instr::FieldLoad { var_index, .. }
+        | Instr::FieldStore { var_index, .. } => *var_index == p,
+        Instr::CopySlotsTo { dst_ptr_var, .. } | Instr::StorePtr { dst_ptr_var, .. } => {
+            *dst_ptr_var == p
+        }
+        Instr::StoreVec { src_ptr_var, ptr_var, len_var, cap_var } => {
+            *src_ptr_var == p || *ptr_var == p || *len_var == p || *cap_var == p
+        }
+        Instr::VecPushStruct { tmp_var, .. } => *tmp_var == p,
+        _ => false,
+    }
+}
+
 fn strength_reduce_pow2(prog: &mut IrProgram) {
     for f in &mut prog.funcs {
         let mut var_consts: HashMap<usize, i64> = HashMap::new();
@@ -5974,6 +6113,7 @@ pub fn optimize(prog: &mut IrProgram) {
     propagate_const_array_lens(prog);
     resolve_constant_lengths(prog);
     remove_redundant_bounds(prog);
+    scalarize_const_arrays(prog);
     strength_reduce_pow2(prog);
     remove_redundant_truncations(prog);
     narrow_index_chains(prog);
