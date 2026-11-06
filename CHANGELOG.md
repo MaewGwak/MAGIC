@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.9.4 — full sixteen-register float pool (2026-11-06)
+
+The fast emitter reserved `%xmm0`/`%xmm1` as scratch and only pooled fourteen registers, so
+float-heavy blocks spilled aggressively. `FNeg` now xors the sign mask from memory and float field
+stores write the pooled register directly, freeing both scratch registers: the pool is
+`%xmm0`–`%xmm15`. N-body drops 890 → 811–820 ms, raytrace 120 → 105–108 ms, vec-part 45 → 41–44 ms;
+matmul stays 8–9 ms. All gates pass, 168 tests, parity 60/60, low-end gate green.
+
 ## v0.9.3 — low-end proxy gate (2026-11-06)
 
 `bench-lowend.sh` runs all eight default workloads with a 2 GiB address-space limit and one CPU,

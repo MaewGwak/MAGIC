@@ -4031,9 +4031,9 @@ struct RegAlloc<'a> {
     scales: HashMap<(Value, u64), usize>,
 }
 
-const XMM: [&str; 14] = [
-    "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7", "%xmm8", "%xmm9", "%xmm10",
-    "%xmm11", "%xmm12", "%xmm13", "%xmm14", "%xmm15",
+const XMM: [&str; 16] = [
+    "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7", "%xmm8",
+    "%xmm9", "%xmm10", "%xmm11", "%xmm12", "%xmm13", "%xmm14", "%xmm15",
 ];
 
 impl<'a> RegAlloc<'a> {
@@ -4997,16 +4997,15 @@ fn emit_fast_block(
                 continue;
             }
             Instr::IndexFieldStore { ptr_var, idx, size, off, ty, src, len, line } => {
-                let (sreg, i) = if ra.is_float(*src) {
+                let (sreg, i, xstore) = if ra.is_float(*src) {
                     let x = ra.xoperand(*src);
-                    ra.out.push_str(&format!("    movapd {}, %xmm0\n", XMM[x]));
                     let i = ra.operand(*idx);
-                    (None, i)
+                    (None, i, Some(x))
                 } else {
                     let s = ra.operand(*src);
                     ra.out.push_str(&format!("    mov {}, %rcx\n", POOL[s].0));
                     let i = ra.operand_excluding(*idx, &[s]);
-                    (Some(s), i)
+                    (Some(s), i, None)
                 };
                 let _ = sreg;
                 if *line != 0 {
@@ -5036,8 +5035,8 @@ fn emit_fast_block(
                 } else {
                     format!("(%r10,{})", POOL[t].0)
                 };
-                if ra.is_float(*src) {
-                    ra.out.push_str(&format!("    movsd %xmm0, {}\n", disp));
+                if let Some(x) = xstore {
+                    ra.out.push_str(&format!("    movsd {}, {}\n", XMM[x], disp));
                 } else {
                     match ty {
                         Ty::U8 | Ty::Bool => ra.out.push_str(&format!("    movb %cl, {}\n", disp)),
@@ -5079,8 +5078,7 @@ fn emit_fast_block(
                 let s = ra.xoperand(*a);
                 let d = ra.xdst_excluding(*dst, &[s]);
                 ra.out.push_str(&format!("    movapd {}, {}\n", XMM[s], XMM[d]));
-                ra.out.push_str("    movsd .Lf64sign(%rip), %xmm0\n");
-                ra.out.push_str(&format!("    xorpd %xmm0, {}\n", XMM[d]));
+                ra.out.push_str(&format!("    xorpd .Lf64sign(%rip), {}\n", XMM[d]));
                 ra.xdef_store(*dst, d);
             }
             Instr::FCmp { dst, op, l, r } => {
