@@ -1,3 +1,12 @@
+## v0.11.0 — 1.0.0 withdrawn; default+optimized matrix gate re-opened (2026-11-07)
+
+Per owner decision, the v1.0.0/v1.0.1 tags are withdrawn and their version numbers renumbered to
+0.11.0. The 1.0.0 gate is now: **both** MAGIC default builds and MAGIC optimized variants must beat
+optimized C, C++ and Rust (same-or-better algorithms) on all eight workloads, on top of the existing
+memory/compile/diagnostics/static/low-end/high-end/security gates. The previous 1.0.0 was based on
+best-variant results only, which is not sufficient; see the default-vs-baseline table in README.
+No code change in this renumber commit.
+
 # Changelog
 
 All notable changes to MAGIC. Versions follow SemVer 2.0.0; before 1.0, minor bumps may break.
@@ -30,7 +39,7 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
-## v1.0.1 — benchmark verdicts as explicit speed factors (2026-11-07)
+## v1.0.1 — withdrawn (renumbered 0.11.0; 1.0.0 gate re-opened)
 
 README/BENCHMARKS summary tables now report `Nx faster` / `Nx slower` instead of `win`/`loss`, with
 the direction defined: fastest C/C++/Rust baseline ÷ MAGIC best for faster, and MAGIC best ÷ fastest
@@ -39,7 +48,7 @@ names remain visible (particles closed, hash direct, binary-trees loop), so algo
 not confused with compiler speedups. N-body's native 613 ms is 2.70x slower than Rust 227 ms; its
 C-backend AVX2 build is noted at 198 ms (1.15x faster). No code change.
 
-## v1.0.0 — first stable release (2026-11-07)
+## v1.0.0 — withdrawn (renumbered 0.11.0; default-matrix gate not met)
 
 Independent audit (Vera) reports COMPLETE on clauses 1–6 after v0.10.18. Evidence at this tag:
 peak RSS of freestanding static builds is below gcc -O3, g++ -O3 and rustc -O on all eight workloads
