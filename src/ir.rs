@@ -828,6 +828,22 @@ impl Builder {
         Ok(dst)
     }
 
+    fn lower_vec_clear(&mut self, name: &str, line: usize) -> Result<Value, String> {
+        let (_, _, lv, _, _) = *self
+            .vecs
+            .get(name)
+            .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", line, name))?;
+        let zero = self.value();
+        self.push(Instr::Const { dst: zero, v: 0 });
+        self.vty[zero.0 as usize] = Ty::I32;
+        self.push(Instr::StoreVar { var: lv, src: zero });
+        let dst = self.value();
+        self.push(Instr::Const { dst, v: 0 });
+        self.vty[dst.0 as usize] = Ty::I32;
+        self.narrow[dst.0 as usize] = true;
+        Ok(dst)
+    }
+
     fn lower_expr(&mut self, e: &Expr) -> Result<Value, String> {
         match &e.kind {
             ExprKind::Float(f) => {
@@ -912,19 +928,7 @@ impl Builder {
                 self.lower_vec_pop(n, e.line)
             }
             ExprKind::VecParamClear(n) => {
-                let (_, _, lv, _, _) = *self
-                    .vecs
-                    .get(n)
-                    .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", e.line, n))?;
-                let zero = self.value();
-                self.push(Instr::Const { dst: zero, v: 0 });
-                self.vty[zero.0 as usize] = Ty::I32;
-                self.push(Instr::StoreVar { var: lv, src: zero });
-                let dst = self.value();
-                self.push(Instr::Const { dst, v: 0 });
-                self.vty[dst.0 as usize] = Ty::I32;
-                self.narrow[dst.0 as usize] = true;
-                Ok(dst)
+                self.lower_vec_clear(n, e.line)
             }
             ExprKind::VecParamReserve { name, value } => {
                 let (_, pv, lv, cv, esz) = *self
@@ -1363,6 +1367,14 @@ impl Builder {
                         }
                     }
                     return Err(format!("line {}: IR: pop() needs a vector variable", e.line));
+                }
+                if name == "clear" && args.len() == 1 {
+                    if let ExprKind::Var(vn) = &args[0].kind {
+                        if self.vecs.contains_key(vn) {
+                            return self.lower_vec_clear(vn, e.line);
+                        }
+                    }
+                    return Err(format!("line {}: IR: clear() needs a vector variable", e.line));
                 }
                 if (name == "net_read_at" || name == "net_write_at") && args.len() == 4 {
                     let fd = self.lower_expr(&args[0])?;
@@ -6767,6 +6779,21 @@ fn resolve_constant_lengths(prog: &mut IrProgram) {
                 break;
             }
             var_consts = next;
+        }
+        // Vector lengths/capacities are mutated by VecPush/VecReserve/Clear,
+        // which the StoreVar-based constant analysis does not model. Treating
+        // a post-clear 0 as a permanent length would miscompile any later push.
+        let mut vec_meta: std::collections::HashSet<usize> = Default::default();
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                if let Instr::VecNew { len_var, cap_var, .. } = ins {
+                    vec_meta.insert(*len_var);
+                    vec_meta.insert(*cap_var);
+                }
+            }
+        }
+        for v in &vec_meta {
+            var_consts.remove(v);
         }
         if var_consts.is_empty() {
             continue;

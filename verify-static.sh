@@ -126,6 +126,24 @@ else
   echo "local_pop: build FAIL"; FAIL=1
 fi
 
+cat > "$OUT/clear.magic" <<'EOF'
+fn main() {
+    var v: [i32+] = [];
+    v.push(1);
+    v.push(2);
+    clear(v);
+    print(len(v));
+    v.push(9);
+    print(v[0]);
+}
+EOF
+if "$M" build "$OUT/clear.magic" --static -o "$OUT/clear" >/dev/null 2>&1; then
+  got=$("$OUT/clear" 2>/dev/null | tr '\n' ' ')
+  if [ "$got" = "0 9 " ]; then echo "local_clear: ok static"; else echo "local_clear: FAIL got=$got"; FAIL=1; fi
+else
+  echo "local_clear: build FAIL"; FAIL=1
+fi
+
 cat > "$OUT/popempty.magic" <<'EOF'
 fn main() {
     var v: [i32+] = [];

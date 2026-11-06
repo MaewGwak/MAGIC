@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.16 — local clear and mutable vector lengths (2026-11-07)
+
+Local `clear(v)` is lowered directly through the shared helper (it previously emitted an external
+`clear` call and failed at link). Testing it exposed a second bug: `resolve_constant_lengths`
+treated a vector's length as a permanent constant after `clear` stored 0, so a later push wrote at
+index 0 but the bounds check still compared against a constant 0 and panicked. Vector len/cap vars
+are now excluded from that analysis. `clear` → `len`=0 → `push(9)` → `v[0]`=9 passes in IR and
+static (C backend already correct); regression and static gate added. All gates pass, 171 tests,
+parity 60/60.
+
 ## v0.10.15 — local pop and vector promotion fix (2026-11-06)
 
 Local `pop(v)` on a local vector is now lowered directly (previously it emitted an external `pop` call

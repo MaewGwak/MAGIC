@@ -1011,4 +1011,10 @@ fn local_pop_and_empty_message() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("pop.magic:3: pop from empty vec"), "stderr: {err}");
     assert!(err.contains("main"), "stderr: {err}");
+
+    let clear_src = "fn main() {\n    var v: [i32+] = [];\n    v.push(1);\n    v.push(2);\n    clear(v);\n    print(len(v));\n    v.push(9);\n    print(v[0]);\n}\n";
+    let cc = run(clear_src, &dir, "clear_c", false, &cc_cmd).expect("C clear");
+    let ci = run(clear_src, &dir, "clear_i", true, &cc_cmd).expect("IR clear");
+    assert_eq!(cc.0, ci.0);
+    assert_eq!(ci.0, "0\n9\n");
 }
