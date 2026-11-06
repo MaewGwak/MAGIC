@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.33 — xmm register allocation for f64 in the IR (2026-11-06)
+
+The IR block allocator now keeps `f64` values in a second register file: fourteen caller-saved
+`%xmm2`–`%xmm15` registers with `movsd` spilling, while integer values stay in the general-purpose
+pool. Float constants, variable loads/stores, array and struct-field accesses, arithmetic,
+comparisons, casts, `sqrt`, negation and returns all operate directly on xmm registers; a compare
+materialises only its boolean result into a GPR. Medians: nbody 3234 → 2634 ms, vecpart 246 → 207 ms,
+raytrace 410 → 363 ms, particles 850 → 766 ms, matmul 153 → 150 ms; integer benchmarks are
+unchanged. All differential tests pass, including the float and struct cases.
+
 ## v0.8.32 — IR assembly peephole (2026-11-06)
 
 The IR emitter now removes self-moves (`mov %rX, %rX`) and rewrites `cmp $0, %rX` as

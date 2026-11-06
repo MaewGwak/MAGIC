@@ -1751,7 +1751,14 @@ struct RegAlloc<'a> {
     last_use: &'a HashMap<Value, usize>,
     consts: &'a HashMap<Value, i64>,
     deferred: &'a HashMap<Value, (Op, Value, Value, usize)>,
+    xmap: HashMap<Value, (usize, bool)>,
+    xfree: Vec<usize>,
 }
+
+const XMM: [&str; 14] = [
+    "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7", "%xmm8", "%xmm9", "%xmm10",
+    "%xmm11", "%xmm12", "%xmm13", "%xmm14", "%xmm15",
+];
 
 impl<'a> RegAlloc<'a> {
     fn spill(&mut self) -> usize {
@@ -1869,6 +1876,94 @@ impl<'a> RegAlloc<'a> {
         idx
     }
 
+    fn is_float(&self, v: Value) -> bool {
+        self.f.vty.get(v.0 as usize) == Some(&Ty::F64)
+    }
+
+    fn xspill_excluding(&mut self, protected: &[usize]) -> usize {
+        let victim = self
+            .xmap
+            .keys()
+            .copied()
+            .find(|v| !protected.contains(&self.xmap[v].0))
+            .expect("a float register outside the protected set");
+        let (idx, is_def) = self.xmap.remove(&victim).unwrap();
+        if is_def {
+            self.out.push_str(&format!(
+                "    movsd {}, -{}(%rbp)\n",
+                XMM[idx],
+                voff(self.f, victim)
+            ));
+        }
+        idx
+    }
+
+    fn xalloc_excluding(&mut self, protected: &[usize]) -> usize {
+        if self.xfree.is_empty() {
+            let idx = self.xspill_excluding(protected);
+            self.xfree.push(idx);
+        }
+        self.xfree.pop().unwrap()
+    }
+
+    fn xoperand(&mut self, v: Value) -> usize {
+        if let Some((i, _)) = self.xmap.get(&v) {
+            return *i;
+        }
+        let idx = self.xalloc_excluding(&[]);
+        self.out.push_str(&format!(
+            "    movsd -{}(%rbp), {}\n",
+            voff(self.f, v),
+            XMM[idx]
+        ));
+        self.xmap.insert(v, (idx, false));
+        idx
+    }
+
+    fn xoperand_excluding(&mut self, v: Value, protected: &[usize]) -> usize {
+        if let Some((i, _)) = self.xmap.get(&v) {
+            return *i;
+        }
+        let idx = self.xalloc_excluding(protected);
+        self.out.push_str(&format!(
+            "    movsd -{}(%rbp), {}\n",
+            voff(self.f, v),
+            XMM[idx]
+        ));
+        self.xmap.insert(v, (idx, false));
+        idx
+    }
+
+    fn xdst(&mut self, v: Value) -> usize {
+        let idx = self.xalloc_excluding(&[]);
+        self.xmap.insert(v, (idx, true));
+        idx
+    }
+
+    fn xdst_excluding(&mut self, v: Value, protected: &[usize]) -> usize {
+        let idx = self.xalloc_excluding(protected);
+        self.xmap.insert(v, (idx, true));
+        idx
+    }
+
+    fn xdef_store(&mut self, v: Value, idx: usize) {
+        if self.live_out.contains(&v) {
+            self.out.push_str(&format!(
+                "    movsd {}, -{}(%rbp)\n",
+                XMM[idx],
+                voff(self.f, v)
+            ));
+        }
+    }
+
+    fn x_dead(&mut self, v: Value, at: usize) -> Option<usize> {
+        if self.last_use.get(&v).copied() == Some(at) {
+            self.xmap.remove(&v).map(|(i, _)| i)
+        } else {
+            None
+        }
+    }
+
     /// Release registers whose value is never used again in this block. Live
     /// out values were already written at their definition, so they are safe
     /// to drop from the register file too.
@@ -1882,6 +1977,9 @@ impl<'a> RegAlloc<'a> {
         for v in dead {
             if let Some((idx, _)) = self.map.remove(&v) {
                 self.free.push(idx);
+            }
+            if let Some((idx, _)) = self.xmap.remove(&v) {
+                self.xfree.push(idx);
             }
         }
     }
@@ -1909,41 +2007,68 @@ fn emit_fast_block(
         last_use,
         consts,
         deferred,
+        xmap: HashMap::new(),
+        xfree: (0..XMM.len()).rev().collect(),
     };
     for (ii, ins) in instrs.iter().enumerate() {
         match ins {
             Instr::Const { dst, v } => {
-                let d = ra.dst(*dst);
-                if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
-                    ra.out.push_str(&format!("    mov ${}, {}\n", v, POOL[d].0));
+                if ra.is_float(*dst) {
+                    let d = ra.xdst(*dst);
+                    ra.out.push_str(&format!("    movabs ${}, %rax\n    movq %rax, {}\n", v, XMM[d]));
+                    ra.xdef_store(*dst, d);
                 } else {
-                    ra.out.push_str(&format!("    movabs ${}, {}\n", v, POOL[d].0));
+                    let d = ra.dst(*dst);
+                    if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
+                        ra.out.push_str(&format!("    mov ${}, {}\n", v, POOL[d].0));
+                    } else {
+                        ra.out.push_str(&format!("    movabs ${}, {}\n", v, POOL[d].0));
+                    }
+                    ra.def_store(*dst, d);
                 }
-                ra.def_store(*dst, d);
             }
             Instr::LoadVar { dst, var } => {
-                let d = ra.dst(*dst);
-                if let Some(reg) = var_regs.get(var) {
-                    ra.out.push_str(&format!("    mov {}, {}\n", reg, POOL[d].0));
+                if ra.is_float(*dst) {
+                    let d = ra.xdst(*dst);
+                    if let Some(reg) = var_regs.get(var) {
+                        ra.out.push_str(&format!("    movq {}, {}\n", reg, XMM[d]));
+                    } else {
+                        ra.out.push_str(&format!("    movsd -{}(%rbp), {}\n", varoff(*var), XMM[d]));
+                    }
+                    ra.xdef_store(*dst, d);
                 } else {
-                    ra.out.push_str(&format!(
-                        "    mov -{}(%rbp), {}\n",
-                        varoff(*var),
-                        POOL[d].0
-                    ));
+                    let d = ra.dst(*dst);
+                    if let Some(reg) = var_regs.get(var) {
+                        ra.out.push_str(&format!("    mov {}, {}\n", reg, POOL[d].0));
+                    } else {
+                        ra.out.push_str(&format!(
+                            "    mov -{}(%rbp), {}\n",
+                            varoff(*var),
+                            POOL[d].0
+                        ));
+                    }
+                    ra.def_store(*dst, d);
                 }
-                ra.def_store(*dst, d);
             }
             Instr::StoreVar { var, src } => {
-                let a = ra.operand(*src);
-                if let Some(reg) = var_regs.get(var) {
-                    ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, reg));
+                if ra.is_float(*src) {
+                    let x = ra.xoperand(*src);
+                    if let Some(reg) = var_regs.get(var) {
+                        ra.out.push_str(&format!("    movq {}, {}\n", XMM[x], reg));
+                    } else {
+                        ra.out.push_str(&format!("    movsd {}, -{}(%rbp)\n", XMM[x], varoff(*var)));
+                    }
                 } else {
-                    ra.out.push_str(&format!(
-                        "    mov {}, -{}(%rbp)\n",
-                        POOL[a].0,
-                        varoff(*var)
-                    ));
+                    let a = ra.operand(*src);
+                    if let Some(reg) = var_regs.get(var) {
+                        ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, reg));
+                    } else {
+                        ra.out.push_str(&format!(
+                            "    mov {}, -{}(%rbp)\n",
+                            POOL[a].0,
+                            varoff(*var)
+                        ));
+                    }
                 }
             }
             Instr::Bin { dst, op, l, r } => {
@@ -2189,6 +2314,20 @@ fn emit_fast_block(
                 ra.out.push_str("    call .Lir_panic\n1:\n");
             }
             Instr::IndexLoad { dst, ptr_var, idx, elem } => {
+                if ra.is_float(*dst) {
+                    let a = ra.operand(*idx);
+                    ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                    if let Some(reg) = var_regs.get(ptr_var) {
+                        ra.out.push_str(&format!("    mov {}, %r10\n", reg));
+                    } else {
+                        ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                    }
+                    let d = ra.xdst(*dst);
+                    ra.out.push_str(&format!("    movsd (%r10,%rax,8), {}\n", XMM[d]));
+                    ra.xdef_store(*dst, d);
+                    ra.free_dead(ii);
+                    continue;
+                }
                 let a = ra.operand(*idx);
                 ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
                 if let Some(reg) = var_regs.get(ptr_var) {
@@ -2212,6 +2351,19 @@ fn emit_fast_block(
                 ra.def_store(*dst, d);
             }
             Instr::IndexStore { ptr_var, idx, elem, src } => {
+                if ra.is_float(*src) {
+                    let x = ra.xoperand(*src);
+                    let a = ra.operand(*idx);
+                    ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                    if let Some(reg) = var_regs.get(ptr_var) {
+                        ra.out.push_str(&format!("    mov {}, %r10\n", reg));
+                    } else {
+                        ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                    }
+                    ra.out.push_str(&format!("    movsd {}, (%r10,%rax,8)\n", XMM[x]));
+                    ra.free_dead(ii);
+                    continue;
+                }
                 let s = ra.operand(*src);
                 ra.out.push_str(&format!("    mov {}, %rcx\n", POOL[s].0));
                 let a = ra.operand(*idx);
@@ -2240,6 +2392,13 @@ fn emit_fast_block(
             }
             Instr::FieldLoad { dst, var_index, slots, off, ty } => {
                 let addr = -8 * (*var_index + *slots) as i64 + *off as i64;
+                if *ty == Ty::F64 {
+                    let d = ra.xdst(*dst);
+                    ra.out.push_str(&format!("    movsd {}(%rbp), {}\n", addr, XMM[d]));
+                    ra.xdef_store(*dst, d);
+                    ra.free_dead(ii);
+                    continue;
+                }
                 let d = ra.dst(*dst);
                 match ty {
                     Ty::U8 | Ty::Bool => ra.out.push_str(&format!("    movzbq {}(%rbp), {}\n", addr, POOL[d].0)),
@@ -2250,6 +2409,12 @@ fn emit_fast_block(
             }
             Instr::FieldStore { var_index, slots, off, ty, src } => {
                 let addr = -8 * (*var_index + *slots) as i64 + *off as i64;
+                if *ty == Ty::F64 {
+                    let x = ra.xoperand(*src);
+                    ra.out.push_str(&format!("    movsd {}, {}(%rbp)\n", XMM[x], addr));
+                    ra.free_dead(ii);
+                    continue;
+                }
                 let a = ra.operand(*src);
                 match ty {
                     Ty::U8 | Ty::Bool => ra.out.push_str(&format!("    mov {}, {}(%rbp)\n", POOL[a].2, addr)),
@@ -2258,6 +2423,42 @@ fn emit_fast_block(
                 }
             }
             Instr::IndexFieldLoad { dst, ptr_var, idx, size, off, ty, len, line } => {
+                if ra.is_float(*dst) {
+                    let i = ra.operand(*idx);
+                    ra.out.push_str(&format!("    mov {}, %rax\n", POOL[i].0));
+                    match len {
+                        LenRef::Const(n) => ra.out.push_str(&format!("    mov ${}, %rcx\n", n)),
+                        LenRef::Var(v) => {
+                            if let Some(reg) = var_regs.get(v) {
+                                ra.out.push_str(&format!("    mov {}, %rcx\n", reg));
+                            } else {
+                                ra.out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                            }
+                        }
+                    }
+                    if *line != 0 {
+                        ra.out.push_str("    cmp %rcx, %rax\n    jb 1f\n");
+                        ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                        ra.out.push_str("    call .Lir_panic\n1:\n");
+                    }
+                    if let Some(reg) = var_regs.get(ptr_var) {
+                        ra.out.push_str(&format!("    mov {}, %r10\n", reg));
+                    } else {
+                        ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                    }
+                    let t = ra.alloc_excluding(&[i]);
+                    ra.out.push_str(&format!("    mov {}, {}\n", POOL[i].0, POOL[t].0));
+                    ra.out.push_str(&format!("    imul ${}, {}\n", size, POOL[t].0));
+                    if *off > 0 {
+                        ra.out.push_str(&format!("    add ${}, {}\n", off, POOL[t].0));
+                    }
+                    let d = ra.xdst_excluding(*dst, &[]);
+                    ra.out.push_str(&format!("    movsd (%r10,{}), {}\n", POOL[t].0, XMM[d]));
+                    ra.free.push(t);
+                    ra.xdef_store(*dst, d);
+                    ra.free_dead(ii);
+                    continue;
+                }
                 let i = ra.operand(*idx);
                 ra.out.push_str(&format!("    mov {}, %rax\n", POOL[i].0));
                 match len {
@@ -2301,6 +2502,41 @@ fn emit_fast_block(
                 ra.def_store(*dst, d);
             }
             Instr::IndexFieldStore { ptr_var, idx, size, off, ty, src, len, line } => {
+                if ra.is_float(*src) {
+                    let x = ra.xoperand(*src);
+                    let i = ra.operand(*idx);
+                    ra.out.push_str(&format!("    mov {}, %rax\n", POOL[i].0));
+                    match len {
+                        LenRef::Const(n) => ra.out.push_str(&format!("    mov ${}, %r10\n", n)),
+                        LenRef::Var(v) => {
+                            if let Some(reg) = var_regs.get(v) {
+                                ra.out.push_str(&format!("    mov {}, %r10\n", reg));
+                            } else {
+                                ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*v)));
+                            }
+                        }
+                    }
+                    if *line != 0 {
+                        ra.out.push_str("    cmp %r10, %rax\n    jb 1f\n");
+                        ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                        ra.out.push_str("    call .Lir_panic\n1:\n");
+                    }
+                    if let Some(reg) = var_regs.get(ptr_var) {
+                        ra.out.push_str(&format!("    mov {}, %r10\n", reg));
+                    } else {
+                        ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                    }
+                    let t = ra.alloc_excluding(&[x, i]);
+                    ra.out.push_str(&format!("    mov {}, {}\n", POOL[i].0, POOL[t].0));
+                    ra.out.push_str(&format!("    imul ${}, {}\n", size, POOL[t].0));
+                    if *off > 0 {
+                        ra.out.push_str(&format!("    add ${}, {}\n", off, POOL[t].0));
+                    }
+                    ra.out.push_str(&format!("    movsd {}, (%r10,{})\n", XMM[x], POOL[t].0));
+                    ra.free.push(t);
+                    ra.free_dead(ii);
+                    continue;
+                }
                 let sreg = ra.operand(*src);
                 ra.out.push_str(&format!("    mov {}, %rcx\n", POOL[sreg].0));
                 let i = ra.operand_excluding(*idx, &[sreg]);
@@ -2336,10 +2572,9 @@ fn emit_fast_block(
                 }
             }
             Instr::FBin { dst, op, l, r } => {
-                let a = ra.operand(*l);
-                let b = ra.operand_excluding(*r, &[a]);
-                let d = ra.dst_excluding(*dst, &[a, b]);
-                ra.out.push_str(&format!("    movq {}, %xmm0\n    movq {}, %xmm1\n", POOL[a].0, POOL[b].0));
+                let a = ra.xoperand(*l);
+                let b = ra.xoperand_excluding(*r, &[a]);
+                let d = ra.xdst_excluding(*dst, &[a, b]);
                 let m = match op {
                     Op::Add => "addsd",
                     Op::Sub => "subsd",
@@ -2347,19 +2582,33 @@ fn emit_fast_block(
                     Op::Div => "divsd",
                     _ => "addsd",
                 };
-                ra.out.push_str(&format!("    {} %xmm1, %xmm0\n    movq %xmm0, {}\n", m, POOL[d].0));
-                ra.def_store(*dst, d);
+                if d == a {
+                    ra.out.push_str(&format!("    {} {}, {}\n", m, XMM[b], XMM[d]));
+                } else if d == b {
+                    // commutative l op r == r op l; for sub/div move l first
+                    if matches!(op, Op::Sub | Op::Div) {
+                        ra.out.push_str(&format!("    movapd {}, {}\n", XMM[a], XMM[d]));
+                        ra.out.push_str(&format!("    {} {}, {}\n", m, XMM[b], XMM[d]));
+                    } else {
+                        ra.out.push_str(&format!("    {} {}, {}\n", m, XMM[a], XMM[d]));
+                    }
+                } else {
+                    ra.out.push_str(&format!("    movapd {}, {}\n", XMM[a], XMM[d]));
+                    ra.out.push_str(&format!("    {} {}, {}\n", m, XMM[b], XMM[d]));
+                }
+                ra.xdef_store(*dst, d);
             }
             Instr::FNeg { dst, a } => {
-                let s = ra.operand(*a);
-                let d = ra.dst_excluding(*dst, &[s]);
-                ra.out.push_str(&format!("    mov {}, {}\n", POOL[s].0, POOL[d].0));
-                ra.out.push_str(&format!("    btc $63, {}\n", POOL[d].0));
-                ra.def_store(*dst, d);
+                let s = ra.xoperand(*a);
+                let d = ra.xdst_excluding(*dst, &[s]);
+                ra.out.push_str(&format!("    movapd {}, {}\n", XMM[s], XMM[d]));
+                ra.out.push_str("    movsd .Lf64sign(%rip), %xmm0\n");
+                ra.out.push_str(&format!("    xorpd %xmm0, {}\n", XMM[d]));
+                ra.xdef_store(*dst, d);
             }
             Instr::FCmp { dst, op, l, r } => {
-                let a = ra.operand(*l);
-                let b = ra.operand_excluding(*r, &[a]);
+                let a = ra.xoperand(*l);
+                let b = ra.xoperand_excluding(*r, &[a]);
                 let d = ra.dst_excluding(*dst, &[a, b]);
                 let (pred, swap) = match op {
                     Op::Eq => (0, false),
@@ -2370,11 +2619,10 @@ fn emit_fast_block(
                     Op::Ge => (2, true),
                     _ => (0, false),
                 };
-                ra.out.push_str(&format!("    movq {}, %xmm0\n    movq {}, %xmm1\n", POOL[a].0, POOL[b].0));
                 if swap {
-                    ra.out.push_str(&format!("    cmpsd ${}, %xmm0, %xmm1\n    movq %xmm1, %rax\n", pred));
+                    ra.out.push_str(&format!("    cmpsd ${}, {}, {}\n    movq {}, %rax\n", pred, XMM[a], XMM[b], XMM[b]));
                 } else {
-                    ra.out.push_str(&format!("    cmpsd ${}, %xmm1, %xmm0\n    movq %xmm0, %rax\n", pred));
+                    ra.out.push_str(&format!("    cmpsd ${}, {}, {}\n    movq {}, %rax\n", pred, XMM[b], XMM[a], XMM[a]));
                 }
                 ra.out.push_str("    and $1, %rax\n");
                 ra.out.push_str(&format!("    mov %rax, {}\n", POOL[d].0));
@@ -2382,23 +2630,22 @@ fn emit_fast_block(
             }
             Instr::I2F { dst, a } => {
                 let s = ra.operand(*a);
-                let d = ra.dst_excluding(*dst, &[s]);
-                ra.out.push_str(&format!("    cvtsi2sd {}, %xmm0\n    movq %xmm0, {}\n", POOL[s].0, POOL[d].0));
-                ra.def_store(*dst, d);
+                let d = ra.xdst(*dst);
+                ra.out.push_str(&format!("    cvtsi2sd {}, {}\n", POOL[s].0, XMM[d]));
+                ra.xdef_store(*dst, d);
             }
             Instr::F2I { dst, a } => {
-                let s = ra.operand(*a);
-                let d = ra.dst_excluding(*dst, &[s]);
-                ra.out.push_str(&format!("    movq {}, %xmm0\n    cvttsd2si %xmm0, %rax\n", POOL[s].0));
-                ra.out.push_str(&format!("    mov %rax, {}\n", POOL[d].0));
+                let s = ra.xoperand(*a);
+                let d = ra.dst(*dst);
+                ra.out.push_str(&format!("    cvttsd2si {}, {}\n", XMM[s], POOL[d].0));
                 ra.def_store(*dst, d);
             }
             Instr::Sqrt { dst, a } => {
-                let s = ra.operand(*a);
-                let d = ra.dst_excluding(*dst, &[s]);
-                ra.out.push_str(&format!("    movq {}, %xmm0\n    sqrtsd %xmm0, %xmm0\n", POOL[s].0));
-                ra.out.push_str(&format!("    movq %xmm0, {}\n", POOL[d].0));
-                ra.def_store(*dst, d);
+                let s = ra.xoperand(*a);
+                let d = ra.xdst_excluding(*dst, &[s]);
+                ra.out.push_str(&format!("    movapd {}, {}\n", XMM[s], XMM[d]));
+                ra.out.push_str(&format!("    sqrtsd {}, {}\n", XMM[d], XMM[d]));
+                ra.xdef_store(*dst, d);
             }
             Instr::Br { cond, then_bb, else_bb } => {
                 if let Some((op, l, r, _)) = ra.deferred.get(cond).copied() {
@@ -2432,8 +2679,13 @@ fn emit_fast_block(
                 .push_str(&format!("    jmp .L{}_{}\n", name, bb)),
             Instr::Ret(v) => {
                 if let Some(v) = v {
-                    let a = ra.operand(*v);
-                    ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                    if ra.is_float(*v) {
+                        let x = ra.xoperand(*v);
+                        ra.out.push_str(&format!("    movq {}, %rax\n", XMM[x]));
+                    } else {
+                        let a = ra.operand(*v);
+                        ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                    }
                 } else {
                     ra.out.push_str("    xor %eax, %eax\n");
                 }
@@ -2476,6 +2728,7 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str(".Lfmt_panic: .asciz \"%s\\n\"\n");
     out.push_str(".Lfmt_g: .asciz \"%g\\n\"\n");
     out.push_str(".Lfmt_pf: .asciz \"%.*f\\n\"\n");
+    out.push_str(".p2align 3\n.Lf64sign: .quad 0x8000000000000000\n");
     let mut lines: Vec<usize> = Vec::new();
     for f in &prog.funcs {
         for b in &f.blocks {
