@@ -167,8 +167,8 @@ echo "== binary trees"
 cd "$ROOT/bench-bt" || exit 2
 build_c bt_c.c b_c; build_rust bt_rust_flat.rs b_rs
 build_magic bt_magic.magic b_m; build_magic bt_magic_count.magic b_x
-# gcc -march=native vectorises the level-order stores (4.5x over the default build)
-"$M" build bt_magic_loop.magic --backend c --cc "gcc -march=native" -o "$OUT/b_l" >/dev/null 2>&1 || { echo "build failed: bt_magic_loop"; FAIL=$((FAIL + 1)); }
+# level-order algorithm, native IR (no C compiler)
+build_magic bt_magic_loop.magic b_l
 median "$OUT/b_c" 568328208 'binary trees C'
 median "$OUT/b_rs" 568328208 'binary trees Rust'
 median "$OUT/b_m" 568328208 'binary trees MAGIC'

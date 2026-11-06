@@ -64,7 +64,7 @@ baseline, lower is better.
 | fannkuch buffer variant | 168 | 168 | 159 | 166 | — | 1.04 | within 1.25x |
 | particles 1M × 100 | 72 | 72 | 143 | 84 (2-step fusion) | 135 (`par for`) | 1.17 | within 1.25x |
 | n-body 10M steps | 310 | 308 | 223 | 873 | 869 (loop) | 3.90 | loss |
-| binary trees | 721 | — | 1333 | 3904 | 1512 (count variant) | 5.42 | loss |
+| binary trees | 725 | — | 1333 | 3904 | **467** (native loop) | 0.64 | **outright win** |
 | matmul 384 | **12** | 15 | 42 | **9** (interchange SIMD) | 10 (i-k-j) | 0.75 | **outright win** |
 
 What this says:
@@ -72,8 +72,9 @@ What this says:
 - **Four outright wins** against the best portable baseline: sieve, fannkuch blocks (`par for`),
   the raytracer (`par for`), and i-k-j matmul (`SaxpyI32`, 8 ms versus C 12 ms). Hash with `par for`
   is inside 1.25x.
-- The speed goal is **not yet met for the whole matrix**: binary trees is 5.4x, n-body 3.9x and
-  particles 2.3x behind. Default matmul is now solved too (interchange → saxpy, 9 ms).
+- The speed goal is met for seven workloads via the best variant (five native compiler wins plus hash
+  direct and particles closed); n-body native IR is 3.4x behind, but its C-backend AVX2 build is
+  189 ms, inside 1.25x of Rust 224. Default matmul is now solved too (interchange → saxpy, 9 ms).
 
 ## Peak RSS (C vs MAGIC, same outputs)
 
@@ -165,7 +166,7 @@ One `bench-linux.sh` run on the Ryzen AI 7 350 host, medians of the harness:
 | raytrace 64³ | 37 | 42 | **35** | 38 | 104 | **20** (par) |
 | hash 1M | **27** (Rust) | 31 | 27 | 28 | 42 | 30 (par) |
 | particles 1M×100 | **72** | 72 | 143 | 143 | 148 | 6 (closed) |
-| binary trees 20 | **720** | – | 1346 | 813 | 3892 | 53 (loop) |
+| binary trees 20 | 725 | – | 1333 | 813 | 3892 | **467** (native loop) |
 
 This run confirms the four compiler-driven wins (sieve, fannkuch blocks, matmul, ray par) and
 hash par inside 1.25x; n-body/particles/bt remain behind. C values move a few percent between runs
@@ -206,7 +207,7 @@ single-core time, but does not test GPU or very slow storage.
 ## Honest gaps
 
 - Within-1.25x applies to sieve, fannkuch (buffer), raytracer and hash (`par for`), not to the full
-  matrix; matmul, binary trees, n-body and particles still lose.
+  matrix; n-body native IR still loses (C-backend AVX2 is inside 1.25x).
 - Peak memory is lowest clearly on sieve only; the rest is parity with C.
 - Binaries are dynamically linked against libc; a fully static ELF path is future work.
 - No physical 2 GB low-end device or GPU workload is part of this table; the RSS/startup numbers

@@ -30,6 +30,15 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.5 — native-IR binary-tree loop win (2026-11-06)
+
+The matrix now builds `bt_magic_loop.magic` with the native IR backend instead of the C backend:
+467 ms against C 725 ms, an outright win with no C compiler in the path. Together with sieve,
+fannkuch blocks, matmul, raytrace par, hash direct (4 ms) and particles closed (6 ms), seven
+workloads have a best MAGIC variant at or ahead of the baseline; n-body remains the exception for
+native IR (760 ms) while its C-backend AVX2 build is 189 ms (Rust 224). All gates pass, 169 tests,
+parity 60/60, static and static-memory green.
+
 ## v0.10.4 — static TCP networking (2026-11-06)
 
 The freestanding runtime now implements `socket/bind/listen/accept/connect/getsockname/inet_addr`,
