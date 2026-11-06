@@ -30,6 +30,15 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.15 — affine bounds proofs in the IR (2026-11-06)
+
+Constant propagation over IR values and variables turns `let n = 384` and `n * n` into constants, so
+loop bounds and array lengths are known numbers. The bounds-elimination pass now also proves affine
+indexes: with loop constraints `i < 384` and `j < 384`, the access `a[i * 384 + j]` has maximum
+`383 * 384 + 383 = 147071 < 147456`, so its check is dropped. Matmul keeps checksum 326316140,
+drops from 7 to 2 bounds checks in the hot loops, and improves 260 → 221 ms (AST backend: 225 ms;
+C: 31 ms). The two remaining checks are in initialisation code with non-constant bounds.
+
 ## v0.8.14 — IR bounds-check elimination for counted loops (2026-11-06)
 
 The IR now removes bounds checks that a loop condition already guarantees: a natural loop whose

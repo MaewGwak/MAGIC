@@ -507,6 +507,149 @@ fn lower_func(f: &Func) -> Result<IrFunc, String> {
     Ok(out)
 }
 
+fn compute_value_consts(f: &IrFunc, var_consts: &HashMap<usize, i64>) -> HashMap<Value, i64> {
+    let mut vals: HashMap<Value, i64> = HashMap::new();
+    for _ in 0..4 {
+        let mut changed = false;
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                let known = match ins {
+                    Instr::Const { dst, v } => Some((*dst, *v)),
+                    Instr::LoadVar { dst, var } => var_consts.get(var).map(|v| (*dst, *v)),
+                    Instr::Bin { dst, op, l, r } => match (vals.get(l), vals.get(r)) {
+                        (Some(a), Some(b)) => {
+                            let v = match op {
+                                Op::Add => a.checked_add(*b),
+                                Op::Sub => a.checked_sub(*b),
+                                Op::Mul => a.checked_mul(*b),
+                                Op::Div if *b != 0 => a.checked_div(*b),
+                                Op::Rem if *b != 0 => a.checked_rem(*b),
+                                Op::And => Some(*a & *b),
+                                Op::Or => Some(*a | *b),
+                                _ => None,
+                            };
+                            v.map(|v| (*dst, v))
+                        }
+                        _ => None,
+                    },
+                    Instr::Un { dst, neg, a } => {
+                        vals.get(a).map(|a| (*dst, if *neg { -*a } else { *a ^ 1 }))
+                    }
+                    Instr::Trunc { dst, ty, a } => vals.get(a).map(|a| {
+                        let v = match ty {
+                            Ty::I32 => *a as i32 as i64,
+                            Ty::U8 => *a as u8 as i64,
+                            Ty::Bool => (*a != 0) as i64,
+                            _ => *a,
+                        };
+                        (*dst, v)
+                    }),
+                    _ => None,
+                };
+                if let Some((dst, v)) = known {
+                    if vals.get(&dst) != Some(&v) {
+                        vals.insert(dst, v);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    vals
+}
+
+fn compute_var_consts(f: &IrFunc, vals: &HashMap<Value, i64>) -> HashMap<usize, i64> {
+    let mut stores: HashMap<usize, Vec<Value>> = HashMap::new();
+    for b in &f.blocks {
+        for ins in &b.instrs {
+            if let Instr::StoreVar { var, src } = ins {
+                stores.entry(*var).or_default().push(*src);
+            }
+        }
+    }
+    let mut out = HashMap::new();
+    for (var, srcs) in stores {
+        if srcs.is_empty() {
+            continue;
+        }
+        if let Some(first) = srcs.iter().map(|v| vals.get(v)).collect::<Option<Vec<_>>>() {
+            let v = *first[0];
+            if first.iter().all(|x| **x == v) {
+                out.insert(var, v);
+            }
+        }
+    }
+    out
+}
+
+type Affine = (HashMap<usize, i64>, i64);
+
+fn affine_of(
+    v: Value,
+    defs: &HashMap<Value, (DefKind, usize)>,
+    instrs: &[&Instr],
+    consts: &HashMap<Value, i64>,
+    vars: &HashMap<usize, i64>,
+) -> Option<Affine> {
+    if let Some(c) = consts.get(&v) {
+        return Some((HashMap::new(), *c));
+    }
+    let d = defs.get(&v)?.0;
+    match d {
+        DefKind::Const(c) => Some((HashMap::new(), c)),
+        DefKind::LoadVar(var) => {
+            if let Some(c) = vars.get(&var) {
+                Some((HashMap::new(), *c))
+            } else {
+                let mut m = HashMap::new();
+                m.insert(var, 1);
+                Some((m, 0))
+            }
+        }
+        DefKind::Other => {
+            // Find the defining instruction; only Add/Sub/Mul(Const) are affine.
+            let ins = instrs.iter().find(|i| def_kind(i).map(|(d, _)| d) == Some(v))?;
+            match ins {
+                Instr::Bin { op, l, r, .. } => match op {
+                    Op::Add | Op::Sub => {
+                        let (mut a, ca) = affine_of(*l, defs, instrs, consts, vars)?;
+                        let (b, cb) = affine_of(*r, defs, instrs, consts, vars)?;
+                        let sign = if *op == Op::Sub { -1 } else { 1 };
+                        for (k, val) in b {
+                            *a.entry(k).or_insert(0) += sign * val;
+                        }
+                        Some((a, ca + sign * cb))
+                    }
+                    Op::Mul => {
+                        let (la, lc) = affine_of(*l, defs, instrs, consts, vars)?;
+                        let (ra, rc) = affine_of(*r, defs, instrs, consts, vars)?;
+                        if la.is_empty() && ra.is_empty() {
+                            Some((HashMap::new(), lc * rc))
+                        } else if la.is_empty() {
+                            let k = lc;
+                            Some((ra.into_iter().map(|(v, c)| (v, c * k)).collect(), rc * k))
+                        } else if ra.is_empty() {
+                            let k = rc;
+                            Some((la.into_iter().map(|(v, c)| (v, c * k)).collect(), lc * k))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                },
+                Instr::Un { neg: true, a, .. } => {
+                    let (m, c) = affine_of(*a, defs, instrs, consts, vars)?;
+                    Some((m.into_iter().map(|(v, c)| (v, -c)).collect(), -c))
+                }
+                _ => None,
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum DefKind {
     Const(i64),
@@ -549,6 +692,18 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
             }
         }
         let mut remove: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+        let mut var_consts: HashMap<usize, i64> = HashMap::new();
+        let mut vals: HashMap<Value, i64> = HashMap::new();
+        for _ in 0..6 {
+            vals = compute_value_consts(f, &var_consts);
+            let next = compute_var_consts(f, &vals);
+            if next == var_consts {
+                break;
+            }
+            var_consts = next;
+        }
+        let all_instrs: Vec<&Instr> = f.blocks.iter().flat_map(|b| b.instrs.iter()).collect();
+        let mut constraints: Vec<HashMap<usize, Bound>> = vec![HashMap::new(); n];
         for h in 0..n {
             let last = match f.blocks[h].instrs.last() {
                 Some(Instr::Br { then_bb, else_bb, .. }) => (*then_bb, *else_bb),
@@ -592,7 +747,10 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                             }
                             Some((DefKind::LoadVar(w), rb)) if rb == h => {
                                 iv = Some(v);
-                                bound = Some(Bound::Var(w));
+                                bound = Some(match var_consts.get(&w) {
+                                    Some(c) => Bound::Const(*c),
+                                    None => Bound::Var(w),
+                                });
                             }
                             _ => {}
                         }
@@ -647,6 +805,9 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
             if !ok {
                 continue;
             }
+            for bb in &region {
+                constraints[*bb].insert(iv, bound);
+            }
             // Mark redundant checks.
             for bb in &region {
                 for (ii, ins) in f.blocks[*bb].instrs.iter().enumerate() {
@@ -680,6 +841,40 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                             remove.insert((bi, ii));
                         }
                     }
+                }
+            }
+        }
+        // Affine indexes: prove sum(coef * i) + c < len using loop bounds.
+        for (bi, b) in f.blocks.iter().enumerate() {
+            for (ii, ins) in b.instrs.iter().enumerate() {
+                if remove.contains(&(bi, ii)) {
+                    continue;
+                }
+                let Instr::BoundsCheck { idx, len, .. } = ins else { continue };
+                let len_const = match len {
+                    LenRef::Const(c) => Some(*c),
+                    LenRef::Var(v) => var_consts.get(v).copied(),
+                };
+                let Some(len_const) = len_const else { continue };
+                let Some((coefs, c0)) = affine_of(*idx, &defs, &all_instrs, &vals, &var_consts) else {
+                    continue;
+                };
+                if c0 < 0 || coefs.values().any(|c| *c < 0) {
+                    continue;
+                }
+                let mut max = c0;
+                let mut proved = true;
+                for (var, coef) in &coefs {
+                    match constraints[bi].get(var) {
+                        Some(Bound::Const(b)) => max += coef * (b - 1),
+                        _ => {
+                            proved = false;
+                            break;
+                        }
+                    }
+                }
+                if proved && max < len_const {
+                    remove.insert((bi, ii));
                 }
             }
         }

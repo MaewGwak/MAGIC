@@ -118,7 +118,9 @@ vectorisation are the remaining costs.
 v0.8.14 adds loop bounds elimination in the IR: if a natural loop compares `i` against the same
 length used by an `a[i]` check and only increments `i` by one, the check is dropped. A 20M-element
 direct-index sum then emits zero checks (93 ms vs AST 77 ms, C 36 ms). Affine indexes like
-`a[i * n + j]` are not proved yet, so matmul keeps its checks.
+`a[i * n + j]` are proved in v0.8.15 after constant propagation makes `n` and `n * n` literal: the
+maximum `(n-1)*n + (n-1)` is compared with the array length, so matmul's inner checks disappear
+(7 → 2 in the whole function) and it improves 260 → 221 ms, at parity with the AST backend (225 ms).
 
 ## Differential harness## Differential harness
 
