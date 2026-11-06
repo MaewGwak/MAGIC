@@ -978,6 +978,7 @@ struct RegAlloc<'a> {
     map: HashMap<Value, (usize, bool)>,
     free: Vec<usize>,
     pool: &'a [usize],
+    last_use: &'a HashMap<Value, usize>,
 }
 
 impl<'a> RegAlloc<'a> {
@@ -1082,6 +1083,23 @@ impl<'a> RegAlloc<'a> {
             ));
         }
     }
+
+    /// Release registers whose value is never used again in this block. Live
+    /// out values were already written at their definition, so they are safe
+    /// to drop from the register file too.
+    fn free_dead(&mut self, at: usize) {
+        let dead: Vec<Value> = self
+            .map
+            .keys()
+            .copied()
+            .filter(|v| self.last_use.get(v).copied() == Some(at))
+            .collect();
+        for v in dead {
+            if let Some((idx, _)) = self.map.remove(&v) {
+                self.free.push(idx);
+            }
+        }
+    }
 }
 
 fn emit_fast_block(
@@ -1092,6 +1110,7 @@ fn emit_fast_block(
     name: &str,
     var_regs: &HashMap<usize, &'static str>,
     pool: &[usize],
+    last_use: &HashMap<Value, usize>,
 ) {
     let mut ra = RegAlloc {
         out,
@@ -1100,8 +1119,9 @@ fn emit_fast_block(
         map: HashMap::new(),
         free: pool.iter().rev().copied().collect(),
         pool,
+        last_use,
     };
-    for ins in instrs {
+    for (ii, ins) in instrs.iter().enumerate() {
         match ins {
             Instr::Const { dst, v } => {
                 let d = ra.dst(*dst);
@@ -1292,6 +1312,7 @@ fn emit_fast_block(
                 unreachable!("slow block")
             }
         }
+        ra.free_dead(ii);
     }
 }
 
@@ -1447,7 +1468,25 @@ pub fn emit(prog: &IrProgram) -> String {
             out.push_str(".p2align 4\n");
             out.push_str(&format!("{}:\n", lblock(bb)));
             if !slow_block(&b.instrs) {
-                emit_fast_block(&mut out, f, &b.instrs, &live_out[bb], &f.name, &var_regs, &pool);
+                let mut last_use: HashMap<Value, usize> = HashMap::new();
+                for (ii, ins) in b.instrs.iter().enumerate() {
+                    let mut u = Vec::new();
+                    let mut d = Vec::new();
+                    instr_uses_defs(ins, &mut u, &mut d);
+                    for v in u {
+                        last_use.insert(v, ii);
+                    }
+                }
+                emit_fast_block(
+                    &mut out,
+                    f,
+                    &b.instrs,
+                    &live_out[bb],
+                    &f.name,
+                    &var_regs,
+                    &pool,
+                    &last_use,
+                );
                 continue;
             }
             for ins in &b.instrs {

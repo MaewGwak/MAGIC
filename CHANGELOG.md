@@ -30,6 +30,13 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.19 — dead-register reuse inside IR blocks (2026-11-06)
+
+The block allocator now tracks the last use of every value and frees its register as soon as the
+value is consumed (live-out values were already stored at their definition). This stops a block from
+hoarding every temporary until its end and removes most spill/reload traffic from the hot loops:
+matmul improves 208 → ~186 ms, the array sum stays at 93 ms and sieve stays around 130 ms.
+
 ## v0.8.18 — aligned IR basic blocks (2026-11-06)
 
 Investigating the array-sum regression showed the generated code was at fault, not the allocator:

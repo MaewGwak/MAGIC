@@ -122,6 +122,8 @@ read-modify-write stores); v0.8.17 moves those accesses into the register-alloca
 four-register pool, and sieve prints 664579 in 124 ms (AST 88 ms, C 38 ms). v0.8.18 aligns every
 function and basic block with `.p2align 4`; this removed a 30 % alignment-induced regression in the
 array-sum loop (120 → 93 ms) and improved matmul to 208 ms, now ahead of the AST backend's 225 ms.
+v0.8.19 frees each block value's register at its last use instead of keeping every temporary until
+the block ends, which takes matmul to ~186 ms.
 Affine indexes like
 `a[i * n + j]` are proved in v0.8.15 after constant propagation makes `n` and `n * n` literal: the
 maximum `(n-1)*n + (n-1)` is compared with the array length, so matmul's inner checks disappear
