@@ -30,6 +30,38 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.76 — bounds-check elimination restored, audited and hardened (2026-11-06)
+
+Since the i32 wrap fix every arithmetic op is followed by a `Trunc`, which made the bounds prover
+reject every induction variable and affine index; matmul kept two bounds checks in its inner loop.
+The prover now looks through those truncations (`strip_trunc`) for increment recognition and affine
+analysis, which removes the checks and produces large gains. Because this is security-critical, Vera
+Ds. Flint ran three adversarial audits and found seven real defects in the first and intermediate
+versions; the final rules are:
+
+* the loop guard must be the Br condition's own `Bin Lt` (an `||` guard is rejected);
+* the header must dominate every region block;
+* exactly one canonical `iv+1` store may exist in the region;
+* a fact is valid in a block only if the block cannot be reached from the increment without
+  re-entering the header (`after_inc`); the increment block gets the fact only before the store and
+  only when it is not itself in `after_inc`;
+* initialisation constants are never Trunc-stripped (so `2147483648 as i32` is not read as +2^31);
+* loop bounds, array lengths and affine maxima must stay within i32, and affine expressions with
+  subtraction/negation are rejected.
+
+Eight differential regressions encode the auditor's counterexamples (mutation before access, affine
+mutation, increment in an inner loop, `||` guard, Trunc-negative init, access after the increment,
+nested re-entry, increment-block self-reachability). All gates pass; repository parity is 60/60.
+
+Performance on the same machine (3-run medians, IR, default backend): matmul 166 → ~80 ms,
+nbody ~2000 → 847 ms, particles 595 → 261 ms, raytrace 280 → 110 ms, vecpart 160 → 72 ms,
+btree 175 → 77 ms, hashmap 108 → 80 ms, sqlscan 34 → 18 ms, bufpool 194 → 77 ms. Against pinned
+portable C/C++/Rust measurements (Meter Ds. Vex): MAGIC now **wins sieve outright** (377 ms versus
+431/432/437, 0.88x) and is 7.1x lower in peak memory there (14.0 vs 99.4 MB); hash is 1.71x and
+fannkuch 1.73x off the best baseline, raytrace 3.36x, nbody 3.87x, particles 3.96x, bt 6.21x,
+matmul 6.23x. The speed goal (within 1.25x plus three wins) is not yet met: sieve is the only win so
+far; SIMD/width-aware codegen is the next lever.
+
 ## v0.8.75 — CPU-scaled par runtime and creation fallback (2026-11-06)
 
 The parallel runtime now asks `sysconf(_SC_NPROCESSORS_ONLN)` for the CPU count, uses

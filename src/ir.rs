@@ -2338,6 +2338,35 @@ fn compute_var_consts(f: &IrFunc, vals: &HashMap<Value, i64>) -> HashMap<usize, 
 
 type Affine = (HashMap<usize, i64>, i64);
 
+fn affine_has_negative_term(
+    v: Value,
+    defs: &HashMap<Value, (DefKind, usize)>,
+    instrs: &[&Instr],
+) -> bool {
+    let Some((kind, _)) = defs.get(&v) else { return false };
+    match kind {
+        DefKind::Const(_) | DefKind::LoadVar(_) => false,
+        DefKind::Other => {
+            let Some(ins) = instrs.iter().find(|i| def_kind(i).map(|(d, _)| d) == Some(v)) else {
+                return false;
+            };
+            match ins {
+                Instr::Trunc { a, .. } => affine_has_negative_term(*a, defs, instrs),
+                Instr::Un { neg: true, .. } => true,
+                Instr::Bin { op, l, r, .. } => match op {
+                    Op::Sub => true,
+                    Op::Add | Op::Mul => {
+                        affine_has_negative_term(*l, defs, instrs)
+                            || affine_has_negative_term(*r, defs, instrs)
+                    }
+                    _ => false,
+                },
+                _ => false,
+            }
+        }
+    }
+}
+
 fn affine_of(
     v: Value,
     defs: &HashMap<Value, (DefKind, usize)>,
@@ -2363,6 +2392,9 @@ fn affine_of(
         DefKind::Other => {
             // Find the defining instruction; only Add/Sub/Mul(Const) are affine.
             let ins = instrs.iter().find(|i| def_kind(i).map(|(d, _)| d) == Some(v))?;
+            if let Instr::Trunc { a, .. } = ins {
+                return affine_of(*a, defs, instrs, consts, vars);
+            }
             match ins {
                 Instr::Bin { op, l, r, .. } => match op {
                     Op::Add | Op::Sub => {
@@ -2458,6 +2490,24 @@ fn def_kind(ins: &Instr) -> Option<(Value, DefKind)> {
 /// The loop index must be provably non-negative for an unsigned bounds check
 /// to be removable: it must be initialised with a non-negative constant before
 /// the header and only ever be incremented by one afterwards.
+fn strip_trunc(f: &IrFunc, mut v: Value) -> Value {
+    for _ in 0..4 {
+        let Some(ins) = f
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .find(|i| dst_of(i) == Some(v))
+        else {
+            return v;
+        };
+        match ins {
+            Instr::Trunc { a, .. } => v = *a,
+            _ => return v,
+        }
+    }
+    v
+}
+
 fn var_nonneg(
     defs: &HashMap<Value, (DefKind, usize)>,
     f: &IrFunc,
@@ -2482,11 +2532,12 @@ fn var_nonneg(
                 }
                 continue;
             }
+            let src_inc = strip_trunc(f, *src);
             let mut increment = false;
             for b2 in &f.blocks {
                 for i2 in &b2.instrs {
                     if let Instr::Bin { dst, op: Op::Add, l, r } = i2 {
-                        if dst == src {
+                        if *dst == src_inc {
                             let is_iv = |v: &Value| {
                                 matches!(defs.get(v), Some((DefKind::LoadVar(x), _)) if *x == iv)
                             };
@@ -2561,7 +2612,47 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
             var_consts = next;
         }
         let all_instrs: Vec<&Instr> = f.blocks.iter().flat_map(|b| b.instrs.iter()).collect();
-        let mut constraints: Vec<HashMap<usize, Bound>> = vec![HashMap::new(); n];
+        // Dominator sets: a loop-bound fact is only valid at an access if the
+        // header dominates the access block and the access executes before the
+        // iteration's update of the induction variable.
+        let mut preds: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (bi, b) in f.blocks.iter().enumerate() {
+            for succ in block_successors(&b.instrs) {
+                if succ < n {
+                    preds[succ].push(bi);
+                }
+            }
+        }
+        let mut dom: Vec<std::collections::HashSet<usize>> =
+            vec![Default::default(); n];
+        dom[0].insert(0);
+        for d in dom.iter_mut().skip(1) {
+            for i in 0..n {
+                d.insert(i);
+            }
+        }
+        loop {
+            let mut changed = false;
+            for b in 1..n {
+                if preds[b].is_empty() {
+                    continue;
+                }
+                let mut new: std::collections::HashSet<usize> =
+                    dom[preds[b][0]].clone();
+                for p in &preds[b][1..] {
+                    new.retain(|x| dom[*p].contains(x));
+                }
+                new.insert(b);
+                if new != dom[b] {
+                    dom[b] = new;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let mut constraints: Vec<HashMap<usize, (Bound, usize)>> = vec![HashMap::new(); n];
         let mut unchecked: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
         for h in 0..n {
             let last = match f.blocks[h].instrs.last() {
@@ -2593,8 +2684,18 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
             // Head layout: LoadVar iv; ...; Bin Lt(l=iv', r=end) -> cond.
             let mut iv: Option<usize> = None;
             let mut bound: Option<Bound> = None;
-            for ins in &f.blocks[h].instrs {
-                if let Instr::Bin { op: Op::Lt, l, r, .. } = ins {
+            let Some(Instr::Br { cond: br_cond, .. }) = f.blocks[h].instrs.last() else {
+                continue;
+            };
+            let Some(Instr::Bin { op: Op::Lt, l, r, .. }) = f
+                .blocks[h]
+                .instrs
+                .iter()
+                .find(|ins| dst_of(ins) == Some(*br_cond))
+            else {
+                continue;
+            };
+            {
                     if let Some((DefKind::LoadVar(v), hb)) = defs.get(l).copied() {
                         if hb != h {
                             continue;
@@ -2637,13 +2738,23 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                             _ => {}
                         }
                     }
-                }
             }
             let (Some(iv), Some(bound)) = (iv, bound) else { continue };
+            // Keep proofs inside the i32 range: the loop bound must be a
+            // positive constant at most i32::MAX, otherwise an increment could
+            // wrap before the loop exits and invalidate the "non-negative"
+            // reasoning.
+            let bound = match bound {
+                Bound::Const(b) if b > 0 && b <= i32::MAX as i64 => Bound::Const(b),
+                _ => continue,
+            };
             if !var_nonneg(&defs, f, iv, h, &vals) {
                 if std::env::var("MAGIC_DEBUG_NONNEG").is_ok() {
                     eprintln!("rejected loop h={} iv={} bound={:?}", h, iv, bound);
                 }
+                continue;
+            }
+            if region.iter().any(|bb| !dom[*bb].contains(&h)) {
                 continue;
             }
             // The index may only be modified by `i = i + 1` inside the region.
@@ -2652,6 +2763,7 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                 for ins in &f.blocks[*bb].instrs {
                     if let Instr::StoreVar { var, src } = ins {
                         if *var == iv {
+                            let src = &strip_trunc(f, *src);
                             let good = match defs.get(src).copied() {
                                 Some((DefKind::Other, _)) => {
                                     // find the defining Bin and check Add(i, const 1)
@@ -2693,8 +2805,47 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
             if !ok {
                 continue;
             }
+            let mut inc_site: Option<(usize, usize)> = None;
+            let mut inc_count = 0usize;
             for bb in &region {
-                constraints[*bb].insert(iv, bound);
+                for (ii, ins) in f.blocks[*bb].instrs.iter().enumerate() {
+                    if matches!(ins, Instr::StoreVar { var, .. } if *var == iv) {
+                        inc_count += 1;
+                        inc_site = Some((*bb, ii));
+                    }
+                }
+            }
+            if inc_count != 1 {
+                continue;
+            }
+            let (inc_bi, inc_ii) = inc_site.unwrap();
+            // Blocks reachable from the increment without re-entering the
+            // header execute after it in the same iteration; the entry fact no
+            // longer holds there. Mark them (nested loops can re-enter an
+            // earlier-looking access block, so plain dominance is not enough).
+            let mut after_inc: std::collections::HashSet<usize> = Default::default();
+            let mut stack: Vec<usize> = block_successors(&f.blocks[inc_bi].instrs)
+                .into_iter()
+                .filter(|s| *s < n && *s != h && region.contains(s))
+                .collect();
+            while let Some(bb) = stack.pop() {
+                if !after_inc.insert(bb) {
+                    continue;
+                }
+                for succ in block_successors(&f.blocks[bb].instrs) {
+                    if succ < n && succ != h && region.contains(&succ) {
+                        stack.push(succ);
+                    }
+                }
+            }
+            for bb in &region {
+                if *bb == inc_bi {
+                    if !after_inc.contains(&inc_bi) {
+                        constraints[*bb].insert(iv, (bound, inc_ii));
+                    }
+                } else if !after_inc.contains(bb) {
+                    constraints[*bb].insert(iv, (bound, usize::MAX));
+                }
             }
             // Mark redundant checks.
             for bb in &region {
@@ -2709,7 +2860,11 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                             (Bound::Var(a), LenRef::Var(b)) => a == *b,
                             _ => false,
                         };
-                        if idx_is_iv && len_matches {
+                        let before = constraints[*bb]
+                            .get(&iv)
+                            .map(|(_, b)| *b)
+                            .unwrap_or(0);
+                        if idx_is_iv && len_matches && ii < before {
                             remove.insert((*bb, ii));
                         }
                     }
@@ -2725,7 +2880,11 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                                 (Bound::Var(a), LenRef::Var(b)) => a == *b,
                                 _ => false,
                             };
-                            if idx_is_iv && len_matches {
+                            let before = constraints[*bb]
+                                .get(&iv)
+                                .map(|(_, b)| *b)
+                                .unwrap_or(0);
+                            if idx_is_iv && len_matches && ii < before {
                                 unchecked.insert((*bb, ii));
                             }
                         }
@@ -2762,6 +2921,12 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                     LenRef::Var(v) => var_consts.get(v).copied(),
                 };
                 let Some(len_const) = len_const else { continue };
+                if len_const > i32::MAX as i64 {
+                    continue;
+                }
+                if affine_has_negative_term(*idx, &defs, &all_instrs) {
+                    continue;
+                }
                 let Some((coefs, c0)) = affine_of(*idx, &defs, &all_instrs, &vals, &var_consts) else {
                     continue;
                 };
@@ -2772,7 +2937,7 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                 let mut proved = true;
                 for (var, coef) in &coefs {
                     match constraints[bi].get(var) {
-                        Some(Bound::Const(b)) => {
+                        Some((Bound::Const(b), before)) if ii < *before => {
                             let term = coef.checked_mul(b.saturating_sub(1));
                             match term.and_then(|t| max.checked_add(t)) {
                                 Some(m) => max = m,

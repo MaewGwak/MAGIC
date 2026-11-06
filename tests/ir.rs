@@ -192,6 +192,134 @@ fn main() { var q = mk(5); print(total(q)); print(q.b); var r = mk(7); print(tot
 "#,
         ),
         (
+            "increment_block_reentered_by_inner_loop",
+            r#"
+fn main() {
+    var a: [i32] = [0; 10];
+    var i = 0;
+    while i < 10 {
+        var k = 0;
+        while k < 3 { a[i] = 1; i = i + 1; k = k + 1; }
+    }
+    print(a[0]);
+}
+"#,
+        ),
+        (
+            "access_after_increment_same_block",
+            r#"
+fn main() {
+    var a: [i32] = [0; 10];
+    var i = 0;
+    while i < 10 { i = i + 1; if i < 5 { print(1); } a[i] = 7; }
+    print(a[0]);
+}
+"#,
+        ),
+        (
+            "nested_loop_reenters_access",
+            r#"
+fn main() {
+    var a: [i32] = [0; 6];
+    var i = 0;
+    while i < 3 {
+        a[i] = 1;
+        var k = 0;
+        while k < 3 { i = i + 1; k = k + 1; }
+    }
+    print(a[0]);
+}
+"#,
+        ),
+        (
+            "iv_mutated_before_access",
+            r#"
+fn main() {
+    var a: [i32] = [0; 11];
+    for i in 0..11 { i = i + 1; a[i] = 7; }
+    print(a[0]);
+}
+"#,
+        ),
+        (
+            "iv_affine_mutated_before_access",
+            r#"
+fn main() {
+    var a: [i32] = [0; 20];
+    var i = 0;
+    while i < 10 { i = i + 1; a[i * 2] = 7; }
+    print(a[0]);
+}
+"#,
+        ),
+        (
+            "iv_incremented_in_inner_loop",
+            r#"
+fn main() {
+    var a: [i32] = [0; 4];
+    var i = 0;
+    while i < 4 {
+        var k = 0;
+        while k < 1 { i = i + 1; k = k + 1; }
+        a[i] = 1;
+    }
+    print(a[0]);
+}
+"#,
+        ),
+        (
+            "or_guard_is_not_a_bound",
+            r#"
+fn main() {
+    var a: [i32] = [0; 4];
+    var i = 0;
+    var spin = 0;
+    while i < 10 || spin < 100 { a[i] = 1; i = i + 1; spin = spin + 1; }
+    print(a[0]);
+}
+"#,
+        ),
+        (
+            "trunc_negative_iv_init",
+            r#"
+fn main() {
+    var a: [i32] = [0; 4];
+    var i: i32 = 2147483648 as i32;
+    while i < 10 { a[i] = 1; i = i + 1; }
+    print(a[0]);
+}
+"#,
+        ),
+        (
+            "affine_sub_keeps_bounds",
+            r#"
+fn main() {
+    var a: [i32] = [0; 50];
+    var n = 10;
+    var i = 6;
+    var j = 5;
+    print(a[n * i - j]);
+}
+"#,
+        ),
+        (
+            "affine_nested_loops",
+            r#"
+fn main() {
+    var n = 24;
+    var a: [i32] = [0; 576];
+    for i in 0..n {
+        for j in 0..n {
+            a[i * n + j] = i * 100 + j;
+        }
+    }
+    var t = 0;
+    for i in 0..n { for j in 0..n { t = t + a[i * n + j]; } }
+    print(t);
+}
+"#,
+        ),
+        (
             "par_for_int_and_scalar",
             r#"
 fn main() {
