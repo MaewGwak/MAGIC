@@ -30,6 +30,18 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.66 — the Ds. agent crew charter (2026-11-06)
+
+`TEAM.md` gives the standing subagents durable identities — every member is DeepSeek and carries
+`Ds.`: James Ds. Pal (Bug Eliminator Taskforce), Vera Ds. Flint (Soundness Inquisitor), Meter Ds. Vex
+(Benchmark Evidence Bureau), Serene Ds. Porcelain (Security Department), Rhea Ds. Anvil (Codegen
+Architect), Nova Ds. Sparrow (Memory Economy Unit), Kai Ds. Lumen (Diagnostics & DX), Sable Ds. Torque
+(Low-End Hardware Lab), Iris Ds. Prism (High-End Scaling) and Orin Ds. Quill (Release Gate). The
+charter fixes the evidence contract (repro / file:line / measured median before agreement), makes
+adversarial review the default, and defines default pairings for codegen, performance, DX and
+security work. v0.8.65 shipped with all three Vera-found defects fixed and six differential
+regressions in place.
+
 ## v0.8.65 — narrowed i32 index chains (2026-11-06)
 
 i32 arithmetic that feeds only array indices is now emitted with 32-bit instructions
