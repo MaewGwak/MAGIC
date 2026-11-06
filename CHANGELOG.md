@@ -1,3 +1,13 @@
+## v0.12.2 — V4 AVX2 intrinsics: raytrace win (2026-11-07)
+
+Added the opaque `V4` (`__m256d`) C-backend type and `v4_set/splat/add/sub/mul/div/sqrt/fma/
+cmpgt/cmplt/cmpeq/and/blend/max/any/extract` builtins. `bench-best/magic/C/raytrace.magic`
+implements four-pixel AVX2 tracing with five unrolled spheres and shading, OpenMP over rows.
+Built with gcc `-O3 -march=native -fopenmp`: 20-run median **2 ms** (2–3 ms), output
+`336141.941`, beating C/C++ best-of 3.23 ms. Fannkuch remains a MAGIC win at 8 ms. The other six
+workloads are within 0.01–0.16 ms at the process/start-up floor. All gates pass; 1.0.0 still needs
+the owner's tie/floor decision and a full best-of rerun.
+
 ## v0.12.1 — SIMD permutation intrinsics: fannkuch win (2026-11-07)
 
 Added C-backend `perm_init/perm_rot/perm_rol1/perm_flips` and `cnt_init/cnt_set/cnt_dec`

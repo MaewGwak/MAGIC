@@ -1,7 +1,7 @@
 # MAGIC benchmarks — current evidence (Linux, 2026-11-06)
 
 Machine: AMD Ryzen AI 7 350, 31.1 GB RAM, Linux. Compilers: gcc/g++ 16.2.1, rustc 1.99.1,
-Go and Goose where the harness has a source. MAGIC is `magicc 0.12.1` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
+Go and Goose where the harness has a source. MAGIC is `magicc 0.12.2` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
 (`as` + `ld`, no C compiler in the build path). Every number below comes from
 `./verify.sh` / `./bench-linux.sh`; every program's checksum is compared and `verify.sh` fails on
 a mismatch. Timings are medians of 3–5 interleaved runs, portable flags (no `-march=native` for the
@@ -154,7 +154,7 @@ The neutral judge rebuilt and timed them sequentially (20 randomized rounds, exa
 1e-9 relative tolerance for floats) and wrote `bench-best/RESULTS.md`.
 
 Headline (ms, 20-run median): fannkuch **MAGIC 8.00 (C SIMD)** vs Rust 9.01 / C 15.39 / C++ 15.37;
-raytrace **C/C++ 3.23** vs MAGIC 7.29 (remaining loss); n-body all compiled implementations tie at 214.5–214.7,
+raytrace **MAGIC 2.00 (C SIMD)** vs C/C++ 3.23, Rust 4.13; n-body all compiled implementations tie at 214.5–214.7,
 while MAGIC native IR is 665; sieve, hash, particles, binary trees and matmul are at the
 process/start-up floor (≈1.1–3.2 ms) and are ties. **No overall language wins.** An untuned/default
 MAGIC user does **not** beat best C/C++/Rust; best MAGIC ties most workloads but loses fannkuch and

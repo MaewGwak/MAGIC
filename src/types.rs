@@ -1039,6 +1039,37 @@ impl Checker {
                     }
                     return Ok(Ty::Void);
                 }
+                if name == "v4_splat" || name == "v4_set" || name == "v4_add"
+                    || name == "v4_sub" || name == "v4_mul" || name == "v4_div"
+                    || name == "v4_sqrt" || name == "v4_fma" || name == "v4_cmpgt"
+                    || name == "v4_cmplt" || name == "v4_cmpeq" || name == "v4_and"
+                    || name == "v4_blend" || name == "v4_max" || name == "v4_any"
+                    || name == "v4_extract"
+                {
+                    let vid = *self.struct_index.get("V4")
+                        .ok_or_else(|| format!("{}: vector intrinsics require `struct V4`", e.line))?;
+                    let vt = Ty::Struct(vid);
+                    let need = |n: usize| -> Result<(), String> {
+                        if args.len() == n { Ok(()) } else { Err(format!("{}: {} expects {} argument(s)", e.line, name, n)) }
+                    };
+                    match name.as_str() {
+                        "v4_splat" => { need(1)?; self.check_expr(&args[0], Some(Ty::F64), scopes)?; }
+                        "v4_set" => { need(4)?; for a in args { self.check_expr(a, Some(Ty::F64), scopes)?; } }
+                        "v4_add" | "v4_sub" | "v4_mul" | "v4_div" | "v4_max" | "v4_and" | "v4_cmpgt" | "v4_cmplt" | "v4_cmpeq" => {
+                            need(2)?; self.check_expr(&args[0], Some(vt), scopes)?; self.check_expr(&args[1], Some(vt), scopes)?;
+                        }
+                        "v4_sqrt" => { need(1)?; self.check_expr(&args[0], Some(vt), scopes)?; }
+                        "v4_fma" | "v4_blend" => { need(3)?; for a in args { self.check_expr(a, Some(vt), scopes)?; } }
+                        "v4_any" => { need(1)?; self.check_expr(&args[0], Some(vt), scopes)?; }
+                        "v4_extract" => { need(2)?; self.check_expr(&args[0], Some(vt), scopes)?; self.check_expr(&args[1], Some(Ty::I32), scopes)?; }
+                        _ => {}
+                    }
+                    return Ok(match name.as_str() {
+                        "v4_any" => Ty::Bool,
+                        "v4_extract" => Ty::F64,
+                        _ => vt,
+                    });
+                }
                 if name == "cnt_init" {
                     if !args.is_empty() { return Err(format!("{}: cnt_init takes no arguments", e.line)); }
                     return Ok(Ty::Void);

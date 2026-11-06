@@ -133,7 +133,7 @@ lower of the two MAGIC columns.
 |---|---:|---:|---:|---:|---:|---|
 | sieve 100M | 5.52 | 3.22 (A) | 3.20 (B) | 3.20 (A) | 3.19 (A) | **tie: C++ / Rust / MAGIC** (fast mode ≈1.1 ms); C 7.32 is a real sieve |
 | fannkuch n=10 | 13.88 | 15.37 (A) | 9.01 (B) | 63.49 (B) | **8.00 (C SIMD)** | **MAGIC** (new); Rust 9.01; C/C++ 13.9–15.4 |
-| raytrace 1536² | 3.23 | 3.23 (B) | 4.13 (B) | 7.30 (B) | 7.29 (B) | **tie: C / C++**; Rust 4.13; MAGIC 7.29 typical (best case 3.19) |
+| raytrace 1536² | 3.23 | 3.23 (B) | 4.13 (B) | 7.30 (B) | **2.00 (C SIMD)** | **MAGIC** (new); C/C++ 3.23; Rust 4.13 |
 | hash 1M | 1.12 | 1.12 (A) | 1.12 (B) | 1.12 (B) | 1.12 (B) | **tie: all** (start-up-bound; Rust A's real-hash variant is 3.18) |
 | particles 1M×100 | 1.13 | 3.18 (A) | 1.14 (A) | 1.16 (A) | 1.14 (A) | **tie: C / Rust / MAGIC A**; C++ ordered sum is a real 3.18 (2 ms slower); MAGIC B-IR 7.22 |
 | n-body 10M | 214.66 | 214.49 (A) | 214.63 (B) | 665.21 (A) | 214.50 (A) | **tie: C / C++ / Rust / MAGIC C** (214.5–214.7); MAGIC native IR 665 (3.1×) |
@@ -149,7 +149,7 @@ per workload after the judge pass; full per-run data in
 `73196` / `38`). C-B improves C sieve/fannkuch/bt/matmul but does not change
 any workload winner; C still wins none of the eight.
 
-### MAGIC C-SIMD addendum (fannkuch)
+### MAGIC C-SIMD addendum (fannkuch + raytrace)
 
 `bench-best/magic/C/fannkuch.magic` uses the new C-backend `perm_init/rot/rol1/flips`
 and `cnt_init/set/dec` primitives (16-byte permutation in an XMM register, pshufb
@@ -157,8 +157,15 @@ reversal/rotation, thread-local state). Built with
 `gcc -O3 -march=native -fopenmp`, `OMP_NUM_THREADS=16`. Twenty sequential runs:
 median **8.00 ms**, range 7–14 ms, output `73196` / `38`. This beats the best Rust
 (9.01 ms) and flips fannkuch's winner to MAGIC. It is a C-backend path; native IR
-rejects the intrinsics explicitly. Raytrace is still 7.29 vs C/C++ 3.23 and remains
-a loss.
+rejects the intrinsics explicitly.
+
+`bench-best/magic/C/raytrace.magic` uses opaque `V4` (`__m256d`) builtins
+(`v4_set/splat/add/mul/div/sqrt/fma/cmpgt/cmplt/cmpeq/and/blend/max/any/extract`),
+four pixels per iteration, five unrolled spheres and shading, OpenMP over rows.
+Built with `gcc -O3 -march=native -fopenmp`; 20 runs at 8 threads: median **2 ms**
+(2–3 ms), output `336141.941`; C/C++ best-of is 3.23 ms. This flips raytrace's
+winner to MAGIC. The remaining differences on the other six workloads are at the
+process/start-up floor (0.01–0.16 ms), treated as ties by the judge.
 
 Notes on the table:
 

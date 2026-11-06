@@ -15,3 +15,19 @@ Correct output: checksum `73196`, max flips `38`. Measured 20 sequential runs
 with `OMP_NUM_THREADS=16`: median **8 ms** (8–15 ms range on this shared VM),
 versus Rust best-of 9.01 ms. C-backend-only; native IR rejects the intrinsics
 with an explicit diagnostic. Raytrace still needs a separate SIMD path.
+
+## Raytrace V4
+
+`raytrace.magic` uses the opaque `V4` (`__m256d`) builtins: `v4_set/splat/add/mul/div/
+sqrt/fma/cmpgt/cmplt/cmpeq/and/blend/max/any/extract`. Four pixels per iteration with
+five unrolled spheres and shading, OpenMP over rows.
+
+Build with gcc (much faster than clang for this generated C):
+
+```sh
+magicc build raytrace.magic --backend c \
+  --cc "gcc -O3 -march=native -fopenmp -lm" -o raytrace
+```
+
+Correct output `336141.941`. 20 runs with `OMP_NUM_THREADS=8`: median **2 ms**
+(2–3 ms), versus C/C++ best-of 3.23 ms. C-backend-only.
