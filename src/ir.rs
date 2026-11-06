@@ -114,6 +114,7 @@ pub struct IrFunc {
     pub nvalues: usize,
     pub nparams: usize,
     pub array_len_args: Vec<(usize, usize)>,
+    pub param_vars: Vec<usize>,
     pub blocks: Vec<Block>,
     pub narrow_index: std::collections::HashSet<Value>,
 }
@@ -2115,6 +2116,7 @@ impl Builder {
             nvalues: self.nvalues,
             nparams: 0,
             array_len_args: Vec::new(),
+            param_vars: Vec::new(),
             blocks: std::mem::take(&mut self.blocks),
             narrow_index: std::collections::HashSet::new(),
         }
@@ -2287,6 +2289,7 @@ fn lower_func(
     out.name = f.name.clone();
     out.nparams = nparams;
     out.array_len_args = array_len_args;
+    out.param_vars = (0..nparams).collect();
     out.argc_var = argc_var;
     out.argv_var = argv_var;
     Ok((out, extras))
@@ -5565,7 +5568,7 @@ fn propagate_const_array_lens(prog: &mut IrProgram) {
             break;
         }
     }
-    for ((fi, var), c) in consts.into_iter() {
+    for (&(fi, var), &c) in consts.iter() {
         let f = &mut prog.funcs[fi];
         if f.blocks.iter().any(|b| b.instrs.iter().any(|i| matches!(i, Instr::StoreVar { var: v, .. } if *v == var))) {
             continue;
@@ -5577,6 +5580,67 @@ fn propagate_const_array_lens(prog: &mut IrProgram) {
                         *ins = Instr::Const { dst: *dst, v: c };
                     }
                 }
+            }
+        }
+    }
+    // Drop the now-unused length arguments from signatures and call sites.
+    for fi in 0..prog.funcs.len() {
+        let name = prog.funcs[fi].name.clone();
+        let mut removals: Vec<(usize, usize, i64)> = Vec::new();
+        for (pos, var) in prog.funcs[fi].array_len_args.clone() {
+            let Some(c) = consts.get(&(fi, var)).copied() else { continue };
+            if prog.funcs[fi].blocks.iter().any(|b| {
+                b.instrs.iter().any(|i| match i {
+                    Instr::LoadVar { var: v, .. } | Instr::StoreVar { var: v, .. } => *v == var,
+                    _ => false,
+                })
+            }) {
+                continue;
+            }
+            removals.push((pos, var, c));
+        }
+        removals.sort_by(|a, b| b.0.cmp(&a.0));
+        for (pos, var, c) in removals {
+            replace_len_refs(&mut prog.funcs[fi], var, c);
+            for caller in prog.funcs.iter_mut() {
+                for b in caller.blocks.iter_mut() {
+                    for ins in b.instrs.iter_mut() {
+                        if let Instr::Call { name: cn, args, .. } = ins {
+                            if cn == &name && pos < args.len() {
+                                args.remove(pos);
+                            }
+                        }
+                    }
+                }
+            }
+            let callee = &mut prog.funcs[fi];
+            if pos < callee.param_vars.len() {
+                callee.param_vars.remove(pos);
+            }
+            callee.nparams = callee.nparams.saturating_sub(1);
+            let mut newlists = Vec::new();
+            for (p, v) in callee.array_len_args.drain(..) {
+                if v == var {
+                    continue;
+                }
+                newlists.push(if p > pos { (p - 1, v) } else { (p, v) });
+            }
+            callee.array_len_args = newlists;
+        }
+    }
+}
+
+fn replace_len_refs(f: &mut IrFunc, var: usize, c: i64) {
+    for b in f.blocks.iter_mut() {
+        for ins in b.instrs.iter_mut() {
+            let len = match ins {
+                Instr::BoundsCheck { len, .. }
+                | Instr::IndexFieldLoad { len, .. }
+                | Instr::IndexFieldStore { len, .. } => len,
+                _ => continue,
+            };
+            if matches!(*len, LenRef::Var(v) if v == var) {
+                *len = LenRef::Const(c);
             }
         }
     }
@@ -5931,6 +5995,7 @@ pub fn emit(prog: &IrProgram) -> String {
             out.push_str(&format!("    mov %rsi, -{}(%rbp)\n", varoff(av)));
         }
         for i in 0..f.nparams {
+            let var = f.param_vars.get(i).copied().unwrap_or(i);
             let src = if i < 6 {
                 regs[i].to_string()
             } else {
@@ -5940,10 +6005,10 @@ pub fn emit(prog: &IrProgram) -> String {
                 ));
                 "%rax".to_string()
             };
-            if let Some(reg) = var_regs.get(&i) {
+            if let Some(reg) = var_regs.get(&var) {
                 out.push_str(&format!("    mov {}, {}\n", src, reg));
             } else {
-                out.push_str(&format!("    mov {}, -{}(%rbp)\n", src, varoff(i)));
+                out.push_str(&format!("    mov {}, -{}(%rbp)\n", src, varoff(var)));
             }
         }
         let lblock = |bb: usize| format!(".L{}_{}", f.name, bb);

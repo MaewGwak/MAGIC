@@ -30,6 +30,17 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.85 — drop constant array-length arguments (2026-11-06)
+
+The constant array lengths found in v0.8.84 are now removed from the ABI as well. Each function
+records `param_vars` (IR argument position → local slot), so dropping an argument only needs to
+remove it from the signature, every call site and the mapping — no global renumbering of locals. All
+`LenRef::Var` uses in the callee are rewritten to the constant before the argument disappears. Binary
+trees drops 4449 → 3888 ms (the count variant 1901 → 1494 ms) because the recursive build/check calls
+now pass four arguments instead of seven and no longer spill one to the stack; the output is
+unchanged (568328208). Fannkuch is unaffected (its remaining checks depend on indexes, not length
+only). All gates pass, 168 tests, repo parity 60/60.
+
 ## v0.8.84 — interprocedural constant array lengths (2026-11-06)
 
 Function metadata now records which IR arguments are array-length parameters. When every call site
