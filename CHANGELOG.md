@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.11 — IR arrays, bounds checks and array parameters (2026-11-06)
+
+The typed IR now has heap arrays: `calloc` allocation with a zero initializer (or an IR-generated
+fill loop for other initialisers), element loads/stores with unsigned bounds checks that panic with
+`line N: index out of bounds`, runtime lengths for parameters (`ptr` + `len` as two arguments), and
+`ArrayLen`. `examples/array_param` prints 100 and `bench-suite/matmul_magic` prints 326316140 through
+`--backend ir`, byte-identical to the C backend (matmul: 481 ms IR vs 31 ms C — every IR value still
+owns a stack slot, which is exactly what the register allocator will remove). Bit-packed `[bool]`,
+vectors and structs are still rejected with diagnostics.
+
 ## v0.8.10 — typed IR prototype and `--backend ir` (2026-11-06)
 
 `src/ir.rs` introduces a typed three-address IR and a naive emitter: integer scalars, locals,

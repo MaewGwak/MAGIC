@@ -65,10 +65,12 @@ fn ir_matches_c_on_small_integer_programs() {
         .iter()
         .map(|(n, s)| (n.to_string(), s.to_string()))
         .collect();
-    for ex in ["fib", "for", "sum"] {
+    for ex in ["fib", "for", "sum", "array_param"] {
         let src = std::fs::read_to_string(root.join(format!("examples/{ex}.magic"))).unwrap();
         corpus.push((format!("example_{ex}"), src));
     }
+    let mm = std::fs::read_to_string(root.join("bench-suite/matmul_magic.magic")).unwrap();
+    corpus.push(("matmul".to_string(), mm));
     for (name, src) in &corpus {
         let c = run(src, &dir, &format!("{name}_c"), false, &cc_cmd);
         let i = run(src, &dir, &format!("{name}_i"), true, &cc_cmd);

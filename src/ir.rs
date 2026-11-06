@@ -16,6 +16,12 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Value(pub u32);
 
+#[derive(Clone, Copy, Debug)]
+pub enum LenRef {
+    Const(i64),
+    Var(usize),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
     Add,
@@ -46,6 +52,10 @@ pub enum Instr {
     Ret(Option<Value>),
     Br { cond: Value, then_bb: usize, else_bb: usize },
     Jmp(usize),
+    Alloc { ptr_var: usize, elem: Ty, len: Value },
+    BoundsCheck { idx: Value, len: LenRef, line: usize },
+    IndexLoad { dst: Value, ptr_var: usize, idx: Value, elem: Ty },
+    IndexStore { ptr_var: usize, idx: Value, elem: Ty, src: Value },
 }
 
 #[derive(Clone, Debug)]
@@ -74,6 +84,7 @@ struct Builder {
     nvalues: usize,
     vbool: Vec<bool>,
     var_bool: HashMap<String, bool>,
+    arrays: HashMap<String, (Ty, LenRef)>,
     ret: Ty,
 }
 
@@ -87,6 +98,7 @@ impl Builder {
             nvalues: 0,
             vbool: Vec::new(),
             var_bool: HashMap::new(),
+            arrays: HashMap::new(),
             ret,
         }
     }
@@ -185,6 +197,19 @@ impl Builder {
                 }
                 Ok(dst)
             }
+            ExprKind::Index { name, index } => {
+                let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", e.line, name)
+                })?;
+                let idx = self.lower_expr(index)?;
+                self.push(Instr::BoundsCheck { idx, len, line: e.line });
+                let ptr_var = *self.vars.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", e.line, name)
+                })?;
+                let dst = self.value();
+                self.push(Instr::IndexLoad { dst, ptr_var, idx, elem });
+                Ok(dst)
+            }
             ExprKind::Cast { e, ty } => {
                 let a = self.lower_expr(e)?;
                 if *ty == Ty::F64 || *ty == Ty::Str {
@@ -193,6 +218,17 @@ impl Builder {
                 let dst = self.value();
                 self.push(Instr::Trunc { dst, ty: *ty, a });
                 self.vbool[dst.0 as usize] = *ty == Ty::Bool;
+                Ok(dst)
+            }
+            ExprKind::ArrayLen(name) => {
+                let (_, len) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", e.line, name)
+                })?;
+                let dst = self.value();
+                match len {
+                    LenRef::Const(n) => self.push(Instr::Const { dst, v: n }),
+                    LenRef::Var(v) => self.push(Instr::LoadVar { dst, var: v }),
+                }
                 Ok(dst)
             }
             ExprKind::Call { name, args } => {
@@ -239,6 +275,76 @@ impl Builder {
                     .ok_or_else(|| format!("line {}: IR: unknown variable `{}`", s.line, name))?;
                 self.push(Instr::StoreVar { var, src: v });
                 self.var_bool.insert(name.clone(), is_bool);
+            }
+            StmtKind::ArrayLet { name, elem, value, count } => {
+                if *elem == Ty::Bool {
+                    return Err(format!(
+                        "line {}: IR: `[bool]` arrays are bit-packed; the IR does not support them yet",
+                        s.line
+                    ));
+                }
+                let lenv = self.lower_expr(count)?;
+                let ptr_var = self.var(name);
+                self.push(Instr::Alloc { ptr_var, elem: *elem, len: lenv });
+                let len_var = self.nvars;
+                self.nvars += 1;
+                self.push(Instr::StoreVar { var: len_var, src: lenv });
+                let len_ref = LenRef::Var(len_var);
+                self.arrays.insert(name.clone(), (*elem, len_ref));
+                let zero = matches!(value.kind, ExprKind::Int(0))
+                    || matches!(value.kind, ExprKind::Bool(false));
+                if !zero {
+                    let init = self.lower_expr(value)?;
+                    let iv = self.nvars;
+                    self.nvars += 1;
+                    let z = self.value();
+                    self.push(Instr::Const { dst: z, v: 0 });
+                    self.push(Instr::StoreVar { var: iv, src: z });
+                    let head = self.new_block();
+                    let body_bb = self.new_block();
+                    let incr = self.new_block();
+                    let end = self.new_block();
+                    self.push(Instr::Jmp(head));
+                    self.cur = head;
+                    let a = self.value();
+                    self.push(Instr::LoadVar { dst: a, var: iv });
+                    let b = self.value();
+                    match len_ref {
+                        LenRef::Const(n) => self.push(Instr::Const { dst: b, v: n }),
+                        LenRef::Var(v) => self.push(Instr::LoadVar { dst: b, var: v }),
+                    }
+                    let c = self.value();
+                    self.push(Instr::Bin { dst: c, op: Op::Lt, l: a, r: b });
+                    self.push(Instr::Br { cond: c, then_bb: body_bb, else_bb: end });
+                    self.cur = body_bb;
+                    let i = self.value();
+                    self.push(Instr::LoadVar { dst: i, var: iv });
+                    self.push(Instr::IndexStore { ptr_var, idx: i, elem: *elem, src: init });
+                    self.push(Instr::Jmp(incr));
+                    self.cur = incr;
+                    let i2 = self.value();
+                    self.push(Instr::LoadVar { dst: i2, var: iv });
+                    let one = self.value();
+                    self.push(Instr::Const { dst: one, v: 1 });
+                    let nv = self.value();
+                    self.push(Instr::Bin { dst: nv, op: Op::Add, l: i2, r: one });
+                    self.push(Instr::StoreVar { var: iv, src: nv });
+                    self.push(Instr::Jmp(head));
+                    self.cur = end;
+                }
+                let _ = len_ref;
+            }
+            StmtKind::IndexAssign { name, index, value } => {
+                let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", s.line, name)
+                })?;
+                let idx = self.lower_expr(index)?;
+                self.push(Instr::BoundsCheck { idx, len, line: s.line });
+                let src = self.lower_expr(value)?;
+                let ptr_var = *self.vars.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", s.line, name)
+                })?;
+                self.push(Instr::IndexStore { ptr_var, idx, elem, src });
             }
             StmtKind::Print { value, .. } => {
                 let v = self.lower_expr(value)?;
@@ -360,16 +466,35 @@ fn lower_func(f: &Func) -> Result<IrFunc, String> {
         return Err(format!("IR: `{}` has an unsupported return type", f.name));
     }
     let mut b = Builder::new(f.ret);
+    let mut nparams = 0usize;
     for (name, pty) in &f.params {
-        if !matches!(pty, ParamTy::Scalar(_)) {
-            return Err(format!(
-                "IR: `{}` takes array/vec parameters, not supported yet",
-                f.name
-            ));
+        match pty {
+            ParamTy::Scalar(_) => {
+                b.var(name);
+                nparams += 1;
+            }
+            ParamTy::Array(elem) => {
+                if *elem == Ty::Bool {
+                    return Err(format!(
+                        "IR: `{}` takes a bit-packed `[bool]` parameter, not supported yet",
+                        f.name
+                    ));
+                }
+                let pv = b.var(name);
+                let lv = b.nvars;
+                b.nvars += 1;
+                b.arrays.insert(name.clone(), (*elem, LenRef::Var(lv)));
+                let _ = pv;
+                nparams += 2;
+            }
+            ParamTy::Vec(_) => {
+                return Err(format!(
+                    "IR: `{}` takes vec parameters, not supported yet",
+                    f.name
+                ))
+            }
         }
-        b.var(name);
     }
-    let nparams = f.params.len();
     for st in &f.body {
         b.lower_stmt(st)?;
     }
@@ -390,6 +515,32 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str(".Ltrue: .asciz \"true\"\n");
     out.push_str(".Lfalse: .asciz \"false\"\n");
     out.push_str(".Ldiv0: .asciz \"line 0: division by zero\"\n");
+    out.push_str(".Lfmt_panic: .asciz \"%s\\n\"\n");
+    let mut lines: Vec<usize> = Vec::new();
+    for f in &prog.funcs {
+        for b in &f.blocks {
+            for i in &b.instrs {
+                if let Instr::BoundsCheck { line, .. } = i {
+                    if !lines.contains(line) {
+                        lines.push(*line);
+                    }
+                }
+            }
+        }
+    }
+    for line in &lines {
+        out.push_str(&format!(
+            ".Lmsg{}: .asciz \"line {}: index out of bounds\"\n",
+            line, line
+        ));
+    }
+    out.push_str(".text\n");
+    out.push_str(".Lir_panic:\n");
+    out.push_str("    push %rbp\n    mov %rsp, %rbp\n");
+    out.push_str("    mov %rdi, %rdx\n");
+    out.push_str("    mov stderr@GOTPCREL(%rip), %rax\n    mov (%rax), %rdi\n");
+    out.push_str("    lea .Lfmt_panic(%rip), %rsi\n    xor %eax, %eax\n");
+    out.push_str("    call fprintf@PLT\n    mov $1, %edi\n    call exit@PLT\n");
     for f in &prog.funcs {
         out.push_str(&format!(".globl {}\n.type {}, @function\n{}:\n", f.name, f.name, f.name));
         out.push_str("    push %rbp\n    mov %rsp, %rbp\n");
@@ -516,6 +667,57 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&format!("    jne {}\n    jmp {}\n", lblock(*then_bb), lblock(*else_bb)));
                     }
                     Instr::Jmp(bb) => out.push_str(&format!("    jmp {}\n", lblock(*bb))),
+                    Instr::Alloc { ptr_var, elem, len } => {
+                        let esz = match elem {
+                            Ty::U8 => 1,
+                            Ty::I32 => 4,
+                            _ => 8,
+                        };
+                        out.push_str(&ld(*len));
+                        out.push_str("    mov %rax, %rdi\n");
+                        out.push_str(&format!("    mov ${}, %esi\n", esz));
+                        out.push_str("    call calloc@PLT\n");
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*ptr_var)));
+                    }
+                    Instr::BoundsCheck { idx, len, line } => {
+                        out.push_str(&ld(*idx));
+                        match len {
+                            LenRef::Const(n) => out.push_str(&format!("    mov ${}, %rcx\n", n)),
+                            LenRef::Var(v) => {
+                                out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)))
+                            }
+                        }
+                        out.push_str("    cmp %rcx, %rax\n    jb 1f\n");
+                        out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                        out.push_str("    call .Lir_panic\n1:\n");
+                    }
+                    Instr::IndexLoad { dst, ptr_var, idx, elem } => {
+                        out.push_str(&ld(*idx));
+                        out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        match elem {
+                            Ty::U8 => {
+                                out.push_str("    movzbq (%r10,%rax,1), %rax\n");
+                            }
+                            Ty::I32 => {
+                                out.push_str("    movslq (%r10,%rax,4), %rax\n");
+                            }
+                            _ => {
+                                out.push_str("    mov (%r10,%rax,8), %rax\n");
+                            }
+                        }
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(*dst)));
+                    }
+                    Instr::IndexStore { ptr_var, idx, elem, src } => {
+                        out.push_str(&ld(*src));
+                        out.push_str("    mov %rax, %rcx\n");
+                        out.push_str(&ld(*idx));
+                        out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        match elem {
+                            Ty::U8 => out.push_str("    movb %cl, (%r10,%rax,1)\n"),
+                            Ty::I32 => out.push_str("    movl %ecx, (%r10,%rax,4)\n"),
+                            _ => out.push_str("    movq %rcx, (%r10,%rax,8)\n"),
+                        }
+                    }
                 }
             }
         }

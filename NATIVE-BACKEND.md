@@ -99,9 +99,15 @@ Supported: integer scalars, locals, arithmetic/division (guarded), comparisons, 
 to six integer arguments, including recursion. Rejected with diagnostics: arrays, structs, floats,
 vectors, `par for`, break/continue, string printing.
 
-Correctness is checked by `tests/ir.rs`: ten inline programs plus `examples/fib`, `for` and `sum`
-must produce byte-identical output through the C and IR backends. The register allocator will
-replace the per-value stack slots; the test and `native_diff` remain the gates.
+Arrays landed in v0.8.11: `Alloc` (calloc or an IR fill loop), `BoundsCheck` (unsigned compare,
+`line N: index out of bounds`, exit 1), `IndexLoad`/`IndexStore`, runtime lengths, and array
+parameters (pointer + length as two arguments). `examples/array_param` and `matmul` match the C
+backend; matmul takes 481 ms against C's 31 ms because every value still has a stack slot.
+
+Correctness is checked by `tests/ir.rs`: ten inline programs, `examples/fib`, `for`, `sum`,
+`array_param` and `bench-suite/matmul_magic` must produce byte-identical output through the C and IR
+backends. The register allocator will replace the per-value stack slots; the test and `native_diff`
+remain the gates.
 
 ## Differential harness## Differential harness
 
