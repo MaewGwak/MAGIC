@@ -232,6 +232,21 @@ fn main() {
 "#,
         ),
         (
+            "div_mod_power_of_two",
+            r#"
+fn main() {
+    for x in -20..20 {
+        print(x % 8); print(x / 8);
+        print(x % 4); print(x / 4);
+        print(x % 16); print(x / 16);
+    }
+    var big: i64 = 9223372036854775807;
+    print(big % 1024); print(big / 1024);
+    print(big % 1099511627776); print(big / 1099511627776);
+}
+"#,
+        ),
+        (
             "range_seed_requires_canonical_step",
             r#"
 fn main() {

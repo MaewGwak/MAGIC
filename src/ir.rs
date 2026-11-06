@@ -67,6 +67,7 @@ pub enum Instr {
     LoadCtx { dst_var: usize, ctx_var: usize, off: i64 },
     FuncAddr { dst: Value, name: String },
     IndexStoreBoolAtomic { ptr_var: usize, idx: Value, src: Value },
+    FastDivPow2 { dst: Value, a: Value, k: u32, d: i64, rem: bool },
     StoreVec { src_ptr_var: usize, ptr_var: usize, len_var: usize, cap_var: usize },
     LoadPtr { dst_var: usize, src_var: usize },
     StorePtr { dst_ptr_var: usize, src_var: usize },
@@ -3091,6 +3092,10 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
             uses.push(*idx);
             uses.push(*src);
         }
+        Instr::FastDivPow2 { dst, a, .. } => {
+            uses.push(*a);
+            defs.push(*dst);
+        }
         Instr::Select { dst, cond, a, b, .. } => {
             uses.push(*cond);
             uses.push(*a);
@@ -3638,6 +3643,50 @@ fn emit_fast_block(
                         ));
                     }
                 }
+            }
+            Instr::FastDivPow2 { dst, a, k, d, rem } => {
+                let av = ra.operand(*a);
+                let dr = ra.dst_excluding(*dst, &[av]);
+                let m = d - 1;
+                let imm_ok = m <= i32::MAX as i64;
+                let dv_ok = *d <= i32::MAX as i64;
+                ra.out.push_str(&format!("    mov {}, {}\n", POOL[av].0, POOL[dr].0));
+                ra.out.push_str(&format!("    test {}, {}\n", POOL[av].0, POOL[av].0));
+                ra.out.push_str("    js 2f\n");
+                if *rem {
+                    if imm_ok {
+                        ra.out.push_str(&format!("    and ${}, {}\n", m, POOL[dr].0));
+                    } else {
+                        ra.out.push_str(&format!("    movabs ${}, %rcx\n    and %rcx, {}\n", m, POOL[dr].0));
+                    }
+                } else {
+                    ra.out.push_str(&format!("    sar ${}, {}\n", k, POOL[dr].0));
+                }
+                ra.out.push_str("    jmp 3f\n2:\n");
+                if *rem {
+                    if imm_ok {
+                        ra.out.push_str(&format!("    and ${}, {}\n", m, POOL[dr].0));
+                    } else {
+                        ra.out.push_str(&format!("    movabs ${}, %rcx\n    and %rcx, {}\n", m, POOL[dr].0));
+                    }
+                    ra.out.push_str(&format!("    test {}, {}\n    jz 3f\n", POOL[dr].0, POOL[dr].0));
+                    if dv_ok {
+                        ra.out.push_str(&format!("    sub ${}, {}\n", d, POOL[dr].0));
+                    } else {
+                        ra.out.push_str(&format!("    movabs ${}, %rcx\n    sub %rcx, {}\n", d, POOL[dr].0));
+                    }
+                } else {
+                    if dv_ok {
+                        ra.out.push_str(&format!("    add ${}, {}\n", m, POOL[dr].0));
+                    } else {
+                        ra.out.push_str(&format!("    movabs ${}, %rcx\n    add %rcx, {}\n", m, POOL[dr].0));
+                    }
+                    ra.out.push_str(&format!("    sar ${}, {}\n", k, POOL[dr].0));
+                }
+                ra.out.push_str("3:\n");
+                ra.def_store(*dst, dr);
+                ra.free_dead(ii);
+                continue;
             }
             Instr::Bin { dst, op, l, r } => {
                 if f.narrow_index.contains(dst)
@@ -4547,6 +4596,10 @@ fn rewrite_operands(ins: &mut Instr, f: &dyn Fn(Value) -> Value) {
             rw(idx);
             rw(src);
         }
+        Instr::FastDivPow2 { dst, a, .. } => {
+            rw(dst);
+            rw(a);
+        }
         Instr::Select { cond, a, b, .. } => {
             rw(cond);
             rw(a);
@@ -5175,73 +5228,37 @@ fn strength_reduce_pow2(prog: &mut IrProgram) {
                 }
             }
         }
-        let new_value = |f: &mut IrFunc| {
-            let v = Value(f.nvalues as u32);
-            f.nvalues += 1;
-            f.vty.push(Ty::I64);
-            v
-        };
-        let mut blocks = std::mem::take(&mut f.blocks);
-        for b in blocks.iter_mut() {
-            let old = std::mem::take(&mut b.instrs);
-            let mut out = Vec::with_capacity(old.len() + 6);
-            for ins in old {
-                let (dst, op, l, r) = match &ins {
-                    Instr::Bin { dst, op, l, r } => (*dst, *op, *l, *r),
-                    _ => {
-                        out.push(ins);
-                        continue;
-                    }
-                };
+        for b in f.blocks.iter_mut() {
+            for ins in b.instrs.iter_mut() {
+                let Instr::Bin { dst, op, l, r } = ins else { continue };
                 if !matches!(op, Op::Div | Op::Rem)
                     || matches!(f.vty.get(dst.0 as usize), Some(Ty::F64))
                     || matches!(f.vty.get(l.0 as usize), Some(Ty::F64))
                 {
-                    out.push(ins);
                     continue;
                 }
                 let mut div = None;
-                if let Some(c) = vals.get(&r) {
+                if let Some(c) = vals.get(r) {
                     div = Some(*c);
-                } else if let Some(DefKind::LoadVar(var)) = defs.get(&r) {
+                } else if let Some(DefKind::LoadVar(var)) = defs.get(r) {
                     if let Some(c) = var_consts.get(var) {
                         div = Some(*c);
                     }
                 }
-                let Some(d) = div else {
-                    out.push(ins);
-                    continue;
-                };
+                let Some(d) = div else { continue };
                 if d <= 0 || d.count_ones() != 1 || d > (1i64 << 62) {
-                    out.push(ins);
                     continue;
                 }
-                let k = d.trailing_zeros() as i64;
-                let c63 = new_value(f);
-                out.push(Instr::Const { dst: c63, v: 63 });
-                let sign = new_value(f);
-                out.push(Instr::Bin { dst: sign, op: Op::Shr, l, r: c63 });
-                let mask = new_value(f);
-                out.push(Instr::Const { dst: mask, v: d - 1 });
-                let adj = new_value(f);
-                out.push(Instr::Bin { dst: adj, op: Op::And, l: sign, r: mask });
-                let sum = new_value(f);
-                out.push(Instr::Bin { dst: sum, op: Op::Add, l, r: adj });
-                let ck = new_value(f);
-                out.push(Instr::Const { dst: ck, v: k });
-                if matches!(op, Op::Div) {
-                    out.push(Instr::Bin { dst, op: Op::Shr, l: sum, r: ck });
-                } else {
-                    let q = new_value(f);
-                    out.push(Instr::Bin { dst: q, op: Op::Shr, l: sum, r: ck });
-                    let qd = new_value(f);
-                    out.push(Instr::Bin { dst: qd, op: Op::Shl, l: q, r: ck });
-                    out.push(Instr::Bin { dst, op: Op::Sub, l, r: qd });
-                }
+                let rem = matches!(op, Op::Rem);
+                *ins = Instr::FastDivPow2 {
+                    dst: *dst,
+                    a: *l,
+                    k: d.trailing_zeros(),
+                    d,
+                    rem,
+                };
             }
-            b.instrs = out;
         }
-        f.blocks = blocks;
     }
 }
 
@@ -5758,6 +5775,25 @@ pub fn emit(prog: &IrProgram) -> String {
             for ins in &b.instrs {
                 let ld = |v: Value| format!("    mov -{}(%rbp), %rax\n", voff(f, v));
                 match ins {
+                    Instr::FastDivPow2 { dst, a, k, d, rem } => {
+                        out.push_str(&ld(*a));
+                        out.push_str("    mov %rax, %rcx\n");
+                        out.push_str("    test %rax, %rax\n    js 2f\n");
+                        if *rem {
+                            out.push_str(&format!("    movabs ${}, %rdx\n    and %rdx, %rcx\n", d - 1));
+                            out.push_str("    jmp 3f\n2:\n");
+                            out.push_str(&format!("    movabs ${}, %rdx\n    and %rdx, %rcx\n", d - 1));
+                            out.push_str("    test %rcx, %rcx\n    jz 3f\n");
+                            out.push_str(&format!("    movabs ${}, %rdx\n    sub %rdx, %rcx\n", d));
+                        } else {
+                            out.push_str(&format!("    sar ${}, %rcx\n", k));
+                            out.push_str("    jmp 3f\n2:\n");
+                            out.push_str(&format!("    movabs ${}, %rdx\n    add %rdx, %rcx\n", d - 1));
+                            out.push_str(&format!("    sar ${}, %rcx\n", k));
+                        }
+                        out.push_str("3:\n");
+                        out.push_str(&format!("    mov %rcx, -{}(%rbp)\n", voff(f, *dst)));
+                    }
                     Instr::IndexStoreBoolAtomic { ptr_var, idx, src } => {
                         out.push_str(&format!("    mov -{}(%rbp), %rax\n", voff(f, *idx)));
                         out.push_str(&format!("    mov -{}(%rbp), %rdx\n", voff(f, *src)));

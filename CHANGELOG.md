@@ -30,6 +30,21 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.79 — branch-fast signed division by powers of two (2026-11-06)
+
+`/` and `%` by a positive power-of-two constant now become `FastDivPow2`, a small instruction with a
+non-negative fast path (`and mask` / `sar`) and an exact negative path (`x & mask`, then subtract the
+divisor when the remainder is non-zero; division adds `d-1` before the arithmetic shift). This is
+exact for the full i64 range, including `i64::MAX`, negative operands and divisors up to 2^62; the
+differential case covers every sign around `-20..20`, `% 4/8/16`, `i64::MAX` and a 2^40 divisor.
+Hash probing drops from ~44 ms to ~42 ms (C ~29 ms) because the probe is dominated by random memory
+access and bounds checks, not the division; hash par is 31 ms. Raytrace par is 24 ms versus C 37 ms
+(an outright win), sieve remains 377 ms versus C 431 ms.
+
+A 16-thread cap was tried and **rejected**: raytrace improves to ~21 ms, but fannkuch blocks
+segfaults deterministically with 16 chunks, so the audited cap of 8 stays. All gates pass, 168
+tests, repo parity 60/60.
+
 ## v0.8.78 — power-of-two division, a closed short-circuit bounds hole (2026-11-06)
 
 `/` and `%` by a positive power-of-two constant are now lowered to the sign-correction + shift
