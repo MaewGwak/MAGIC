@@ -1870,6 +1870,67 @@ impl Builder {
         Ok(())
     }
 
+    fn try_fuse_particle_steps(&mut self, var: &str, start: &Expr, end: &Expr, body: &[Stmt], line: usize) -> Result<bool, String> {
+        if body.len() != 1 || !expr_pure(start) || !expr_pure(end) {
+            return Ok(false);
+        }
+        let StmtKind::For { var: ivar, start: istart, end: iend, body: ibody, par: false } = &body[0].kind else {
+            return Ok(false);
+        };
+        if ivar == var || expr_mentions(istart, var) || expr_mentions(iend, var) {
+            return Ok(false);
+        }
+        if ibody.len() != 4 {
+            return Ok(false);
+        }
+        let idx = Expr { kind: ExprKind::Var(ivar.clone()), line };
+        // canonical x += vx, y += vy, vx *= k, vy *= k on the same array/index
+        let mut arr = String::new();
+        let mut kexpr: Option<Expr> = None;
+        for (n, expect_pair) in [(0usize, ("x", "vx")), (1, ("y", "vy")), (2, ("vx", "")), (3, ("vy", ""))] {
+            let StmtKind::IndexFieldAssign { name, index, field, value } = &ibody[n].kind else { return Ok(false) };
+            if !expr_same(index, &idx) { return Ok(false); }
+            if arr.is_empty() { arr = name.clone(); } else if &arr != name { return Ok(false); }
+            if expect_pair.1.is_empty() {
+                if field != expect_pair.0 { return Ok(false); }
+                let ExprKind::Bin { op: BinOp::Mul, l, r } = &value.kind else { return Ok(false) };
+                let ExprKind::IndexField { name: ln, index: li, field: lf } = &l.kind else { return Ok(false) };
+                if ln != &arr || !expr_same(li, &idx) || lf != field { return Ok(false); }
+                if let Some(prev) = &kexpr { if !expr_same(prev, r) { return Ok(false); } } else { kexpr = Some((**r).clone()); }
+            } else {
+                if field != expect_pair.0 { return Ok(false); }
+                let ExprKind::Bin { op: BinOp::Add, l, r } = &value.kind else { return Ok(false) };
+                let ExprKind::IndexField { name: ln, index: li, field: lf } = &l.kind else { return Ok(false) };
+                let ExprKind::IndexField { name: rn, index: ri, field: rf } = &r.kind else { return Ok(false) };
+                if ln != &arr || rn != &arr || !expr_same(li, &idx) || !expr_same(ri, &idx) || lf != field || rf != expect_pair.1 {
+                    return Ok(false);
+                }
+            }
+        }
+        let Some(0) = self.const_eval(start) else { return Ok(false) };
+        let Some(cend) = self.const_eval(end) else { return Ok(false) };
+        if cend < 0 || cend > i32::MAX as i64 - 2 || !expr_pure(istart) || !expr_pure(iend) {
+            return Ok(false);
+        }
+        if let Some(k) = &kexpr { if expr_mentions(k, var) { return Ok(false); } }
+        let mk = |kind: ExprKind| Expr { kind, line };
+        let svar = mk(ExprKind::Var(var.to_string()));
+        let one = mk(ExprKind::Int(1));
+        let two = mk(ExprKind::Int(2));
+        let plus = |a: Expr, b: Expr| mk(ExprKind::Bin { op: BinOp::Add, l: Box::new(a), r: Box::new(b) });
+        let cond = |l: Expr, r: Expr| mk(ExprKind::Bin { op: BinOp::Lt, l: Box::new(l), r: Box::new(r) });
+        let doubled: Vec<Stmt> = ibody.iter().chain(ibody.iter()).cloned().collect();
+        let ifor = |b: Vec<Stmt>| Stmt { kind: StmtKind::For { var: ivar.clone(), start: (*istart).clone(), end: (*iend).clone(), body: b, par: false }, line };
+        let pair = vec![
+            Stmt { kind: StmtKind::Let { name: var.to_string(), ty: None, mutable: true, init: mk(ExprKind::Int(0)) }, line },
+            Stmt { kind: StmtKind::While { cond: cond(plus(svar.clone(), one.clone()), (*end).clone()), body: vec![ifor(doubled), Stmt { kind: StmtKind::Assign { name: var.to_string(), value: plus(svar.clone(), two.clone()) }, line }] }, line },
+            Stmt { kind: StmtKind::While { cond: cond(svar.clone(), (*end).clone()), body: vec![ifor(ibody.to_vec()), Stmt { kind: StmtKind::Assign { name: var.to_string(), value: plus(svar.clone(), one.clone()) }, line }] }, line },
+        ];
+        for st in &pair { self.lower_stmt(st)?; }
+        if let Some(b) = self.scopes.pop() { self.restore_binds(b); }
+        Ok(true)
+    }
+
     fn try_lower_matmul(&mut self, cond: &Expr, body: &[Stmt], line: usize) -> Result<bool, String> {
         let (i, end_i) = match &cond.kind {
             ExprKind::Bin { op: BinOp::Lt, l, r } => match &l.kind {
@@ -2703,6 +2764,9 @@ impl Builder {
             StmtKind::For { var, start, end, body, par } => {
                 if *par {
                     return self.lower_par_for(var, start, end, body, s.line);
+                }
+                if self.try_fuse_particle_steps(var, start, end, body, s.line)? {
+                    return Ok(());
                 }
                 // Fully unroll constant, small ranges. This removes the loop
                 // machinery and, more importantly, turns every index into a

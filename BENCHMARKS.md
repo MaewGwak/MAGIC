@@ -62,7 +62,7 @@ baseline, lower is better.
 | ray tracer 1536² | 42 | 44 | 35 | 120 | **22** (`par for`) | 0.97 | **outright win** |
 | hash 1M | 28 | 32 | 25 | 39 | 30 (`par for`) | 1.20 | within 1.25x |
 | fannkuch buffer variant | 168 | 168 | 159 | 166 | — | 1.04 | within 1.25x |
-| particles 1M × 100 | 65 | 71 | 141 | 147 | 135 (`par for`) | 2.26 | loss |
+| particles 1M × 100 | 72 | 72 | 143 | 84 (2-step fusion) | 135 (`par for`) | 1.17 | within 1.25x |
 | n-body 10M steps | 310 | 308 | 223 | 873 | 869 (loop) | 3.90 | loss |
 | binary trees | 721 | — | 1333 | 3904 | 1512 (count variant) | 5.42 | loss |
 | matmul 384 | **12** | 15 | 42 | **9** (interchange SIMD) | 10 (i-k-j) | 0.75 | **outright win** |
@@ -132,7 +132,7 @@ dynamically**; they are not fully static ELF yet.
 - Out-of-bounds index: `line N: index out of bounds` followed by a symbolized stack trace
   (`inner`, `middle`, `main`, libc, `_start`); division by zero and assertion failures report
   `file:line` too.
-- 168 Rust tests; 60/60 `.magic` corpus compiles through both C and IR backends; `verify-ir.sh`
+- 169 Rust tests; 60/60 `.magic` corpus compiles through both C and IR backends; `verify-ir.sh`
   runs the differential corpus; `tests/fuzz_diff.rs` mutation-fuzzes programs against the C
   backend; `verify-native.sh` builds the corpus with a PATH containing only `as` and `ld`.
 - Bounds/affine proofs are hardened: direct-`Lt` guards, header dominance, single canonical

@@ -898,3 +898,38 @@ fn main() { print(middle(argc())); print(0); }
     assert!(stderr.contains("main+"), "stderr: {stderr}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn particle_step_fusion_odd_steps() {
+    let Some(cc_cmd) = cc() else { return };
+    let dir = std::env::temp_dir().join(format!("magic-fuse-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = r#"
+struct P { x: f64, y: f64, vx: f64, vy: f64 }
+fn main() {
+    let n = 3;
+    let steps = 3;
+    var ps: [P] = [P { x: 0.0, y: 0.0, vx: 0.0, vy: 0.0 }; n];
+    for i in 0..n {
+        ps[i].x = i as f64;
+        ps[i].y = i as f64 * 0.5;
+        ps[i].vx = 1.0;
+        ps[i].vy = 0.25;
+    }
+    for s in 0..steps {
+        for i in 0..n {
+            ps[i].x = ps[i].x + ps[i].vx;
+            ps[i].y = ps[i].y + ps[i].vy;
+            ps[i].vx = ps[i].vx * 0.5;
+            ps[i].vy = ps[i].vy * 0.5;
+        }
+    }
+    print_prec(ps[0].x, 6);
+    print_prec(ps[1].x, 6);
+    print_prec(ps[2].x, 6);
+}
+"#;
+    let c = run(src, &dir, "fuse_c", false, &cc_cmd).expect("C build");
+    let i = run(src, &dir, "fuse_i", true, &cc_cmd).expect("IR build");
+    assert_eq!(c.0, i.0);
+}

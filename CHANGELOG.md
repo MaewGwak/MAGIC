@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.1 — two-step particle fusion (2026-11-06)
+
+A loopnest transform recognises `for s { for i { p[i].x += p[i].vx; ... } }` with the canonical
+independent particle update and rewrites the outer loop as step pairs whose inner loop applies the
+update twice per particle, with a one-step tail for odd counts. Memory traffic per two steps drops
+and particles goes 148 -> 84 ms against C 72 ms (1.17x, inside the speed target). The transform
+requires the same array/index, no use of the outer variable in the body or inner bounds, pure
+bounds, and a constant outer range; an odd-step (3) regression test compares C and IR output. All
+gates pass, 169 tests, parity 60/60, static and static-memory green.
+
 ## v0.10.0 — static builds beat C on all eight workloads (2026-11-06)
 
 The freestanding runtime now formats `print_prec` with an x87 fixed-point path (precision <= 9,
