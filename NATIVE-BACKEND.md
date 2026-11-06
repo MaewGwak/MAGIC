@@ -132,7 +132,10 @@ v0.8.22 implements stack arguments, so functions with more than six parameters (
 array parameters) lower: btree (180 ms vs C 103) and hashmap (108 ms vs C 39) now run through the IR
 with identical output. v0.8.23 adds escaped string literals and `file_open`/`file_close`/
 `file_read`/`file_write` wrappers over libc, so sqlscan (41 ms vs C 11) and pageio (564 ms vs C 350)
-also run through the IR with identical output.
+also run through the IR with identical output. v0.8.24 adds f64: bits live in integer
+registers/slots, while arithmetic, comparisons, casts, `sqrt` and `print_prec` use xmm instructions.
+The float test matches both backends and nbody prints its checksum through the IR (4.9 s vs C 738 ms,
+because float blocks still use the slot emitter).
 Affine indexes like
 `a[i * n + j]` are proved in v0.8.15 after constant propagation makes `n` and `n * n` literal: the
 maximum `(n-1)*n + (n-1)` is compared with the array length, so matmul's inner checks disappear

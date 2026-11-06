@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.24 — f64 support in the IR (2026-11-06)
+
+The IR understands `f64` values (bits in integer registers/slots), with dedicated instructions for
+float arithmetic, negation, comparisons, int↔float casts, `sqrt` and `print_prec`, C-compatible
+`%g` printing and `%.*f` precision printing, float arrays, float parameters and returns. Float
+blocks use the slot emitter for now. The IR float test (arithmetic, comparisons, `sqrt`, precision
+printing, casts, float arrays, accumulation) is byte-identical to both the C and AST backends, and
+`bench-suite/nbody_magic` prints 11211.531383831 through `--backend ir` (4.9 s vs C's 738 ms; AST is
+~4.2 s). Register-allocating float values is the next step.
+
 ## v0.8.23 — string literals and file builtins in the IR (2026-11-06)
 
 The IR now lowers string literals (emitted as escaped `.asciz` entries in `.rodata`) and the file

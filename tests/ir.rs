@@ -75,6 +75,7 @@ fn ir_matches_c_on_small_integer_programs() {
         ("boolops", "fn main() { print(1 < 2); print(1 == 2); print(1 <= 1); print(2 > 3); }"),
         ("nested", "fn main() { var t = 0; for i in 0..4 { for j in 0..3 { t = t + i * j; } } print(t); }"),
         ("divmod", "fn main() { var a = 12345; print(a / 10); print(a % 10); print(a / -3); print(a % -3); }"),
+        ("floats", "fn main() { var x: f64 = 1.5; var y = 2.0; print(x + y); print(x * y); print(x / y); print(x - y); print(x < y); print(x == y); print(sqrt(16.0)); print_prec(x * y, 3); var a: [f64] = [0.0; 4]; a[2] = 3.25; print(a[2]); print(-x); print(x as i32); print(3 as f64); var t = 0.0; var i = 0; while i < 5 { t = t + (i as f64) * 0.5; i = i + 1; } print(t); }"),
         ("immops", "fn main() { var a = 10; var b = 3; print(5 - b); print(5 < b); print(5 > b); print(5 <= 5); print(5 == a); print(a + 7); print(a * 3); print(a - 4); print(a / 2); print(a % 3); print(1000 - a); print(b - 10); }"),
         ("fill1", "fn main() { var a: [i32] = [7; 1]; print(a[0]); }"),
         ("fill3", "fn main() { var a: [i32] = [7; 3]; print(a[0] + a[1] + a[2]); }"),

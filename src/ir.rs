@@ -48,13 +48,20 @@ pub enum Instr {
     Un { dst: Value, neg: bool, a: Value },
     Trunc { dst: Value, ty: Ty, a: Value },
     Call { dst: Option<Value>, name: String, args: Vec<Value> },
-    Print { v: Value, boolean: bool },
+    Print { v: Value, boolean: bool, float: bool },
     Ret(Option<Value>),
     Br { cond: Value, then_bb: usize, else_bb: usize },
     Jmp(usize),
     Alloc { ptr_var: usize, elem: Ty, len: Value },
     Fill { ptr_var: usize, elem: Ty, len: Value, value: Value },
     Str { dst: Value, id: usize, s: String },
+    FBin { dst: Value, op: Op, l: Value, r: Value },
+    FNeg { dst: Value, a: Value },
+    FCmp { dst: Value, op: Op, l: Value, r: Value },
+    I2F { dst: Value, a: Value },
+    F2I { dst: Value, a: Value },
+    Sqrt { dst: Value, a: Value },
+    PrintPrec { v: Value, prec: Value },
     BoundsCheck { idx: Value, len: LenRef, line: usize },
     IndexLoad { dst: Value, ptr_var: usize, idx: Value, elem: Ty },
     IndexStore { ptr_var: usize, idx: Value, elem: Ty, src: Value },
@@ -85,7 +92,10 @@ struct Builder {
     nvars: usize,
     nvalues: usize,
     vbool: Vec<bool>,
+    vty: Vec<Ty>,
     var_bool: HashMap<String, bool>,
+    var_ty: HashMap<String, Ty>,
+    sigs: HashMap<String, Ty>,
     arrays: HashMap<String, (Ty, LenRef)>,
     next_str: usize,
     ret: Ty,
@@ -100,7 +110,10 @@ impl Builder {
             nvars: 0,
             nvalues: 0,
             vbool: Vec::new(),
+            vty: Vec::new(),
             var_bool: HashMap::new(),
+            var_ty: HashMap::new(),
+            sigs: HashMap::new(),
             arrays: HashMap::new(),
             next_str: 0,
             ret,
@@ -111,6 +124,7 @@ impl Builder {
         let v = Value(self.nvalues as u32);
         self.nvalues += 1;
         self.vbool.push(false);
+        self.vty.push(Ty::I32);
         v
     }
 
@@ -135,6 +149,15 @@ impl Builder {
 
     fn lower_expr(&mut self, e: &Expr) -> Result<Value, String> {
         match &e.kind {
+            ExprKind::Float(f) => {
+                let dst = self.value();
+                self.push(Instr::Const {
+                    dst,
+                    v: f.to_bits() as i64,
+                });
+                self.vty[dst.0 as usize] = Ty::F64;
+                Ok(dst)
+            }
             ExprKind::Int(v) => {
                 let dst = self.value();
                 self.push(Instr::Const { dst, v: *v });
@@ -154,14 +177,58 @@ impl Builder {
                 let dst = self.value();
                 self.push(Instr::LoadVar { dst, var });
                 self.vbool[dst.0 as usize] = self.var_bool.get(n).copied().unwrap_or(false);
+                self.vty[dst.0 as usize] = self.var_ty.get(n).copied().unwrap_or(Ty::I32);
                 Ok(dst)
             }
             ExprKind::Bin { op, l, r } => {
                 let a = self.lower_expr(l)?;
                 let b = self.lower_expr(r)?;
-                if let BinOp::Div | BinOp::Rem = op {
-                    // the emitter guards division by zero
-                    let _ = (a, b);
+                let ta = self.vty[a.0 as usize];
+                let tb = self.vty[b.0 as usize];
+                if ta == Ty::F64 || tb == Ty::F64 {
+                    let a = if ta == Ty::F64 {
+                        a
+                    } else {
+                        let d = self.value();
+                        self.push(Instr::I2F { dst: d, a });
+                        self.vty[d.0 as usize] = Ty::F64;
+                        d
+                    };
+                    let b = if tb == Ty::F64 {
+                        b
+                    } else {
+                        let d = self.value();
+                        self.push(Instr::I2F { dst: d, a: b });
+                        self.vty[d.0 as usize] = Ty::F64;
+                        d
+                    };
+                    let fop = match op {
+                        BinOp::Add => Op::Add,
+                        BinOp::Sub => Op::Sub,
+                        BinOp::Mul => Op::Mul,
+                        BinOp::Div => Op::Div,
+                        BinOp::Eq => Op::Eq,
+                        BinOp::Ne => Op::Ne,
+                        BinOp::Lt => Op::Lt,
+                        BinOp::Le => Op::Le,
+                        BinOp::Gt => Op::Gt,
+                        BinOp::Ge => Op::Ge,
+                        other => {
+                            return Err(format!(
+                                "line {}: IR: float operator {:?} not supported",
+                                e.line, other
+                            ))
+                        }
+                    };
+                    let dst = self.value();
+                    if matches!(fop, Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge) {
+                        self.push(Instr::FCmp { dst, op: fop, l: a, r: b });
+                        self.vbool[dst.0 as usize] = true;
+                    } else {
+                        self.push(Instr::FBin { dst, op: fop, l: a, r: b });
+                        self.vty[dst.0 as usize] = Ty::F64;
+                    }
+                    return Ok(dst);
                 }
                 let op = match op {
                     BinOp::Add => Op::Add,
@@ -191,6 +258,11 @@ impl Builder {
             ExprKind::Un { op, e } => {
                 let a = self.lower_expr(e)?;
                 let dst = self.value();
+                if *op == UnOp::Neg && self.vty[a.0 as usize] == Ty::F64 {
+                    self.push(Instr::FNeg { dst, a });
+                    self.vty[dst.0 as usize] = Ty::F64;
+                    return Ok(dst);
+                }
                 self.push(Instr::Un {
                     dst,
                     neg: *op == UnOp::Neg,
@@ -212,12 +284,32 @@ impl Builder {
                 })?;
                 let dst = self.value();
                 self.push(Instr::IndexLoad { dst, ptr_var, idx, elem });
+                self.vty[dst.0 as usize] = elem;
                 Ok(dst)
             }
             ExprKind::Cast { e, ty } => {
                 let a = self.lower_expr(e)?;
-                if *ty == Ty::F64 || *ty == Ty::Str {
-                    return Err(format!("line {}: IR: cast to {:?}", e.line, ty));
+                let from = self.vty[a.0 as usize];
+                if *ty == Ty::F64 {
+                    if from == Ty::F64 {
+                        return Ok(a);
+                    }
+                    let dst = self.value();
+                    self.push(Instr::I2F { dst, a });
+                    self.vty[dst.0 as usize] = Ty::F64;
+                    return Ok(dst);
+                }
+                if *ty == Ty::Str {
+                    return Err(format!("line {}: IR: cast to string", e.line));
+                }
+                if from == Ty::F64 {
+                    let iv = self.value();
+                    self.push(Instr::F2I { dst: iv, a });
+                    self.vty[iv.0 as usize] = Ty::I64;
+                    let dst = self.value();
+                    self.push(Instr::Trunc { dst, ty: *ty, a: iv });
+                    self.vbool[dst.0 as usize] = *ty == Ty::Bool;
+                    return Ok(dst);
                 }
                 let dst = self.value();
                 self.push(Instr::Trunc { dst, ty: *ty, a });
@@ -267,6 +359,27 @@ impl Builder {
                         e.line, name
                     ));
                 }
+                if name == "sqrt" && args.len() == 1 {
+                    let a = self.lower_expr(&args[0])?;
+                    let a = if self.vty[a.0 as usize] == Ty::F64 {
+                        a
+                    } else {
+                        let d = self.value();
+                        self.push(Instr::I2F { dst: d, a });
+                        self.vty[d.0 as usize] = Ty::F64;
+                        d
+                    };
+                    let dst = self.value();
+                    self.push(Instr::Sqrt { dst, a });
+                    self.vty[dst.0 as usize] = Ty::F64;
+                    return Ok(dst);
+                }
+                if name == "print_prec" {
+                    return Err(format!(
+                        "line {}: IR: print_prec is only supported as a statement",
+                        e.line
+                    ));
+                }
                 let mut vals = Vec::new();
                 for a in args {
                     vals.push(self.lower_expr(a)?);
@@ -277,6 +390,7 @@ impl Builder {
                     name: builtin.unwrap_or(name.as_str()).to_string(),
                     args: vals,
                 });
+                self.vty[dst.0 as usize] = self.sigs.get(name).copied().unwrap_or(Ty::I32);
                 Ok(dst)
             }
             other => Err(format!(
@@ -294,6 +408,7 @@ impl Builder {
                 let var = self.var(name);
                 self.push(Instr::StoreVar { var, src: v });
                 self.var_bool.insert(name.clone(), is_bool);
+                self.var_ty.insert(name.clone(), self.vty[v.0 as usize]);
             }
             StmtKind::Assign { name, value } => {
                 let v = self.lower_expr(value)?;
@@ -304,6 +419,7 @@ impl Builder {
                     .ok_or_else(|| format!("line {}: IR: unknown variable `{}`", s.line, name))?;
                 self.push(Instr::StoreVar { var, src: v });
                 self.var_bool.insert(name.clone(), is_bool);
+                self.var_ty.insert(name.clone(), self.vty[v.0 as usize]);
             }
             StmtKind::ArrayLet { name, elem, value, count } => {
                 let lenv = self.lower_expr(count)?;
@@ -339,10 +455,11 @@ impl Builder {
                 })?;
                 self.push(Instr::IndexStore { ptr_var, idx, elem, src });
             }
-            StmtKind::Print { value, .. } => {
+            StmtKind::Print { value, ty } => {
                 let v = self.lower_expr(value)?;
                 let boolean = self.vbool[v.0 as usize];
-                self.push(Instr::Print { v, boolean });
+                let float = ty.or(Some(self.vty[v.0 as usize])) == Some(Ty::F64);
+                self.push(Instr::Print { v, boolean, float });
             }
             StmtKind::Return(e) => {
                 let v = match e {
@@ -352,6 +469,14 @@ impl Builder {
                 self.push(Instr::Ret(v));
             }
             StmtKind::Expr(e) => {
+                if let ExprKind::Call { name, args } = &e.kind {
+                    if name == "print_prec" && args.len() == 2 {
+                        let v = self.lower_expr(&args[0])?;
+                        let prec = self.lower_expr(&args[1])?;
+                        self.push(Instr::PrintPrec { v, prec });
+                        return Ok(());
+                    }
+                }
                 let _ = self.lower_expr(e)?;
             }
             StmtKind::If { cond, then, els } => {
@@ -444,26 +569,29 @@ impl Builder {
 }
 
 pub fn lower(prog: &Program) -> Result<IrProgram, String> {
+    let mut sigs: HashMap<String, Ty> = HashMap::new();
+    for f in &prog.funcs {
+        sigs.insert(f.name.clone(), f.ret);
+    }
     let mut funcs = Vec::new();
     for f in &prog.funcs {
-        funcs.push(lower_func(f)?);
+        funcs.push(lower_func(f, &sigs)?);
     }
     Ok(IrProgram { funcs })
 }
 
-fn lower_func(f: &Func) -> Result<IrFunc, String> {
-    if f.ret == Ty::Struct(0) || matches!(f.ret, Ty::F64 | Ty::Str | Ty::Void) && f.ret == Ty::F64 {
-        return Err(format!("IR: `{}` has an unsupported return type", f.name));
-    }
-    if f.ret == Ty::F64 || f.ret == Ty::Str {
-        return Err(format!("IR: `{}` has an unsupported return type", f.name));
+fn lower_func(f: &Func, sigs: &HashMap<String, Ty>) -> Result<IrFunc, String> {
+    if f.ret == Ty::Str {
+        return Err(format!("IR: `{}` returns a string, not supported yet", f.name));
     }
     let mut b = Builder::new(f.ret);
+    b.sigs = sigs.clone();
     let mut nparams = 0usize;
     for (name, pty) in &f.params {
         match pty {
-            ParamTy::Scalar(_) => {
+            ParamTy::Scalar(ty) => {
                 b.var(name);
+                b.var_ty.insert(name.clone(), *ty);
                 nparams += 1;
             }
             ParamTy::Array(elem) => {
@@ -666,6 +794,12 @@ fn def_kind(ins: &Instr) -> Option<(Value, DefKind)> {
         Instr::IndexLoad { dst, .. } => Some((*dst, DefKind::Other)),
         Instr::Call { dst: Some(d), .. } => Some((*d, DefKind::Other)),
         Instr::Str { dst, .. } => Some((*dst, DefKind::Other)),
+        Instr::FBin { dst, .. } | Instr::FNeg { dst, .. } | Instr::FCmp { dst, .. } => {
+            Some((*dst, DefKind::Other))
+        }
+        Instr::I2F { dst, .. } | Instr::F2I { dst, .. } | Instr::Sqrt { dst, .. } => {
+            Some((*dst, DefKind::Other))
+        }
         _ => None,
     }
 }
@@ -929,6 +1063,19 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
         Instr::Jmp(_) => {}
         Instr::Alloc { len, .. } => uses.push(*len),
         Instr::Str { dst, .. } => defs.push(*dst),
+        Instr::FBin { dst, l, r, .. } | Instr::FCmp { dst, l, r, .. } => {
+            uses.push(*l);
+            uses.push(*r);
+            defs.push(*dst);
+        }
+        Instr::FNeg { dst, a } | Instr::I2F { dst, a } | Instr::F2I { dst, a } | Instr::Sqrt { dst, a } => {
+            uses.push(*a);
+            defs.push(*dst);
+        }
+        Instr::PrintPrec { v, prec } => {
+            uses.push(*v);
+            uses.push(*prec);
+        }
         Instr::Fill { len, value, .. } => {
             uses.push(*len);
             uses.push(*value);
@@ -964,6 +1111,14 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::Fill { .. }
                 | Instr::Print { .. }
                 | Instr::Str { .. }
+                | Instr::FBin { .. }
+                | Instr::FNeg { .. }
+                | Instr::FCmp { .. }
+                | Instr::I2F { .. }
+                | Instr::F2I { .. }
+                | Instr::Sqrt { .. }
+                | Instr::PrintPrec { .. }
+                | Instr::Print { float: true, .. }
                 | Instr::Bin { op: Op::Div | Op::Rem, .. }
         )
     })
@@ -1518,7 +1673,14 @@ fn emit_fast_block(
             | Instr::Alloc { .. }
             | Instr::Fill { .. }
             | Instr::Str { .. }
-            | Instr::Print { .. } => {
+            | Instr::Print { .. }
+            | Instr::FBin { .. }
+            | Instr::FNeg { .. }
+            | Instr::FCmp { .. }
+            | Instr::I2F { .. }
+            | Instr::F2I { .. }
+            | Instr::Sqrt { .. }
+            | Instr::PrintPrec { .. } => {
                 unreachable!("slow block")
             }
         }
@@ -1539,6 +1701,8 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str(".Lfalse: .asciz \"false\"\n");
     out.push_str(".Ldiv0: .asciz \"line 0: division by zero\"\n");
     out.push_str(".Lfmt_panic: .asciz \"%s\\n\"\n");
+    out.push_str(".Lfmt_g: .asciz \"%g\\n\"\n");
+    out.push_str(".Lfmt_pf: .asciz \"%.*f\\n\"\n");
     let mut lines: Vec<usize> = Vec::new();
     for f in &prog.funcs {
         for b in &f.blocks {
@@ -1874,7 +2038,74 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&format!("    lea .Lstr{}(%rip), %rax\n", id));
                         out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
-                    Instr::Print { v, boolean } => {
+                    Instr::FBin { dst, op, l, r } => {
+                        out.push_str(&format!("    movsd -{}(%rbp), %xmm0\n", voff(f, *l)));
+                        out.push_str(&format!("    movsd -{}(%rbp), %xmm1\n", voff(f, *r)));
+                        let m = match op {
+                            Op::Add => "addsd",
+                            Op::Sub => "subsd",
+                            Op::Mul => "mulsd",
+                            Op::Div => "divsd",
+                            _ => "addsd",
+                        };
+                        out.push_str(&format!("    {} %xmm1, %xmm0\n", m));
+                        out.push_str(&format!("    movsd %xmm0, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::FNeg { dst, a } => {
+                        out.push_str(&ld(*a));
+                        out.push_str("    btc $63, %rax\n");
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::FCmp { dst, op, l, r } => {
+                        out.push_str(&format!("    movsd -{}(%rbp), %xmm0\n", voff(f, *l)));
+                        out.push_str(&format!("    movsd -{}(%rbp), %xmm1\n", voff(f, *r)));
+                        let (pred, swap) = match op {
+                            Op::Eq => (0, false),
+                            Op::Ne => (4, false),
+                            Op::Lt => (1, false),
+                            Op::Le => (2, false),
+                            Op::Gt => (1, true),
+                            Op::Ge => (2, true),
+                            _ => (0, false),
+                        };
+                        if swap {
+                            out.push_str(&format!("    cmpsd ${}, %xmm0, %xmm1\n", pred));
+                            out.push_str("    movq %xmm1, %rax\n");
+                        } else {
+                            out.push_str(&format!("    cmpsd ${}, %xmm1, %xmm0\n", pred));
+                            out.push_str("    movq %xmm0, %rax\n");
+                        }
+                        out.push_str("    and $1, %rax\n");
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::I2F { dst, a } => {
+                        out.push_str(&ld(*a));
+                        out.push_str("    cvtsi2sd %rax, %xmm0\n");
+                        out.push_str(&format!("    movsd %xmm0, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::F2I { dst, a } => {
+                        out.push_str(&format!("    movsd -{}(%rbp), %xmm0\n", voff(f, *a)));
+                        out.push_str("    cvttsd2si %xmm0, %rax\n");
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::Sqrt { dst, a } => {
+                        out.push_str(&format!("    movsd -{}(%rbp), %xmm0\n", voff(f, *a)));
+                        out.push_str("    sqrtsd %xmm0, %xmm0\n");
+                        out.push_str(&format!("    movsd %xmm0, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::PrintPrec { v, prec } => {
+                        out.push_str(&format!("    movsd -{}(%rbp), %xmm0\n", voff(f, *v)));
+                        out.push_str(&ld(*prec));
+                        out.push_str("    mov %rax, %rsi\n");
+                        out.push_str("    lea .Lfmt_pf(%rip), %rdi\n    mov $1, %eax\n");
+                        out.push_str("    call printf@PLT\n");
+                    }
+                    Instr::Print { v, boolean: _, float: true } => {
+                        out.push_str(&format!("    movsd -{}(%rbp), %xmm0\n", voff(f, *v)));
+                        out.push_str("    lea .Lfmt_g(%rip), %rdi\n    mov $1, %eax\n");
+                        out.push_str("    call printf@PLT\n");
+                    }
+                    Instr::Print { v, boolean, float: false } => {
                         out.push_str(&ld(*v));
                         if *boolean {
                             out.push_str("    lea .Lfalse(%rip), %rsi\n");
