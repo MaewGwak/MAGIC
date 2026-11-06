@@ -1373,6 +1373,7 @@ pub fn emit(prog: &IrProgram) -> String {
             (0..POOL.len()).collect()
         };
 
+        out.push_str(".p2align 4\n");
         out.push_str(&format!(".globl {}\n.type {}, @function\n{}:\n", f.name, f.name, f.name));
         out.push_str("    push %rbp\n    mov %rsp, %rbp\n");
         let frame = 8 * (f.nvars + f.nvalues);
@@ -1443,6 +1444,7 @@ pub fn emit(prog: &IrProgram) -> String {
             }
         }
         for (bb, b) in f.blocks.iter().enumerate() {
+            out.push_str(".p2align 4\n");
             out.push_str(&format!("{}:\n", lblock(bb)));
             if !slow_block(&b.instrs) {
                 emit_fast_block(&mut out, f, &b.instrs, &live_out[bb], &f.name, &var_regs, &pool);

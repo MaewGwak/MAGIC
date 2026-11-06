@@ -119,7 +119,9 @@ v0.8.14 adds loop bounds elimination in the IR: if a natural loop compares `i` a
 length used by an `a[i]` check and only increments `i` by one, the check is dropped. A 20M-element
 direct-index sum then emits zero checks (93 ms vs AST 77 ms, C 36 ms). Bit-packed `[bool]` arrays are supported since v0.8.16 (word allocation, shift/mask loads,
 read-modify-write stores); v0.8.17 moves those accesses into the register-allocated path with a
-four-register pool, and sieve prints 664579 in 124 ms (AST 88 ms, C 38 ms).
+four-register pool, and sieve prints 664579 in 124 ms (AST 88 ms, C 38 ms). v0.8.18 aligns every
+function and basic block with `.p2align 4`; this removed a 30 % alignment-induced regression in the
+array-sum loop (120 → 93 ms) and improved matmul to 208 ms, now ahead of the AST backend's 225 ms.
 Affine indexes like
 `a[i * n + j]` are proved in v0.8.15 after constant propagation makes `n` and `n * n` literal: the
 maximum `(n-1)*n + (n-1)` is compared with the array length, so matmul's inner checks disappear

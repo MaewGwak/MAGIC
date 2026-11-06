@@ -30,6 +30,24 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.18 — aligned IR basic blocks (2026-11-06)
+
+Investigating the array-sum regression showed the generated code was at fault, not the allocator:
+removing a bounds check shifted the hot loop so its body straddled a fetch boundary, and the
+optimised build (120 ms) was slower than the unoptimised one (92 ms) despite having fewer
+instructions. Emitting `.p2align 4` before every function and basic block fixes it: the array sum is
+93 ms with optimisation (91 ms without), matmul improves 230 → 208 ms, and sieve stays ~127 ms. The
+temporary `MAGIC_NO_IR_OPT` debugging hook was removed.
+
+## v0.8.18 — aligned IR basic blocks (2026-11-06)
+
+Investigating the array-sum regression showed the generated code was at fault, not the allocator:
+removing a bounds check shifted the hot loop so its body straddled a fetch boundary, and the
+optimised build (120 ms) was slower than the unoptimised one (92 ms) despite having fewer
+instructions. Emitting `.p2align 4` before every function and basic block fixes it: the array sum is
+93 ms with optimisation (91 ms without), matmul improves 230 → 208 ms, and sieve stays ~127 ms. The
+temporary `MAGIC_NO_IR_OPT` debugging hook was removed.
+
 ## v0.8.17 — bool element accesses in the register-allocated IR path (2026-11-06)
 
 Bit-packed bool loads and stores now run inside the linear-scan blocks instead of falling back to
