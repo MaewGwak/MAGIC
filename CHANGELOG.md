@@ -30,6 +30,13 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.9 — static panic stack traces (2026-11-06)
+
+The freestanding panic handler now writes the `line N: ...` message and a frame-pointer walk of
+return addresses to stderr (hex, one per line) before exiting 1. `verify-static.sh` triggers an
+out-of-bounds read in a static binary and requires the message, `stack trace:` and at least one
+16-digit address on stderr. All gates pass, 169 tests, parity 60/60, static-memory and scaling green.
+
 ## v0.10.8 — static env() (2026-11-06)
 
 `_start` saves the initial `envp` and the freestanding `getenv` walks it, so `env("NAME")` works in

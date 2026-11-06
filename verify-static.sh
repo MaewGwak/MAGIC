@@ -95,6 +95,25 @@ else
   echo "env: build FAIL"; FAIL=1
 fi
 
+cat > "$OUT/panic.magic" <<'EOF'
+fn main() {
+    var a: [i32] = [1; 2];
+    var i = 5;
+    print(a[i]);
+}
+EOF
+if "$M" build "$OUT/panic.magic" --static -o "$OUT/panic" >/dev/null 2>&1; then
+  "$OUT/panic" >"$OUT/po" 2>"$OUT/pe"; rc=$?
+  if [ "$rc" -ne 0 ] && grep -q 'index out of bounds' "$OUT/pe" \
+     && grep -q 'stack trace:' "$OUT/pe" && grep -Eq '^[0-9a-f]{16}$' "$OUT/pe"; then
+    echo "panic_trace: ok static"
+  else
+    echo "panic_trace: FAIL rc=$rc"; FAIL=1
+  fi
+else
+  echo "panic_trace: build FAIL"; FAIL=1
+fi
+
 printf 'fn main() { let x = 1.5; print(x); }\n' > "$OUT/g.magic"
 if "$M" build "$OUT/g.magic" --static -o "$OUT/g" >/dev/null 2>&1; then
   echo "%%g program unexpectedly accepted"; FAIL=1

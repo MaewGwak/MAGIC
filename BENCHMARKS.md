@@ -149,7 +149,7 @@ dynamically**; they are not fully static ELF yet.
 static_runtime.s`: mmap-based calloc, memset/memcpy, `%lld`/`%d`/`%s` printf, exit, simple panic).
 No C compiler and no libc are involved. All eight workloads build to 5.2–9.6 KB ELFs with **no
 PT_INTERP** and correct checksums; `par for` uses a `clone`/`wait4` runtime, and `print_prec` uses a
-fixed-point x87 formatter (precision <= 9, overflow guarded). `%g`/`print` of floats are rejected at build time; `env()` uses the initial stack environment; file I/O
+fixed-point x87 formatter (precision <= 9, overflow guarded). static panics print the message plus a raw stack trace; `%g`/`print` of floats are rejected at build time; `env()` uses the initial stack environment; file I/O
 and TCP (`file_open/...`, `net_listen/port/connect/accept/read/write/close`) are implemented with Linux
 syscalls and covered by the gate. `verify-static.sh` is part of `verify.sh`.
 
