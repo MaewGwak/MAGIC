@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.2 — release dead float operands (2026-11-06)
+
+The fast float arms (FBin, FNeg, FCmp, I2F, F2I, Sqrt) never called `free_dead`, so an xmm register
+stayed allocated for an operand long after its last use. They now release dead values like the
+integer and load/store arms. Timings are within noise on this host (n-body ~750–780, ray ~101–107,
+particles ~83–86 ms), but the allocator no longer leaks registers; all gates pass, 169 tests,
+parity 60/60, static and static-memory green.
+
 ## v0.10.1 — two-step particle fusion (2026-11-06)
 
 A loopnest transform recognises `for s { for i { p[i].x += p[i].vx; ... } }` with the canonical

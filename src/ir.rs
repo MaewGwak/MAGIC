@@ -5155,6 +5155,7 @@ fn emit_fast_block(
                     ra.out.push_str(&format!("    {} {}, {}\n", m, XMM[b], XMM[d]));
                 }
                 ra.xdef_store(*dst, d);
+                ra.free_dead(ii);
             }
             Instr::FNeg { dst, a } => {
                 let s = ra.xoperand(*a);
@@ -5162,6 +5163,7 @@ fn emit_fast_block(
                 ra.out.push_str(&format!("    movapd {}, {}\n", XMM[s], XMM[d]));
                 ra.out.push_str(&format!("    xorpd .Lf64sign(%rip), {}\n", XMM[d]));
                 ra.xdef_store(*dst, d);
+                ra.free_dead(ii);
             }
             Instr::FCmp { dst, op, l, r } => {
                 let a = ra.xoperand(*l);
@@ -5184,18 +5186,21 @@ fn emit_fast_block(
                 ra.out.push_str("    and $1, %rax\n");
                 ra.out.push_str(&format!("    mov %rax, {}\n", POOL[d].0));
                 ra.def_store(*dst, d);
+                ra.free_dead(ii);
             }
             Instr::I2F { dst, a } => {
                 let s = ra.operand(*a);
                 let d = ra.xdst(*dst);
                 ra.out.push_str(&format!("    cvtsi2sd {}, {}\n", POOL[s].0, XMM[d]));
                 ra.xdef_store(*dst, d);
+                ra.free_dead(ii);
             }
             Instr::F2I { dst, a } => {
                 let s = ra.xoperand(*a);
                 let d = ra.dst(*dst);
                 ra.out.push_str(&format!("    cvttsd2si {}, {}\n", XMM[s], POOL[d].0));
                 ra.def_store(*dst, d);
+                ra.free_dead(ii);
             }
             Instr::Sqrt { dst, a } => {
                 let s = ra.xoperand(*a);
@@ -5203,6 +5208,7 @@ fn emit_fast_block(
                 ra.out.push_str(&format!("    movapd {}, {}\n", XMM[s], XMM[d]));
                 ra.out.push_str(&format!("    sqrtsd {}, {}\n", XMM[d], XMM[d]));
                 ra.xdef_store(*dst, d);
+                ra.free_dead(ii);
             }
             Instr::Br { cond, then_bb, else_bb } => {
                 if let Some((op, l, r, _)) = ra.deferred.get(cond).copied() {
