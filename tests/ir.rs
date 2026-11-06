@@ -367,3 +367,38 @@ fn main() { print(middle(5)); }
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn c_panic_reports_file_line_and_symbols() {
+    if !(cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) {
+        return;
+    }
+    let Some(cc_cmd) = cc() else { return };
+    let dir = std::env::temp_dir().join(format!("magic_c_trace_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = r#"
+fn inner(i: i32) -> i32 { var a: [i32] = [0; 1]; return a[i]; }
+fn middle(x: i32) -> i32 { return inner(x) + 1; }
+fn main() { print(middle(argc())); print(0); }
+"#;
+    let c = magic::compile_to_c(src).expect("compile");
+    let cp = dir.join("t.c");
+    std::fs::write(&cp, c).expect("write c");
+    let exe = dir.join("t");
+    assert!(Command::new(&cc_cmd)
+        .arg("-O3")
+        .arg("-rdynamic")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&cp)
+        .status()
+        .expect("cc")
+        .success());
+    let out = Command::new(&exe).output().expect("run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr.contains("index out of bounds"), "stderr: {stderr}");
+    assert!(stderr.contains("main+"), "stderr: {stderr}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

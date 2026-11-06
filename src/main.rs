@@ -213,13 +213,14 @@ fn run() -> Result<(), String> {
                         .arg("-std=c11")
                         .arg("-fwrapv")
                         .arg("-fno-strict-overflow")
-                        .arg("-fno-asynchronous-unwind-tables")
                         .arg("-fno-ident");
                     if needs_omp {
                         cmd.arg("-fopenmp");
                     }
                     if cfg!(windows) {
                         cmd.arg("-lws2_32");
+                    } else {
+                        cmd.arg("-rdynamic");
                     }
                     if native {
                         cmd.arg("-march=native");
@@ -271,8 +272,7 @@ fn run() -> Result<(), String> {
                             let mut cmd = cc_command(&cc2);
                             cmd.arg(if dev { "-O0" } else { "-O3" })
                                 .arg("-std=c11")
-                                .arg("-fno-asynchronous-unwind-tables")
-                                .arg("-fno-ident");
+                                        .arg("-fno-ident");
                             if omp2 {
                                 cmd.arg("-fopenmp");
                             }

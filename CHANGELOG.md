@@ -30,6 +30,17 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.68 — stack traces in the C backend too (2026-11-06)
+
+The C backend's panic helper now takes a backtrace and symbolizes it with `dladdr`, retrying the
+address minus one when the return address sits exactly at the end of a function (GCC places a
+never-returning panic call last, which made `main` invisible before). The generated C defines
+`_GNU_SOURCE`, includes `execinfo.h`/`dlfcn.h` under Linux, the compiler flags keep unwind tables, and
+the executable is linked with `-rdynamic`. A nested panic now prints e.g.
+`main+0x59` under the `line N: ...` message. A Rust regression compiles a runtime-dependent panic,
+asserts exit 1, the message and a symbolized `main+` frame. Aggressive `-O3` inlining may omit
+inlined MAGIC frames (same as C debugging); frames that survive optimization are named. 165 tests.
+
 ## v0.8.67 — file:line plus stack traces for IR panics (2026-11-06)
 
 Every IR function now carries DWARF CFI (`.cfi_startproc`, CFA/`%rbp` rules, epilogue CFA restore),
