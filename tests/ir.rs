@@ -113,6 +113,50 @@ fn main() {
 "#,
         ),
         (
+            "min_max_and_len_array",
+            r#"
+fn main() {
+    print(min(3, 5)); print(max(3, 5));
+    print(min(-3, 4)); print(max(-3, 4));
+    print_prec(min(2.5, 1.5), 1); print_prec(max(2.5, 1.5), 1);
+    var a: [i32] = [0; 4];
+    print(len(a));
+}
+"#,
+        ),
+        (
+            "string_return_and_env",
+            r#"
+fn greet() -> str { return "hello"; }
+fn main() {
+    var s = greet();
+    print(str_len(s));
+    print(str_byte(s, 0));
+    var p = env("PATH");
+    print(str_len(p) > 0);
+}
+"#,
+        ),
+        (
+            "struct_vec_push_and_fill",
+            r#"
+struct P { x: i32, y: i32 }
+fn main() {
+    var p = P { x: 1, y: 2 };
+    var v: [P+] = [];
+    v.push(p);
+    v.push(P { x: 3, y: 4 });
+    print(v[0].x + v[0].y);
+    print(v[1].x * v[1].y);
+    var arr: [P] = [P { x: 5, y: 6 }; 3];
+    print(arr[0].x + arr[2].y);
+    var q = P { x: 7, y: 8 };
+    var arr2: [P] = [q; 2];
+    print(arr2[0].x + arr2[1].y);
+}
+"#,
+        ),
+        (
             "struct_return_values",
             r#"
 struct P { x: i32, y: i32 }

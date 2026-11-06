@@ -61,6 +61,7 @@ pub enum Instr {
     AddrVar { dst: Value, var_index: usize, slots: usize },
     CopySlots { ptr_var: usize, var_index: usize, slots: usize },
     CopySlotsTo { dst_ptr_var: usize, src: Value, slots: usize },
+    Select { dst: Value, cond: Value, a: Value, b: Value, float: bool },
     StoreVec { src_ptr_var: usize, ptr_var: usize, len_var: usize, cap_var: usize },
     LoadPtr { dst_var: usize, src_var: usize },
     StorePtr { dst_ptr_var: usize, src_var: usize },
@@ -911,6 +912,7 @@ impl Builder {
                     "str_byte_n" => Some(".Lmf_str_byte_n"),
                     "str_len" => Some(".Lmf_str_len"),
                     "flush" => Some(".Lmf_flush"),
+                    "env" => Some(".Lmf_env"),
                     "net_listen" => Some(".Lnet_listen"),
                     "net_port" => Some(".Lnet_port"),
                     "net_accept" => Some(".Lnet_accept"),
@@ -933,8 +935,7 @@ impl Builder {
                 };
                 if builtin.is_none()
                     && (name.starts_with("file_")
-                        || name.starts_with("net_")
-                        || name == "env")
+                        || name.starts_with("net_"))
                 {
                     return Err(format!(
                         "line {}: IR: builtin `{}` is not supported yet",
@@ -981,6 +982,16 @@ impl Builder {
                             self.vty[dst.0 as usize] = Ty::I32;
                             return Ok(dst);
                         }
+                        if let Some((_, len)) = self.arrays.get(vname).copied() {
+                            let dst = self.value();
+                            match len {
+                                LenRef::Const(n) => self.push(Instr::Const { dst, v: n }),
+                                LenRef::Var(var) => self.push(Instr::LoadVar { dst, var }),
+                            }
+                            self.vty[dst.0 as usize] = Ty::I32;
+                            self.narrow[dst.0 as usize] = true;
+                            return Ok(dst);
+                        }
                     }
                     return Err(format!(
                         "line {}: IR: len() of this expression is not supported yet",
@@ -1000,6 +1011,31 @@ impl Builder {
                     let dst = self.value();
                     self.push(Instr::Sqrt { dst, a });
                     self.vty[dst.0 as usize] = Ty::F64;
+                    return Ok(dst);
+                }
+                if (name == "min" || name == "max") && args.len() == 2 {
+                    let a = self.lower_expr(&args[0])?;
+                    let b = self.lower_expr(&args[1])?;
+                    let float = self.vty[a.0 as usize] == Ty::F64
+                        || self.vty[b.0 as usize] == Ty::F64;
+                    let cmp = if name == "min" { Op::Lt } else { Op::Gt };
+                    let cond = self.value();
+                    if float {
+                        self.push(Instr::FCmp { dst: cond, op: cmp, l: a, r: b });
+                        self.vbool[cond.0 as usize] = true;
+                        self.vty[cond.0 as usize] = Ty::Bool;
+                    } else {
+                        self.push(Instr::Bin { dst: cond, op: cmp, l: a, r: b });
+                        self.vbool[cond.0 as usize] = true;
+                        self.vty[cond.0 as usize] = Ty::Bool;
+                    }
+                    let dst = self.value();
+                    self.push(Instr::Select { dst, cond, a, b, float });
+                    self.vty[dst.0 as usize] = if float {
+                        Ty::F64
+                    } else {
+                        self.vty[a.0 as usize]
+                    };
                     return Ok(dst);
                 }
                 if name == "print_prec" {
@@ -1035,7 +1071,11 @@ impl Builder {
                     name: builtin.unwrap_or(name.as_str()).to_string(),
                     args: vals,
                 });
-                self.vty[dst.0 as usize] = ret.unwrap_or(Ty::I32);
+                self.vty[dst.0 as usize] = if name == "env" {
+                    Ty::Str
+                } else {
+                    ret.unwrap_or(Ty::I32)
+                };
                 Ok(dst)
             }
             other => Err(format!(
@@ -1101,6 +1141,30 @@ impl Builder {
         let mut inits = Vec::new();
         if let ExprKind::StructLit { fields, .. } = &value.kind {
             self.lower_struct_into(id, 0, fields, &mut inits)?;
+        } else if let ExprKind::Var(vn) = &value.kind {
+            let Some((src_idx, src_slots, _)) = self.struct_vars.get(vn).copied() else {
+                return Err(format!(
+                    "line {}: IR: vector push of an unknown struct `{}`",
+                    line, vn
+                ));
+            };
+            let addr = self.value();
+            self.push(Instr::AddrVar { dst: addr, var_index: src_idx, slots: src_slots });
+            self.vty[addr.0 as usize] = Ty::I64;
+            let scratch = self.nvars;
+            self.nvars += 1;
+            self.push(Instr::StoreVar { var: scratch, src: addr });
+            self.push(Instr::CopySlots { ptr_var: scratch, var_index: tmp_var, slots });
+            self.push(Instr::VecPushStruct {
+                ptr_var,
+                len_var,
+                cap_var,
+                esz,
+                size,
+                tmp_var,
+                tmp_slots: slots,
+            });
+            return Ok(());
         } else {
             return Err(format!(
                 "line {}: IR: vector push of a non-literal struct is not supported yet",
@@ -1250,11 +1314,96 @@ impl Builder {
                 self.arrays.insert(name.clone(), (*elem, len_ref));
                 let zero = is_zero_expr(value);
                 if !zero {
-                    if matches!(elem, Ty::Struct(_)) {
-                        return Err(format!(
-                            "line {}: IR: struct-array fill with a non-zero value is not supported yet",
-                            s.line
-                        ));
+                    if let Ty::Struct(id) = *elem {
+                        let (size, _) = struct_layout(&self.struct_defs, id);
+                        let slots = ((size + 7) / 8) as usize;
+                        let tmp_var = self.nvars;
+                        self.nvars += slots;
+                        let mut inits = Vec::new();
+                        match &value.kind {
+                            ExprKind::StructLit { fields, .. } => {
+                                self.lower_struct_into(id, 0, fields, &mut inits)?;
+                            }
+                            ExprKind::Var(vn) => {
+                                let Some((src_idx, _, _)) = self.struct_vars.get(vn).copied() else {
+                                    return Err(format!(
+                                        "line {}: IR: unknown struct `{}` for array fill",
+                                        s.line, vn
+                                    ));
+                                };
+                                let addr = self.value();
+                                self.push(Instr::AddrVar { dst: addr, var_index: src_idx, slots });
+                                self.vty[addr.0 as usize] = Ty::I64;
+                                let scratch = self.nvars;
+                                self.nvars += 1;
+                                self.push(Instr::StoreVar { var: scratch, src: addr });
+                                self.push(Instr::CopySlots { ptr_var: scratch, var_index: tmp_var, slots });
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "line {}: IR: struct-array fill needs a literal or struct variable",
+                                    s.line
+                                ))
+                            }
+                        }
+                        if !inits.is_empty() {
+                            self.push(Instr::StructInit { var_index: tmp_var, slots, fields: inits });
+                        }
+                        let idx_var = self.nvars;
+                        self.nvars += 1;
+                        let zero = self.value();
+                        self.push(Instr::Const { dst: zero, v: 0 });
+                        self.vty[zero.0 as usize] = Ty::I32;
+                        self.push(Instr::StoreVar { var: idx_var, src: zero });
+                        let head = self.new_block();
+                        let body = self.new_block();
+                        let end = self.new_block();
+                        self.push(Instr::Jmp(head));
+                        self.cur = head;
+                        let iv = self.value();
+                        self.push(Instr::LoadVar { dst: iv, var: idx_var });
+                        self.vty[iv.0 as usize] = Ty::I32;
+                        let cv = self.value();
+                        self.push(Instr::Bin { dst: cv, op: Op::Lt, l: iv, r: lenv });
+                        self.push(Instr::Br { cond: cv, then_bb: body, else_bb: end });
+                        self.cur = body;
+                        let def = self
+                            .struct_defs
+                            .get(id as usize)
+                            .cloned()
+                            .ok_or_else(|| format!("line {}: IR: unknown struct", s.line))?;
+                        for (fname, _fty) in &def.fields {
+                            let (off, ty) = struct_field(&self.struct_defs, id, fname)
+                                .ok_or_else(|| format!("line {}: IR: bad struct field", s.line))?;
+                            let fv = self.value();
+                            self.push(Instr::FieldLoad {
+                                dst: fv,
+                                var_index: tmp_var,
+                                slots,
+                                off,
+                                ty,
+                            });
+                            self.vty[fv.0 as usize] = ty;
+                            self.push(Instr::IndexFieldStore {
+                                ptr_var,
+                                idx: iv,
+                                size,
+                                off,
+                                ty,
+                                src: fv,
+                                len: LenRef::Var(len_var),
+                                line: s.line,
+                            });
+                        }
+                        let one = self.value();
+                        self.push(Instr::Const { dst: one, v: 1 });
+                        self.vty[one.0 as usize] = Ty::I32;
+                        let nv = self.value();
+                        self.push(Instr::Bin { dst: nv, op: Op::Add, l: iv, r: one });
+                        self.push(Instr::StoreVar { var: idx_var, src: nv });
+                        self.push(Instr::Jmp(head));
+                        self.cur = end;
+                        return Ok(());
                     }
                     let init = self.lower_expr(value)?;
                     self.push(Instr::Fill {
@@ -1614,9 +1763,6 @@ fn lower_func(
     structs: &[StructDef],
     inlinable: &HashMap<String, (Vec<String>, Expr)>,
 ) -> Result<IrFunc, String> {
-    if f.ret == Ty::Str {
-        return Err(format!("IR: `{}` returns a string, not supported yet", f.name));
-    }
     let mut b = Builder::new(f.ret);
     b.sigs = sigs.clone();
     b.struct_defs = structs.to_vec();
@@ -2357,6 +2503,12 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
         | Instr::LoadPtr { .. }
         | Instr::StorePtr { .. } => {}
         Instr::CopySlotsTo { src, .. } => uses.push(*src),
+        Instr::Select { dst, cond, a, b, .. } => {
+            uses.push(*cond);
+            uses.push(*a);
+            uses.push(*b);
+            defs.push(*dst);
+        }
         Instr::StructInit { fields, .. } => {
             for (_, _, v) in fields {
                 uses.push(*v);
@@ -2425,6 +2577,7 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::Print { float: true, .. }
                 | Instr::StructInit { .. }
                 | Instr::AddrVar { .. }
+        | Instr::Select { .. }
                 | Instr::CopySlots { .. }
                 | Instr::StoreVec { .. }
                 | Instr::LoadPtr { .. }
@@ -2777,6 +2930,31 @@ fn emit_fast_block(
             | Instr::LoadPtr { .. }
             | Instr::StorePtr { .. }
             | Instr::CopySlotsTo { .. } => {}
+            Instr::Select { dst, cond, a, b, float } => {
+                let c = ra.operand(*cond);
+                if *float {
+                    let xd = ra.xdst(*dst);
+                    let xa = ra.xoperand(*a);
+                    let xb = ra.xoperand(*b);
+                    ra.out.push_str(&format!("    movapd {}, {}\n", XMM[xa], XMM[xd]));
+                    ra.out.push_str(&format!("    movapd {}, %xmm1\n", XMM[xb]));
+                    ra.out.push_str(&format!("    test {}, {}\n    jne 1f\n", POOL[c].0, POOL[c].0));
+                    ra.out.push_str(&format!("    movapd %xmm1, {}\n1:\n", XMM[xd]));
+                    ra.xdef_store(*dst, xd);
+                    ra.free_dead(ii);
+                    continue;
+                }
+                let a_reg = ra.operand(*a);
+                let b_reg = ra.operand_excluding(*b, &[a_reg]);
+                let d = ra.dst_excluding(*dst, &[a_reg, b_reg]);
+                ra.out.push_str(&format!("    mov {}, {}\n", POOL[a_reg].0, POOL[d].0));
+                ra.out.push_str(&format!("    mov {}, %rax\n", POOL[b_reg].0));
+                ra.out.push_str(&format!("    test {}, {}\n", POOL[c].0, POOL[c].0));
+                ra.out.push_str(&format!("    cmovne %rax, {}\n", POOL[d].0));
+                ra.def_store(*dst, d);
+                ra.free_dead(ii);
+                continue;
+            }
             Instr::Const { dst, v } => {
                 if ra.is_float(*dst) {
                     let d = ra.xdst(*dst);
@@ -3725,6 +3903,11 @@ fn rewrite_operands(ins: &mut Instr, f: &dyn Fn(Value) -> Value) {
         | Instr::LoadPtr { .. }
         | Instr::StorePtr { .. } => {}
         Instr::CopySlotsTo { src, .. } => rw(src),
+        Instr::Select { cond, a, b, .. } => {
+            rw(cond);
+            rw(a);
+            rw(b);
+        }
         Instr::StructInit { fields, .. } => {
             for (_, _, v) in fields {
                 rw(v);
@@ -4734,6 +4917,23 @@ pub fn emit(prog: &IrProgram) -> String {
             for ins in &b.instrs {
                 let ld = |v: Value| format!("    mov -{}(%rbp), %rax\n", voff(f, v));
                 match ins {
+                    Instr::Select { dst, cond, a, b, float } => {
+                        if *float {
+                            out.push_str(&format!("    movsd -{}(%rbp), %xmm0\n", voff(f, *a)));
+                            out.push_str(&format!("    movsd -{}(%rbp), %xmm1\n", voff(f, *b)));
+                            out.push_str(&format!("    mov -{}(%rbp), %rcx\n", voff(f, *cond)));
+                            out.push_str("    cmp $0, %rcx\n");
+                            out.push_str("    jne 1f\n    movapd %xmm1, %xmm0\n1:\n");
+                            out.push_str(&format!("    movsd %xmm0, -{}(%rbp)\n", voff(f, *dst)));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %rax\n", voff(f, *a)));
+                            out.push_str(&format!("    mov -{}(%rbp), %rdx\n", voff(f, *b)));
+                            out.push_str(&format!("    mov -{}(%rbp), %rcx\n", voff(f, *cond)));
+                            out.push_str("    cmp $0, %rcx\n");
+                            out.push_str("    cmovne %rax, %rdx\n");
+                            out.push_str(&format!("    mov %rdx, -{}(%rbp)\n", voff(f, *dst)));
+                        }
+                    }
                     Instr::CopySlotsTo { dst_ptr_var, src, slots } => {
                         if let Some(reg) = var_regs.get(dst_ptr_var) {
                             out.push_str(&format!("    mov {}, %rax\n", reg));
@@ -4851,7 +5051,7 @@ pub fn emit(prog: &IrProgram) -> String {
                         }
                     }
                     Instr::Str { dst, id, .. } => {
-                        out.push_str(&format!("    lea .Lstr{}(%rip), %rax\n", id));
+                        out.push_str(&format!("    lea .Lstr_{}_{}(%rip), %rax\n", f.name, id));
                         out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
                     Instr::VecNew { ptr_var, len_var, cap_var, esz } => {
@@ -5480,6 +5680,7 @@ pub fn emit(prog: &IrProgram) -> String {
     }
     // Network helpers mirroring the native backend's inline sequences.
     out.push_str(".p2align 4\n.Lmf_flush:\n    xor %edi, %edi\n    jmp fflush@PLT\n");
+    out.push_str(".p2align 4\n.Lmf_env:\n    jmp getenv@PLT\n");
     out.push_str(".p2align 4\n.Lnet_read:\n    jmp read@PLT\n");
     out.push_str(".p2align 4\n.Lnet_read_at:\n    add %rdx, %rsi\n    mov %rcx, %rdx\n    jmp read@PLT\n");
     out.push_str(".p2align 4\n.Lnet_write_at:\n    add %rdx, %rsi\n    mov %rcx, %rdx\n    jmp write@PLT\n");
@@ -5561,20 +5762,20 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str("    call munmap@PLT\n    jmp 1b\n");
     out.push_str("2:\n    add $8, %rsp\n    pop %r12\n    pop %rbx\n    ret\n");
     // String literals.
-    let mut strs: Vec<(usize, String)> = Vec::new();
+    let mut strs: std::collections::BTreeSet<(String, usize, String)> = Default::default();
     for f in &prog.funcs {
         for b in &f.blocks {
             for i in &b.instrs {
                 if let Instr::Str { id, s, .. } = i {
-                    strs.push((*id, s.clone()));
+                    strs.insert((f.name.clone(), *id, s.clone()));
                 }
             }
         }
     }
     if !strs.is_empty() {
         out.push_str(".section .rodata\n");
-        for (id, text) in &strs {
-            out.push_str(&format!(".Lstr{}: .asciz \"{}\"\n", id, asm_escape(text)));
+        for (fname, id, text) in &strs {
+            out.push_str(&format!(".Lstr_{}_{}: .asciz \"{}\"\n", fname, id, asm_escape(text)));
         }
     }
     out.push_str(".section .note.GNU-stack,\"\",@progbits\n");

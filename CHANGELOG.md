@@ -30,6 +30,24 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.72 — final IR parity pass (2026-11-06)
+
+The remaining C-only language surface is now covered by the IR: `env` (`getenv` wrapper), string
+return values, `len(array)` for fixed arrays, pushing a struct variable into a vector (copy through a
+temporary pointer), struct-array fill with a non-zero literal or struct variable (runtime copy loop),
+and `min`/`max` for integers and `f64` via a new `Select` instruction (comparison plus `cmovne` for
+integers and an SSE select for floats; NaN picks the second operand, matching the C backend's ternary).
+A peephole interaction was fixed at the same time: the slow `Select` path compared a memory operand,
+which the `cmp $0,m` → `test m,m` peephole turned into an invalid memory-memory `test`; the condition is
+now loaded into a register first.
+
+A real collision bug surfaced when two functions used string literals: `Str` ids are per function but
+labels were global, so two `.Lstr0` definitions were emitted. Labels are now namespaced
+(`.Lstr_<func>_<id>`) and de-duplicated in `.rodata`. New differential cases cover min/max (ints and
+floats), len(array), string returns, env, struct-vector push and struct-array fill; repo parity stays
+60/60. Known remaining difference: `par for` is still sequential in the IR (the C backend uses
+OpenMP), and `file_pread`'s 4-argument form is rejected by both backends.
+
 ## v0.8.71 — struct literals in expression position and struct returns (2026-11-06)
 
 Struct literals now lower anywhere an expression is allowed: the IR allocates a temporary slot block,
