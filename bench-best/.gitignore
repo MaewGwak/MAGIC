@@ -1,0 +1,7 @@
+judge-build/*
+!judge-build/
+!judge-build/*.json
+**/bin/
+**/.build/
+**/*.o
+**/*.s

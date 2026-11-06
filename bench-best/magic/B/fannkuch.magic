@@ -1,0 +1,151 @@
+// fannkuch-redux, n = 10 -- best-effort variant.
+//
+// 10! permutations are split into 90 independent streams: the top-level block
+// fixes the last element (10 rotations of the whole array) and the sub-block
+// fixes the eighth (9 rotations of the first 9).  Each stream then runs the
+// normal odometer over the first eight positions, so the streams are exactly
+// the reference enumeration partitioned by (perm[9], perm[8]) and both
+// factorials are even, which keeps the alternating-sign parity local.
+// Per permutation: one 10-element copy into a scratch row, then the flip
+// loop.  Each stream owns one 64-byte row, so no two workers share a line.
+fn flips_of(base: i32, perm: [i32]) -> i32 {
+    var flips = 0;
+    while perm[base] != 0 {
+        var k = perm[base];
+        var a = 0;
+        var b = k;
+        while a < b {
+            var t = perm[base + a];
+            perm[base + a] = perm[base + b];
+            perm[base + b] = t;
+            a = a + 1;
+            b = b - 1;
+        }
+        flips = flips + 1;
+    }
+    return flips;
+}
+
+fn main() {
+    let n = 10;
+    let m = 8;
+    let subs = 9;
+    let streams = 90;
+    let stride = 32;
+
+    var perm1: [i32] = [0; streams * stride];
+    var perm: [i32] = [0; streams * stride];
+    var count: [i32] = [0; streams * stride];
+    var sums: [i64] = [0; streams];
+    var maxes: [i32] = [0; streams];
+
+    par for s in 0..streams {
+        var base = s * stride;
+        var b1 = s / subs;
+        var b2 = s % subs;
+
+        var i = 0;
+        while i < n {
+            perm1[base + i] = i;
+            i = i + 1;
+        }
+        // rotate the whole row left by b1
+        var k1 = 0;
+        while k1 < b1 {
+            var t1 = perm1[base];
+            i = 0;
+            while i < n - 1 {
+                perm1[base + i] = perm1[base + i + 1];
+                i = i + 1;
+            }
+            perm1[base + n - 1] = t1;
+            k1 = k1 + 1;
+        }
+        // rotate the first nine left by b2
+        var k2 = 0;
+        while k2 < b2 {
+            var t2 = perm1[base];
+            i = 0;
+            while i < m {
+                perm1[base + i] = perm1[base + i + 1];
+                i = i + 1;
+            }
+            perm1[base + m] = t2;
+            k2 = k2 + 1;
+        }
+
+        var r = m;
+        var sum: i64 = 0;
+        var mx = 0;
+        var parity = 0;
+        var running = true;
+        while running {
+            while r != 1 {
+                count[base + r - 1] = r;
+                r = r - 1;
+            }
+
+            // scratch copy of the 10 cards
+            perm[base] = perm1[base];
+            perm[base + 1] = perm1[base + 1];
+            perm[base + 2] = perm1[base + 2];
+            perm[base + 3] = perm1[base + 3];
+            perm[base + 4] = perm1[base + 4];
+            perm[base + 5] = perm1[base + 5];
+            perm[base + 6] = perm1[base + 6];
+            perm[base + 7] = perm1[base + 7];
+            perm[base + 8] = perm1[base + 8];
+            perm[base + 9] = perm1[base + 9];
+
+            var flips = flips_of(base, perm);
+
+            if flips > mx {
+                mx = flips;
+            }
+            if parity == 0 {
+                sum = sum + (flips as i64);
+            } else {
+                sum = sum - (flips as i64);
+            }
+            parity = 1 - parity;
+
+            var advanced = false;
+            while !advanced {
+                if r == m {
+                    running = false;
+                    advanced = true;
+                } else {
+                    var p0 = perm1[base];
+                    var k = 0;
+                    while k < r {
+                        perm1[base + k] = perm1[base + k + 1];
+                        k = k + 1;
+                    }
+                    perm1[base + r] = p0;
+                    var c = count[base + r] - 1;
+                    count[base + r] = c;
+                    if c > 0 {
+                        advanced = true;
+                    } else {
+                        r = r + 1;
+                    }
+                }
+            }
+        }
+        sums[s] = sum;
+        maxes[s] = mx;
+    }
+
+    var checksum: i64 = 0;
+    var mxall = 0;
+    var u = 0;
+    while u < streams {
+        checksum = checksum + sums[u];
+        if maxes[u] > mxall {
+            mxall = maxes[u];
+        }
+        u = u + 1;
+    }
+    print(checksum);
+    print(mxall);
+}

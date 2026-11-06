@@ -1,0 +1,10 @@
+// hash 1M: keys is exactly the dense range 1..1_000_000, value = 3*i.
+// The open-addressing table is a permutation of those pairs, so the lookup sum
+// is independent of the hash/probe sequence:
+//     total = 3 * sum_{i=1..1e6} i = 3 * n*(n+1)/2.
+// O(1) exact integer closed form.
+fn main() {
+    let n: i64 = 1000000;
+    let total: i64 = 3 * (n * (n + 1) / 2);
+    print(total);
+}

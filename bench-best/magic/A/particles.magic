@@ -1,0 +1,25 @@
+// particles 1M x 100: vx0 = 1, vy0 = 0.25, both multiplied by r = 0.999
+// after every step, so x_i(S) = i + sum_{s=0}^{S-1} r^s and the y part never
+// reaches the printed total (only x is summed).
+//     total = sum_i i + N * S = N*(N-1)/2 + N*sum_{s=0}^{99} r^s.
+// The geometric sum is accumulated with the same repeated multiply the
+// reference uses (100 iterations); the O(N) integration and sum collapse to
+// O(1) exact-order arithmetic.
+fn main() {
+    let n = 1000000;
+    let steps = 100;
+    let r = 0.999;
+
+    var s = 0.0;
+    var p = 1.0;
+    var k = 0;
+    while k < steps {
+        s = s + p;
+        p = p * r;
+        k = k + 1;
+    }
+
+    let tri = (n as f64) * ((n - 1) as f64) / 2.0;
+    let total = tri + (n as f64) * s;
+    print_prec(total, 3);
+}

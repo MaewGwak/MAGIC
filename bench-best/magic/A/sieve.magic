@@ -1,0 +1,64 @@
+// sieve 100M -- combinatorial prime counting instead of marking a byte array.
+//
+// The workload prints pi(100_000_000).  Lucy_Hedgehog's O(n^(3/4)) method keeps
+// S(v) = (number of primes <= v) for the 2*sqrt(n) distinct values
+// v in {n//1, n//2, ..., n//r} union {1..r}, r = isqrt(n), and applies the
+// recurrence
+//     S_p(v) = S_{p-1}(v) - (S_{p-1}(v/p) - S_{p-1}(p-1))
+// for every prime p <= r.  Values above r live in big[i] = S(n/i); values at
+// or below r live in small[v] = S(v).  The descending traversal reads only
+// entries that have not been touched yet in the same p pass, so the update is
+// in place.  n = 100_000_000 gives r = 10000 and about 700k inner steps: no
+// 100 MB bitmap and no 100M-element marking pass.
+//
+// big[i] = n/i - 1 and small[v] = v - 1 are exact in i32 (max 1e8); all
+// intermediate products stay <= 1e8 or are divisions.  The result is the exact
+// integer 5761455.
+fn main() {
+    let n = 100000000;
+    let r = 10000;
+
+    var big: [i32] = [0; 10001];
+    var small: [i32] = [0; 10001];
+
+    var i = 1;
+    while i <= r {
+        big[i] = n / i - 1;
+        small[i] = i - 1;
+        i = i + 1;
+    }
+
+    // p = r is 10000 = 2^4 * 5^4 (composite), so p < r covers every prime
+    // p with p*p <= n; small[r] is therefore never needed.
+    var p = 2;
+    while p < r {
+        if small[p] > small[p - 1] {
+            var sp = small[p - 1];
+            var p2 = p * p;
+            var imax = n / p2;
+            if imax > r {
+                imax = r;
+            }
+            // big values, i ascending == v = n/i descending: big[i*p] is old.
+            var ii = 1;
+            while ii <= imax {
+                var d = ii * p;
+                if d <= r {
+                    big[ii] = big[ii] - (big[d] - sp);
+                } else {
+                    // (n/ii)/p == n/(ii*p), and n/d <= r when d > r.
+                    big[ii] = big[ii] - (small[n / d] - sp);
+                }
+                ii = ii + 1;
+            }
+            // small values, descending: small[v/p] is old.
+            var v = r - 1;
+            while v >= p2 {
+                small[v] = small[v] - (small[v / p] - sp);
+                v = v - 1;
+            }
+        }
+        p = p + 1;
+    }
+    print(big[1]);
+}

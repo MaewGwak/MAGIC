@@ -1,0 +1,144 @@
+// n-body, 4 bodies, 10M steps -- best-effort variant.
+//
+// Four bodies are only six pairs, so the pair loop is fully unrolled in the
+// reference order: (0,1), (0,2), (0,3), (1,2), (1,3), (2,3), then the four
+// drift updates.  Arrays keep the state in four slots, which the IR backend
+// addresses directly; nothing is reassociated, so the sequence of IEEE
+// operations is exactly the reference's (the C backend contracts to FMA and
+// prints ...844, the native IR backend prints ...831; the two differ by
+// 1.3e-8, far inside 1e-9 relative).
+// The work is latency-bound on 6 sqrt + 6 div per step; that is the floor for
+// this trajectory, because the printed energy is a numerical artifact of
+// dt = 0.001 (the exact energy is -33.03), so it cannot be replaced by a
+// closed form or a larger step.
+fn main() {
+    var x: [f64] = [0.0; 4];
+    var y: [f64] = [0.0; 4];
+    var z: [f64] = [0.0; 4];
+    var vx: [f64] = [0.0; 4];
+    var vy: [f64] = [0.0; 4];
+    var vz: [f64] = [0.0; 4];
+    x[1] = 2.0;  y[1] = 1.0;   z[1] = 0.1;
+    x[2] = 4.0;  y[2] = -1.0;  z[2] = -0.1;
+    x[3] = 6.0;  y[3] = 0.5;   z[3] = 0.2;
+    vx[1] = 0.01;   vy[1] = 0.005;  vz[1] = 0.001;
+    vx[2] = -0.01;  vy[2] = -0.005; vz[2] = -0.001;
+    vx[3] = 0.02;   vy[3] = 0.001;  vz[3] = 0.0005;
+    let m0 = 100.0;
+    let m1 = 0.5;
+    let m2 = 0.3;
+    let m3 = 0.2;
+    let dt = 0.001;
+
+    var s = 0;
+    while s < 10000000 {
+        var dx01 = x[0] - x[1];
+        var dy01 = y[0] - y[1];
+        var dz01 = z[0] - z[1];
+        var q01 = dx01 * dx01 + dy01 * dy01 + dz01 * dz01;
+        var d01 = sqrt(q01);
+        var g01 = dt / (q01 * d01);
+        vx[0] = vx[0] - dx01 * m1 * g01;
+        vy[0] = vy[0] - dy01 * m1 * g01;
+        vz[0] = vz[0] - dz01 * m1 * g01;
+        vx[1] = vx[1] + dx01 * m0 * g01;
+        vy[1] = vy[1] + dy01 * m0 * g01;
+        vz[1] = vz[1] + dz01 * m0 * g01;
+        var dx02 = x[0] - x[2];
+        var dy02 = y[0] - y[2];
+        var dz02 = z[0] - z[2];
+        var q02 = dx02 * dx02 + dy02 * dy02 + dz02 * dz02;
+        var d02 = sqrt(q02);
+        var g02 = dt / (q02 * d02);
+        vx[0] = vx[0] - dx02 * m2 * g02;
+        vy[0] = vy[0] - dy02 * m2 * g02;
+        vz[0] = vz[0] - dz02 * m2 * g02;
+        vx[2] = vx[2] + dx02 * m0 * g02;
+        vy[2] = vy[2] + dy02 * m0 * g02;
+        vz[2] = vz[2] + dz02 * m0 * g02;
+        var dx03 = x[0] - x[3];
+        var dy03 = y[0] - y[3];
+        var dz03 = z[0] - z[3];
+        var q03 = dx03 * dx03 + dy03 * dy03 + dz03 * dz03;
+        var d03 = sqrt(q03);
+        var g03 = dt / (q03 * d03);
+        vx[0] = vx[0] - dx03 * m3 * g03;
+        vy[0] = vy[0] - dy03 * m3 * g03;
+        vz[0] = vz[0] - dz03 * m3 * g03;
+        vx[3] = vx[3] + dx03 * m0 * g03;
+        vy[3] = vy[3] + dy03 * m0 * g03;
+        vz[3] = vz[3] + dz03 * m0 * g03;
+        var dx12 = x[1] - x[2];
+        var dy12 = y[1] - y[2];
+        var dz12 = z[1] - z[2];
+        var q12 = dx12 * dx12 + dy12 * dy12 + dz12 * dz12;
+        var d12 = sqrt(q12);
+        var g12 = dt / (q12 * d12);
+        vx[1] = vx[1] - dx12 * m2 * g12;
+        vy[1] = vy[1] - dy12 * m2 * g12;
+        vz[1] = vz[1] - dz12 * m2 * g12;
+        vx[2] = vx[2] + dx12 * m1 * g12;
+        vy[2] = vy[2] + dy12 * m1 * g12;
+        vz[2] = vz[2] + dz12 * m1 * g12;
+        var dx13 = x[1] - x[3];
+        var dy13 = y[1] - y[3];
+        var dz13 = z[1] - z[3];
+        var q13 = dx13 * dx13 + dy13 * dy13 + dz13 * dz13;
+        var d13 = sqrt(q13);
+        var g13 = dt / (q13 * d13);
+        vx[1] = vx[1] - dx13 * m3 * g13;
+        vy[1] = vy[1] - dy13 * m3 * g13;
+        vz[1] = vz[1] - dz13 * m3 * g13;
+        vx[3] = vx[3] + dx13 * m1 * g13;
+        vy[3] = vy[3] + dy13 * m1 * g13;
+        vz[3] = vz[3] + dz13 * m1 * g13;
+        var dx23 = x[2] - x[3];
+        var dy23 = y[2] - y[3];
+        var dz23 = z[2] - z[3];
+        var q23 = dx23 * dx23 + dy23 * dy23 + dz23 * dz23;
+        var d23 = sqrt(q23);
+        var g23 = dt / (q23 * d23);
+        vx[2] = vx[2] - dx23 * m3 * g23;
+        vy[2] = vy[2] - dy23 * m3 * g23;
+        vz[2] = vz[2] - dz23 * m3 * g23;
+        vx[3] = vx[3] + dx23 * m2 * g23;
+        vy[3] = vy[3] + dy23 * m2 * g23;
+        vz[3] = vz[3] + dz23 * m2 * g23;
+        x[0] = x[0] + dt * vx[0];  y[0] = y[0] + dt * vy[0];  z[0] = z[0] + dt * vz[0];
+        x[1] = x[1] + dt * vx[1];  y[1] = y[1] + dt * vy[1];  z[1] = z[1] + dt * vz[1];
+        x[2] = x[2] + dt * vx[2];  y[2] = y[2] + dt * vy[2];  z[2] = z[2] + dt * vz[2];
+        x[3] = x[3] + dt * vx[3];  y[3] = y[3] + dt * vy[3];  z[3] = z[3] + dt * vz[3];
+        s = s + 1;
+    }
+
+    var e = 0.0;
+    e = e + 0.5 * m0 * (vx[0] * vx[0] + vy[0] * vy[0] + vz[0] * vz[0]);
+    e = e + 0.5 * m1 * (vx[1] * vx[1] + vy[1] * vy[1] + vz[1] * vz[1]);
+    e = e + 0.5 * m2 * (vx[2] * vx[2] + vy[2] * vy[2] + vz[2] * vz[2]);
+    e = e + 0.5 * m3 * (vx[3] * vx[3] + vy[3] * vy[3] + vz[3] * vz[3]);
+    var px01 = x[0] - x[1];
+    var py01 = y[0] - y[1];
+    var pz01 = z[0] - z[1];
+    e = e - m0 * m1 / sqrt(px01 * px01 + py01 * py01 + pz01 * pz01);
+    var px02 = x[0] - x[2];
+    var py02 = y[0] - y[2];
+    var pz02 = z[0] - z[2];
+    e = e - m0 * m2 / sqrt(px02 * px02 + py02 * py02 + pz02 * pz02);
+    var px03 = x[0] - x[3];
+    var py03 = y[0] - y[3];
+    var pz03 = z[0] - z[3];
+    e = e - m0 * m3 / sqrt(px03 * px03 + py03 * py03 + pz03 * pz03);
+    var px12 = x[1] - x[2];
+    var py12 = y[1] - y[2];
+    var pz12 = z[1] - z[2];
+    e = e - m1 * m2 / sqrt(px12 * px12 + py12 * py12 + pz12 * pz12);
+    var px13 = x[1] - x[3];
+    var py13 = y[1] - y[3];
+    var pz13 = z[1] - z[3];
+    e = e - m1 * m3 / sqrt(px13 * px13 + py13 * py13 + pz13 * pz13);
+    var px23 = x[2] - x[3];
+    var py23 = y[2] - y[3];
+    var pz23 = z[2] - z[3];
+    e = e - m2 * m3 / sqrt(px23 * px23 + py23 * py23 + pz23 * pz23);
+    print_prec(e, 9);
+}

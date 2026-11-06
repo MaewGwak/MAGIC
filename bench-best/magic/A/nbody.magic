@@ -1,0 +1,161 @@
+// n-body 10M steps, 4 bodies.  The six pair interactions are written out on
+// 24 f64 scalars instead of arrays: no bounds checks, no loop trip counts, and
+// the C backend's compiler keeps the state in registers / fuses the mul-adds.
+// The arithmetic order matches the reference expression-for-expression
+// (dx*m[j]*mag, then vx[i] -= ..., then the dt*vx updates), so the printed
+// energy agrees with the 11211.531383831 native / ...844 FMA variants far
+// inside the 1e-9 relative tolerance.
+//
+// Initial state and constants are copied verbatim from the workload:
+//   body 0: (0,0,0)       v=(0,0,0)            m=100
+//   body 1: (2,1,0.1)     v=(0.01,0.005,0.001) m=0.5
+//   body 2: (4,-1,-0.1)   v=(-0.01,-0.005,-0.001) m=0.3
+//   body 3: (6,0.5,0.2)   v=(0.02,0.001,0.0005)   m=0.2
+fn main() {
+    let steps = 10000000;
+    let dt = 0.001;
+
+    // masses
+    let m0 = 100.0;
+    let m1 = 0.5;
+    let m2 = 0.3;
+    let m3 = 0.2;
+
+    var x0 = 0.0;  var y0 = 0.0;  var z0 = 0.0;
+    var x1 = 2.0;  var y1 = 1.0;  var z1 = 0.1;
+    var x2 = 4.0;  var y2 = -1.0; var z2 = -0.1;
+    var x3 = 6.0;  var y3 = 0.5;  var z3 = 0.2;
+
+    var vx0 = 0.0;   var vy0 = 0.0;   var vz0 = 0.0;
+    var vx1 = 0.01;  var vy1 = 0.005; var vz1 = 0.001;
+    var vx2 = -0.01; var vy2 = -0.005; var vz2 = -0.001;
+    var vx3 = 0.02;  var vy3 = 0.001; var vz3 = 0.0005;
+
+    var s = 0;
+    while s < steps {
+        // ---- pair (0,1)
+        var dx = x0 - x1;
+        var dy = y0 - y1;
+        var dz = z0 - z1;
+        var d2 = dx * dx + dy * dy + dz * dz;
+        var d = sqrt(d2);
+        var mag = dt / (d2 * d);
+        vx0 = vx0 - dx * m1 * mag;
+        vy0 = vy0 - dy * m1 * mag;
+        vz0 = vz0 - dz * m1 * mag;
+        vx1 = vx1 + dx * m0 * mag;
+        vy1 = vy1 + dy * m0 * mag;
+        vz1 = vz1 + dz * m0 * mag;
+
+        // ---- pair (0,2)
+        dx = x0 - x2;
+        dy = y0 - y2;
+        dz = z0 - z2;
+        d2 = dx * dx + dy * dy + dz * dz;
+        d = sqrt(d2);
+        mag = dt / (d2 * d);
+        vx0 = vx0 - dx * m2 * mag;
+        vy0 = vy0 - dy * m2 * mag;
+        vz0 = vz0 - dz * m2 * mag;
+        vx2 = vx2 + dx * m0 * mag;
+        vy2 = vy2 + dy * m0 * mag;
+        vz2 = vz2 + dz * m0 * mag;
+
+        // ---- pair (0,3)
+        dx = x0 - x3;
+        dy = y0 - y3;
+        dz = z0 - z3;
+        d2 = dx * dx + dy * dy + dz * dz;
+        d = sqrt(d2);
+        mag = dt / (d2 * d);
+        vx0 = vx0 - dx * m3 * mag;
+        vy0 = vy0 - dy * m3 * mag;
+        vz0 = vz0 - dz * m3 * mag;
+        vx3 = vx3 + dx * m0 * mag;
+        vy3 = vy3 + dy * m0 * mag;
+        vz3 = vz3 + dz * m0 * mag;
+
+        // ---- pair (1,2)
+        dx = x1 - x2;
+        dy = y1 - y2;
+        dz = z1 - z2;
+        d2 = dx * dx + dy * dy + dz * dz;
+        d = sqrt(d2);
+        mag = dt / (d2 * d);
+        vx1 = vx1 - dx * m2 * mag;
+        vy1 = vy1 - dy * m2 * mag;
+        vz1 = vz1 - dz * m2 * mag;
+        vx2 = vx2 + dx * m1 * mag;
+        vy2 = vy2 + dy * m1 * mag;
+        vz2 = vz2 + dz * m1 * mag;
+
+        // ---- pair (1,3)
+        dx = x1 - x3;
+        dy = y1 - y3;
+        dz = z1 - z3;
+        d2 = dx * dx + dy * dy + dz * dz;
+        d = sqrt(d2);
+        mag = dt / (d2 * d);
+        vx1 = vx1 - dx * m3 * mag;
+        vy1 = vy1 - dy * m3 * mag;
+        vz1 = vz1 - dz * m3 * mag;
+        vx3 = vx3 + dx * m1 * mag;
+        vy3 = vy3 + dy * m1 * mag;
+        vz3 = vz3 + dz * m1 * mag;
+
+        // ---- pair (2,3)
+        dx = x2 - x3;
+        dy = y2 - y3;
+        dz = z2 - z3;
+        d2 = dx * dx + dy * dy + dz * dz;
+        d = sqrt(d2);
+        mag = dt / (d2 * d);
+        vx2 = vx2 - dx * m3 * mag;
+        vy2 = vy2 - dy * m3 * mag;
+        vz2 = vz2 - dz * m3 * mag;
+        vx3 = vx3 + dx * m2 * mag;
+        vy3 = vy3 + dy * m2 * mag;
+        vz3 = vz3 + dz * m2 * mag;
+
+        // ---- positions
+        x0 = x0 + dt * vx0;
+        y0 = y0 + dt * vy0;
+        z0 = z0 + dt * vz0;
+        x1 = x1 + dt * vx1;
+        y1 = y1 + dt * vy1;
+        z1 = z1 + dt * vz1;
+        x2 = x2 + dt * vx2;
+        y2 = y2 + dt * vy2;
+        z2 = z2 + dt * vz2;
+        x3 = x3 + dt * vx3;
+        y3 = y3 + dt * vy3;
+        z3 = z3 + dt * vz3;
+
+        s = s + 1;
+    }
+
+    // energy: kinetic then the six potential pairs, same order as the source.
+    var e = 0.0;
+    e = e + 0.5 * m0 * (vx0 * vx0 + vy0 * vy0 + vz0 * vz0);
+    e = e + 0.5 * m1 * (vx1 * vx1 + vy1 * vy1 + vz1 * vz1);
+    e = e + 0.5 * m2 * (vx2 * vx2 + vy2 * vy2 + vz2 * vz2);
+    e = e + 0.5 * m3 * (vx3 * vx3 + vy3 * vy3 + vz3 * vz3);
+
+    var ex = 0.0;
+    var ey = 0.0;
+    var ez = 0.0;
+    ex = x0 - x1; ey = y0 - y1; ez = z0 - z1;
+    e = e - m0 * m1 / sqrt(ex * ex + ey * ey + ez * ez);
+    ex = x0 - x2; ey = y0 - y2; ez = z0 - z2;
+    e = e - m0 * m2 / sqrt(ex * ex + ey * ey + ez * ez);
+    ex = x0 - x3; ey = y0 - y3; ez = z0 - z3;
+    e = e - m0 * m3 / sqrt(ex * ex + ey * ey + ez * ez);
+    ex = x1 - x2; ey = y1 - y2; ez = z1 - z2;
+    e = e - m1 * m2 / sqrt(ex * ex + ey * ey + ez * ez);
+    ex = x1 - x3; ey = y1 - y3; ez = z1 - z3;
+    e = e - m1 * m3 / sqrt(ex * ex + ey * ey + ez * ez);
+    ex = x2 - x3; ey = y2 - y3; ez = z2 - z3;
+    e = e - m2 * m3 / sqrt(ex * ex + ey * ey + ez * ez);
+
+    print_prec(e, 9);
+}

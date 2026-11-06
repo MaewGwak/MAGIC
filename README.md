@@ -179,6 +179,11 @@ Source files: C `bench-suite/*_c.c` (bt: `bench-bt/bt_c.c`), C++ `bench-suite/*_
 `bench-bt/bt_magic_loop.magic`. `bench-parity-gate.sh` builds and checks exact output tails; see
 BENCHMARKS for the full method and fairness caveats.
 
+**This is not a best-of claim.** A separate independent best-of suite (`bench-best/RESULTS.md`)
+shows no overall winner: best Rust wins fannkuch, best C/C++ wins raytrace, and most other workloads
+tie at the process/start-up floor; an untuned default MAGIC user does not beat best C/C++/Rust. The
+table above is the 1.0 gate against the original-algorithm optimized baselines. See BENCHMARKS.
+
 Native no-C fallback (for `--static`/no C compiler) remains available but is not the speed headline:
 sieve 33 ms, fannkuch 60 ms, matmul 6 ms, n-body 613 ms, raytrace 17 ms, hash 4 ms, particles 4 ms,
 binary trees 442 ms.

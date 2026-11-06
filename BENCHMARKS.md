@@ -146,6 +146,22 @@ ties are accepted. All times below are **milliseconds (ms)**, medians of five wa
 - **Memory:** static peak RSS is measured in **MiB** by `bench-static-memory.sh`; see the static
   memory table above.
 
+## Best-of-language cross-check (no bias)
+
+A separate independent suite (`bench-best/`) has C, C++, Rust and MAGIC agents implement the
+fastest version each language can do, including algorithm changes, OpenMP/std threads and SIMD.
+The neutral judge rebuilt and timed them sequentially (20 randomized rounds, exact integers,
+1e-9 relative tolerance for floats) and wrote `bench-best/RESULTS.md`.
+
+Headline (ms, 20-run median): fannkuch **Rust 9.01** vs C 15.39 / C++ 15.37 / MAGIC C 17.15;
+raytrace **C/C++ 3.23** vs MAGIC 7.29; n-body all compiled implementations tie at 214.5–214.7,
+while MAGIC native IR is 665; sieve, hash, particles, binary trees and matmul are at the
+process/start-up floor (≈1.1–3.2 ms) and are ties. **No overall language wins.** An untuned/default
+MAGIC user does **not** beat best C/C++/Rust; best MAGIC ties most workloads but loses fannkuch and
+raytrace, and native IR loses n-body/fannkuch. These best-of results do not support a "dominates"
+claim; the 1.0 gate numbers above are against the original-algorithm optimized baselines, not this
+best-of suite.
+
 ## Compile time (2,000 functions, 92 KB source)
 
 `./bench-compile/run.sh`, medians of three runs. Cold = remove binary/object/stamp; edit = change one

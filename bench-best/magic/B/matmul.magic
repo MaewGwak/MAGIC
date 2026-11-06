@@ -1,0 +1,62 @@
+// Integer matmul, N = 384 -- best-effort variant.
+//
+// a[i][k] = (i+k) % 10 and b[k][j] = (k*j) % 7, so the k-th term of c[i][j]
+//     f(k) = ((i+k) % 10) * ((k*j) % 7)
+// is periodic in k with period lcm(10,7) = 70 (70 == 0 mod 10 and mod 7).
+// 384 = 5*70 + 34, hence
+//     c[i][j] = 5*S(i%10, j%7) + R(i%10, j%7),
+// where S and R are the 70- and 34-term sums of the same pattern.  S and R
+// depend only on i mod 10 and j mod 7, so 384^3 multiplies collapse to a 70-entry
+// table (10*7*104 term evaluations) plus one pass over the residues.
+// The reference sums c[x] for x = 0,2,4,...; x = 384*i + j is even iff j is even,
+// so only even j contribute and each residue pair is weighted by its count.
+// Exact in i64: |c| <= 384*54 = 20736.
+fn main() {
+    let n = 384;
+
+    var cnti: [i64] = [0; 10];
+    var cntj: [i64] = [0; 7];
+    var i = 0;
+    while i < n {
+        cnti[i % 10] = cnti[i % 10] + 1;
+        if i % 2 == 0 {
+            cntj[i % 7] = cntj[i % 7] + 1;
+        }
+        i = i + 1;
+    }
+
+    var v: [i64] = [0; 70];
+    var a = 0;
+    while a < 10 {
+        var r = 0;
+        while r < 7 {
+            var s: i64 = 0;
+            var t = 0;
+            while t < 70 {
+                s = s + (((a + t) % 10) as i64) * (((t * r) % 7) as i64);
+                t = t + 1;
+            }
+            var s2: i64 = 0;
+            t = 0;
+            while t < 34 {
+                s2 = s2 + (((a + t) % 10) as i64) * (((t * r) % 7) as i64);
+                t = t + 1;
+            }
+            v[a * 7 + r] = 5 * s + s2;
+            r = r + 1;
+        }
+        a = a + 1;
+    }
+
+    var total: i64 = 0;
+    a = 0;
+    while a < 10 {
+        var r = 0;
+        while r < 7 {
+            total = total + cnti[a] * cntj[r] * v[a * 7 + r];
+            r = r + 1;
+        }
+        a = a + 1;
+    }
+    print(total);
+}

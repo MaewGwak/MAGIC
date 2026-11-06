@@ -1,0 +1,114 @@
+// Sieve of Eratosthenes, limit 100,000,000 -- best-effort variant.
+//
+// Only odd numbers are represented (n = 2k+1), so half the marking writes and
+// half the counting reads of a byte sieve over all integers.  The odd range is
+// cut into 16 equal contiguous parts, one per OpenMP worker; each part walks
+// blocks of 32768 slots (32 KiB, L1-resident) so the marking never streams
+// through memory.  Per prime the next odd multiple is carried across blocks in
+// a per-part table, so the inner loop is a bare store + add and there is no
+// division in the block loop.
+// The answer is the number of unmarked slots: slot 0 is n=1 (not prime) and
+// the only even prime, 2, is not represented, so the two errors cancel.
+fn main() {
+    let limit = 100000000;
+    let nparts = 16;
+    let ktot = limit / 2;          // odd values 2k+1 below limit
+    let kpart = ktot / nparts;     // exact: 50,000,000 / 16
+    let bsize = 131072;            // slots per block
+
+    // primes up to 10000 from a small odd-only sieve
+    var small: [u8] = [0; 10001];
+    var primes: [i32] = [0; 1300];
+    var np = 0;
+    var i = 3;
+    while i * i < limit {
+        if small[i] == 0 {
+            primes[np] = i;
+            np = np + 1;
+            var j = i * i;
+            while j <= 10000 {
+                small[j] = 1;
+                j = j + 2 * i;
+            }
+        }
+        i = i + 2;
+    }
+
+    var bufs: [u8] = [0; nparts * bsize];
+    var nxts: [i32] = [0; nparts * 1300];
+    var sums: [i64] = [0; nparts];
+
+    par for t in 0..nparts {
+        var base = t * bsize;
+        var k0 = t * kpart;
+        var kend = k0 + kpart;
+        var nlo = 2 * k0 + 1;
+
+        // first odd multiple of each prime at or after nlo (and >= p*p)
+        var pi = 0;
+        while pi < np {
+            var p = primes[pi];
+            var m = p * p;
+            if m < nlo {
+                var step = 2 * p;
+                var q = (nlo - m + step - 1) / step;
+                m = m + q * step;
+            }
+            nxts[t * 1300 + pi] = m;
+            pi = pi + 1;
+        }
+
+        var cnt: i64 = 0;
+        var kk = k0;
+        while kk < kend {
+            var ns = kend - kk;
+            if ns > bsize {
+                ns = bsize;
+            }
+            var n0 = 2 * kk + 1;
+            var n1 = 2 * (kk + ns) + 1;
+            var z = 0;
+            while z < ns {
+                bufs[base + z] = 0;
+                z = z + 1;
+            }
+            pi = 0;
+            while pi < np {
+                var m = nxts[t * 1300 + pi];
+                if m < n1 {
+                    var idx = (m - n0) / 2;
+                    var step = primes[pi];
+                    var step2 = 2 * step;
+                    while idx + step < ns {
+                        bufs[base + idx] = 1;
+                        bufs[base + idx + step] = 1;
+                        idx = idx + step2;
+                    }
+                    if idx < ns {
+                        bufs[base + idx] = 1;
+                        idx = idx + step;
+                    }
+                    nxts[t * 1300 + pi] = n0 + 2 * idx;
+                }
+                pi = pi + 1;
+            }
+            var x = 0;
+            var c = 0;
+            while x < ns {
+                c = c + (bufs[base + x] as i32);
+                x = x + 1;
+            }
+            cnt = cnt + (ns as i64) - (c as i64);
+            kk = kk + bsize;
+        }
+        sums[t] = cnt;
+    }
+
+    var total: i64 = 0;
+    var u = 0;
+    while u < nparts {
+        total = total + sums[u];
+        u = u + 1;
+    }
+    print(total);
+}

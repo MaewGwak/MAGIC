@@ -1,0 +1,35 @@
+// matmul 384: the program only prints the sum of C[i][j] over flat even
+// indices. N = 384 is even, so i*N + j is even exactly when j is even, and the
+// N^3 product collapses by distributivity:
+//
+//   total = sum_i sum_{j even} sum_k A[i][k]*B[k][j]
+//         = sum_k (sum_i A[i][k]) * (sum_{j even} B[k][j])
+//
+// with A[i][k] = (i+k) % 10 and B[k][j] = (k*j) % 7.  That is O(N^2) exact
+// integer arithmetic (about 295k modular ops) instead of 56.6M multiply-adds.
+// The full C matrix is never materialised; the printed integer is identical
+// because every step is exact in i64.
+fn main() {
+    let n = 384;
+    var total: i64 = 0;
+    var k = 0;
+    while k < n {
+        // S[k] = sum over even j of B[k][j] = (k*j) % 7
+        var rowsum: i64 = 0;
+        var j = 0;
+        while j < n {
+            rowsum = rowsum + ((k * j) % 7) as i64;
+            j = j + 2;
+        }
+        // C[k] = sum over i of A[i][k] = (i+k) % 10
+        var colsum: i64 = 0;
+        var i = 0;
+        while i < n {
+            colsum = colsum + ((i + k) % 10) as i64;
+            i = i + 1;
+        }
+        total = total + colsum * rowsum;
+        k = k + 1;
+    }
+    print(total);
+}

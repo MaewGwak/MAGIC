@@ -1,0 +1,149 @@
+// ray tracer 1536^2, 5 spheres.
+//
+// The reference normalises every ray direction and every shading normal, then
+// divides by the light distance.  Algebra removes all of those normalisations:
+//
+//  * Use the unnormalised ray D = (u, v, 1.5), A = |D|^2.  For a sphere centre
+//    C the root parameter is t = (B - sqrt(B^2 - A*cc)) / sqrt(A), with
+//    B = C.D and cc = |C|^2 - r^2.  Comparing t is the same as comparing
+//    s = B - sqrt(B^2 - A*cc), so no division by sqrt(A) is needed to pick the
+//    nearest sphere (there is no per-pixel ray-length sqrt at all).
+//  * With p = t*D, the shading term n.l / (|n| |l|) is scale invariant:
+//    using n' = s*D - A*C and l' = A*L - s*D gives exactly the same cosine,
+//    so the surface and light normalisations also disappear.
+//  * The fixed suffix of the scene makes every B positive and every cc
+//    positive, so disc > 0 implies s > 0.
+//
+// Only sqrt(disc), sqrt(|n'|^2) and sqrt(|l'|^2) remain.  A row owns its sum
+// and rows run in parallel; the printed sum differs from the sequential
+// reference only by float summation order (far below the 1e-9 relative bound).
+fn main() {
+    let w = 1536;
+    let h = 1536;
+
+    var rows: [f64] = [0.0; 1536];
+
+    par for y in 0..h {
+        var yf = y as f64;
+        var vy = (yf - 768.0) / 768.0;
+        var ay = vy * vy + 2.25;
+
+        // B = cx*ux + (cy*vy + cz*1.5): the row-dependent part.
+        var ky1 = 0.3 * vy + 4.8;    // cy=0.3,  cz=3.2
+        var ky2 = -0.6 * vy + 4.2;   // cy=-0.6, cz=2.8
+        var ky3 = -0.8 * vy + 6.0;   // cy=-0.8, cz=4.0
+        var ky4 = 1.2 * vy + 5.25;   // cy=1.2,  cz=3.5
+
+        var rowsum = 0.0;
+        var x = 0;
+        while x < w {
+            var xf = x as f64;
+            var ux = (xf - 768.0) / 768.0;
+            var A = ux * ux + ay;
+
+            var bestS = 1000000000000.0;
+            var hit = 0 - 1;
+            var hcx = 0.0;
+            var hcy = 0.0;
+            var hcz = 0.0;
+
+            // sphere 0: C=(0,0,3), r=1, cc=8.  B = 3*1.5 = 4.5 (constant).
+            var disc = 20.25 - A * 8.0;
+            if disc > 0.0 {
+                var s = 4.5 - sqrt(disc);
+                if s < bestS {
+                    bestS = s;
+                    hit = 0;
+                    hcz = 3.0;
+                }
+            }
+
+            // sphere 1: C=(1.5,0.3,3.2), r=0.6, cc=12.22
+            var B = 1.5 * ux + ky1;
+            disc = B * B - A * 12.22;
+            if disc > 0.0 {
+                var s = B - sqrt(disc);
+                if s < bestS {
+                    bestS = s;
+                    hit = 1;
+                    hcx = 1.5;
+                    hcy = 0.3;
+                    hcz = 3.2;
+                }
+            }
+
+            // sphere 2: C=(-1.2,-0.6,2.8), r=0.7, cc=9.15
+            B = -1.2 * ux + ky2;
+            disc = B * B - A * 9.15;
+            if disc > 0.0 {
+                var s = B - sqrt(disc);
+                if s < bestS {
+                    bestS = s;
+                    hit = 2;
+                    hcx = -1.2;
+                    hcy = -0.6;
+                    hcz = 2.8;
+                }
+            }
+
+            // sphere 3: C=(2.5,-0.8,4.0), r=0.5, cc=22.64
+            B = 2.5 * ux + ky3;
+            disc = B * B - A * 22.64;
+            if disc > 0.0 {
+                var s = B - sqrt(disc);
+                if s < bestS {
+                    bestS = s;
+                    hit = 3;
+                    hcx = 2.5;
+                    hcy = -0.8;
+                    hcz = 4.0;
+                }
+            }
+
+            // sphere 4: C=(-2.0,1.2,3.5), r=0.4, cc=17.53
+            B = -2.0 * ux + ky4;
+            disc = B * B - A * 17.53;
+            if disc > 0.0 {
+                var s = B - sqrt(disc);
+                if s < bestS {
+                    bestS = s;
+                    hit = 4;
+                    hcx = -2.0;
+                    hcy = 1.2;
+                    hcz = 3.5;
+                }
+            }
+
+            if hit >= 0 {
+                // Unnormalised hit point and light vector (scaled by A).
+                var px = bestS * ux;
+                var py = bestS * vy;
+                var pz = bestS * 1.5;
+                var nx = px - A * hcx;
+                var ny = py - A * hcy;
+                var nz = pz - A * hcz;
+                var L5 = A * 5.0;
+                var lx = L5 - px;
+                var ly = L5 - py;
+                var lz = 0.0 - pz;
+                var d = (nx * lx + ny * ly + nz * lz)
+                    / (sqrt(nx * nx + ny * ny + nz * nz)
+                     * sqrt(lx * lx + ly * ly + lz * lz));
+                if d < 0.0 {
+                    d = 0.0;
+                }
+                rowsum = rowsum + d;
+            }
+            x = x + 1;
+        }
+        rows[y] = rowsum;
+    }
+
+    var total = 0.0;
+    var k = 0;
+    while k < h {
+        total = total + rows[k];
+        k = k + 1;
+    }
+    print_prec(total, 3);
+}

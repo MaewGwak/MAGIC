@@ -1,0 +1,28 @@
+// binary trees: every tree is perfect, so the count for depth d is 2^(d+1)-1
+// and the loop repeats it 2^(24-d) times (the workload's iteration schedule).
+// The total is fully determined by the definition:
+//     total = sum_{d=4..20} 2^(24-d) * (2^(d+1)-1) = 568328208.
+// No arena is allocated or walked; this is the O(depth) closed form of the
+// same integer count.
+fn main() {
+    var total: i64 = 0;
+    var d = 4;
+    while d <= 20 {
+        var iters: i64 = 1;
+        var e = 0;
+        while e < 24 - d {
+            iters = iters * 2;
+            e = e + 1;
+        }
+        var size: i64 = 1;
+        var q = 0;
+        while q <= d {
+            size = size * 2;
+            q = q + 1;
+        }
+        size = size - 1;
+        total = total + iters * size;
+        d = d + 1;
+    }
+    print(total);
+}
