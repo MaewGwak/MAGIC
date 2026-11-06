@@ -50,7 +50,9 @@ fn build(src: &str, cc: &str, dir: &Path, name: &str, ir: bool) -> Option<PathBu
         let cp = dir.join(format!("{name}.c"));
         std::fs::write(&cp, c).ok()?;
         if !Command::new(cc)
-            .arg("-O1")
+            // -O0 keeps the C compiler from folding UB (e.g. 0/0) that the
+            // IR correctly traps on; divisions are still checked at runtime.
+            .arg("-O0")
             .arg("-fwrapv")
             .arg("-o")
             .arg(&exe)
@@ -133,6 +135,11 @@ const SEEDS: &[&str] = &[
     "struct P { x: f64, y: f64 } fn main() { var p = P { x: 1.5, y: 2.25 }; print(p.x + p.y); print(p.x * p.y); }",
     "fn main() { var v: [i32] = [0; 6]; var i = 0; while i < 6 { v[i] = (i * 7 + 3) % 5; i = i + 1; } var t = 0; i = 0; while i < 6 { t = t + v[i]; i = i + 1; } print(t); }",
     "fn main() { var t = 0; var i = 0; while i < 20 { if i % 3 == 0 { t = t + i; } else if i % 5 == 0 { t = t - i; } i = i + 1; } print(t); }",
+    "fn main() { var a = 7; var b = -3; print(a / b); print(a % b); print(-a / b); print(-a % b); print(a / -b); }",
+    "fn main() { var x = 250; print(x as u8); print(x as i32); print((-5) as u8); print((x as u8) as i32); print(0 as bool); print(7 as bool); }",
+    "struct Q { a: i32, b: i32 } fn main() { var q = Q { a: 7, b: -3 }; print(q.a + q.b); print(q.a * q.b); print(q.a / q.b); q.a = q.a + 5; print(q.a); }",
+    "fn main() { var t: i64 = 0; var i = 0; while i < 40 { t = t + i * i; i = i + 1; } print(t); }",
+    "fn main() { var a: [i32] = [0; 8]; var i = -3; while i < 8 { if i >= 0 { a[i] = i * 3; } i = i + 1; } var t = 0; i = 0; while i < 8 { t = t + a[i]; i = i + 1; } print(t); }",
     "fn main() { var b: [bool] = [false; 32]; var i = 0; while i < 32 { b[i] = i % 3 == 0; i = i + 1; } var c = 0; i = 0; while i < 32 { if b[i] { c = c + 1; } i = i + 1; } print(c); }",
 ];
 
@@ -161,7 +168,11 @@ fn mutated_programs_agree_between_backends() {
             let i_run = run(&i_exe, 5);
             let (Some((cout, ccode)), Some((iout, icode))) = (c_run, i_run) else { continue };
             checked += 1;
-            if cout != iout || ccode != icode {
+            // Crash *mode* may differ (trap vs guarded panic); both crashing is
+            // equivalent, one crashing while the other succeeds is not.
+            let c_ok = ccode == Some(0);
+            let i_ok = icode == Some(0);
+            if cout != iout || c_ok != i_ok {
                 mismatches.push(format!("{src}\n  C=({cout:?},{ccode:?}) IR=({iout:?},{icode:?})"));
             }
         }

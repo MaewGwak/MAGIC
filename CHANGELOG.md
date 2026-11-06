@@ -30,6 +30,20 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.59 — expanded differential fuzz corpus (2026-11-06)
+
+The mutation fuzzer now also exercises signed division/remainder in all sign combinations, `u8`/
+`i32`/`bool` casts, integer struct fields, 64-bit accumulators and negative loop starts with bounds
+checks. Two test-harness fixes were needed to keep the differential comparison meaningful:
+
+* crash *mode* is normalised (a trap and a guarded panic both count as failure; one crashing while the
+  other succeeds is still a mismatch), and
+* the C side is compiled at `-O0 -fwrapv`, because at `-O1` GCC folded the undefined `0 / 0` case to
+  `0` while the IR correctly traps -- the mismatch was in the C compiler's UB exploitation, not in
+  MAGIC.
+
+With those changes the expanded corpus passes, including mutated division-by-zero cases.
+
 ## v0.8.58 — range-analysis deepening reverted (2026-11-06)
 
 Extending the interval pass (array element ranges, accumulator bounds, constant-aware loop bounds,
