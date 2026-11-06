@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.62 — `net_*` TCP builtins and `flush` in the IR backend (2026-11-06)
+
+The IR lowering now maps `net_listen`, `net_port`, `net_accept`, `net_connect`, `net_read`,
+`net_write`, `net_close` and `flush` to new runtime helpers that mirror the native backend's inline
+socket sequences (socket/bind/listen/accept/connect/getsockname/read/write/close, byte-swapped
+`sockaddr_in`). A new end-to-end test builds both a server and a client with `--backend ir`, runs the
+loopback roundtrip (`connect` → `write` → `read` → `write`) and checks the echoed byte and counts.
+Unknown `net_*` names still fail compilation instead of silently falling back. 163 tests; all gates
+green.
+
 ## v0.8.61 — constant array lengths as bounds immediates (2026-11-06)
 
 Constant propagation already proves many array lengths; a new pass rewrites those `LenRef::Var`

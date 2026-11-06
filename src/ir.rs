@@ -675,6 +675,14 @@ impl Builder {
                     "str_byte" => Some(".Lmf_str_byte"),
                     "str_byte_n" => Some(".Lmf_str_byte_n"),
                     "str_len" => Some(".Lmf_str_len"),
+                    "flush" => Some(".Lmf_flush"),
+                    "net_listen" => Some(".Lnet_listen"),
+                    "net_port" => Some(".Lnet_port"),
+                    "net_accept" => Some(".Lnet_accept"),
+                    "net_connect" => Some(".Lnet_connect"),
+                    "net_read" => Some(".Lnet_read"),
+                    "net_write" => Some(".Lnet_write"),
+                    "net_close" => Some(".Lnet_close"),
                     "file_pread_at" | "file_pread" => {
                         if args.len() != 5 {
                             return Err(format!(
@@ -689,7 +697,9 @@ impl Builder {
                     _ => None,
                 };
                 if builtin.is_none()
-                    && (name.starts_with("file_") || name == "env")
+                    && (name.starts_with("file_")
+                        || name.starts_with("net_")
+                        || name == "env")
                 {
                     return Err(format!(
                         "line {}: IR: builtin `{}` is not supported yet",
@@ -4791,6 +4801,36 @@ pub fn emit(prog: &IrProgram) -> String {
         out.push_str(&format!("    call {}@PLT\n", lib));
         out.push_str("    add $8, %rsp\n    pop %r12\n    pop %rbx\n    ret\n");
     }
+    // Network helpers mirroring the native backend's inline sequences.
+    out.push_str(".p2align 4\n.Lmf_flush:\n    xor %edi, %edi\n    jmp fflush@PLT\n");
+    out.push_str(".p2align 4\n.Lnet_read:\n    jmp read@PLT\n");
+    out.push_str(".p2align 4\n.Lnet_write:\n    jmp write@PLT\n");
+    out.push_str(".p2align 4\n.Lnet_close:\n    jmp close@PLT\n");
+    out.push_str(".p2align 4\n.Lnet_accept:\n    xor %esi, %esi\n    xor %edx, %edx\n    jmp accept@PLT\n");
+    out.push_str(".p2align 4\n.Lnet_port:\n    push %rbx\n    sub $32, %rsp\n");
+    out.push_str("    mov %edi, %ebx\n    movl $16, 24(%rsp)\n");
+    out.push_str("    mov %ebx, %edi\n    lea (%rsp), %rsi\n    lea 24(%rsp), %rdx\n    call getsockname@PLT\n");
+    out.push_str("    movzwl 2(%rsp), %eax\n    rol $8, %ax\n    movzwl %ax, %eax\n");
+    out.push_str("    add $32, %rsp\n    pop %rbx\n    ret\n");
+    out.push_str(".p2align 4\n.Lnet_listen:\n    push %rbx\n    push %r12\n    sub $8, %rsp\n");
+    out.push_str("    mov %edi, %r12d\n    mov $2, %edi\n    mov $1, %esi\n    xor %edx, %edx\n    call socket@PLT\n");
+    out.push_str("    test %eax, %eax\n    js 2f\n    mov %eax, %ebx\n    sub $16, %rsp\n");
+    out.push_str("    movw $2, (%rsp)\n    mov %r12d, %eax\n    rol $8, %ax\n    movw %ax, 2(%rsp)\n");
+    out.push_str("    movl $0, 4(%rsp)\n    movq $0, 8(%rsp)\n");
+    out.push_str("    mov %ebx, %edi\n    mov %rsp, %rsi\n    mov $16, %edx\n    call bind@PLT\n");
+    out.push_str("    test %eax, %eax\n    js 3f\n    mov %ebx, %edi\n    mov $16, %esi\n    call listen@PLT\n");
+    out.push_str("    test %eax, %eax\n    js 3f\n    mov %ebx, %eax\n    add $16, %rsp\n");
+    out.push_str("1:\n    add $8, %rsp\n    pop %r12\n    pop %rbx\n    ret\n");
+    out.push_str("3:\n    mov %ebx, %edi\n    call close@PLT\n    mov $-1, %eax\n    add $16, %rsp\n    jmp 1b\n");
+    out.push_str("2:\n    mov $-1, %eax\n    jmp 1b\n");
+    out.push_str(".p2align 4\n.Lnet_connect:\n    push %rbx\n    push %r12\n    push %r13\n    sub $16, %rsp\n");
+    out.push_str("    mov %esi, %r12d\n    call inet_addr@PLT\n    mov %eax, 4(%rsp)\n");
+    out.push_str("    movw $2, (%rsp)\n    mov %r12d, %eax\n    rol $8, %ax\n    movw %ax, 2(%rsp)\n");
+    out.push_str("    movq $0, 8(%rsp)\n    mov $2, %edi\n    mov $1, %esi\n    xor %edx, %edx\n    call socket@PLT\n");
+    out.push_str("    test %eax, %eax\n    js 2f\n    mov %eax, %ebx\n    mov %ebx, %edi\n    mov %rsp, %rsi\n");
+    out.push_str("    mov $16, %edx\n    call connect@PLT\n    test %eax, %eax\n    js 3f\n");
+    out.push_str("    mov %ebx, %eax\n1:\n    add $16, %rsp\n    pop %r13\n    pop %r12\n    pop %rbx\n    ret\n");
+    out.push_str("3:\n    mov %ebx, %edi\n    call close@PLT\n2:\n    mov $-1, %eax\n    jmp 1b\n");
     // String helpers with the native backend's NULL-safe semantics.
     out.push_str(".p2align 4\n.Lmf_str_len:\n    test %rdi, %rdi\n    je 2f\n");
     out.push_str("    jmp strlen@PLT\n2:\n    xor %eax, %eax\n    ret\n");

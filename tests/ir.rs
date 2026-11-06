@@ -122,3 +122,83 @@ fn ir_matches_c_on_small_integer_programs() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(fails.is_empty(), "IR/C mismatch:\n{}", fails.join("\n"));
 }
+
+#[test]
+fn ir_tcp_roundtrip_and_connect() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpStream;
+    if !(cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) {
+        return;
+    }
+    if !Command::new("as").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        return;
+    }
+    let Some(cc_cmd) = cc() else { return };
+    let dir = std::env::temp_dir().join(format!("magic_ir_tcp_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let build = |src: &str, name: &str| -> Option<std::path::PathBuf> {
+        let asm = magic::compile_to_asm_ir(src).ok()?;
+        let sp = dir.join(format!("{name}.s"));
+        std::fs::write(&sp, asm).ok()?;
+        let op = dir.join(format!("{name}.o"));
+        if !Command::new("as").arg("--64").arg("-o").arg(&op).arg(&sp).status().ok()?.success() {
+            return None;
+        }
+        let exe = dir.join(name);
+        if !Command::new(&cc_cmd).arg(&op).arg("-o").arg(&exe).status().ok()?.success() {
+            return None;
+        }
+        Some(exe)
+    };
+    let server_src = r#"
+fn main() {
+    var lfd = net_listen(0);
+    print(net_port(lfd));
+    flush();
+    var cfd = net_accept(lfd);
+    var buf: [u8] = [0; 16];
+    var n = net_read(cfd, buf, 4);
+    print(n);
+    var out: [u8] = [0; 4];
+    out[0] = 112; out[1] = 111; out[2] = 110; out[3] = 103;
+    net_write(cfd, out, 4);
+    net_close(cfd);
+    net_close(lfd);
+}
+"#;
+    let Some(server) = build(server_src, "server") else { return };
+    let mut child = Command::new(&server)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn server");
+    let mut reader = BufReader::new(child.stdout.take().expect("stdout"));
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read port");
+    let port: u16 = line.trim().parse().expect("port number");
+    let client_src = format!(
+        r#"
+fn main() {{
+    var fd = net_connect("127.0.0.1", {port});
+    if fd < 0 {{ print(-1); return; }}
+    var out: [u8] = [0; 4];
+    out[0] = 112; out[1] = 105; out[2] = 110; out[3] = 103;
+    net_write(fd, out, 4);
+    var buf: [u8] = [0; 4];
+    var n = net_read(fd, buf, 4);
+    print(n);
+    print(buf[0]);
+    net_close(fd);
+}}
+"#
+    );
+    let Some(client) = build(&client_src, "client") else { return };
+    let out = Command::new(&client).output().expect("run client");
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(text.starts_with("4\n112"), "client output: {text:?}");
+    let mut reply = String::new();
+    reader.read_line(&mut reply).expect("server n");
+    assert_eq!(reply.trim(), "4");
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+}

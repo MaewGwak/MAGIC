@@ -218,8 +218,9 @@ register path, taking btree to 158 ms and hashmap to 96 ms.
 | bufpool | 194 ms | 178 ms | 130 ms |
 
 IR wins all compute-heavy programs and AST wins the database programs narrowly. AST stays the
-default backend; IR remains opt-in until `net_*`, struct/vec parameters and arena blocks are covered
-and the 4–6x compute gap to C is reduced (xmm allocation, unrolling, SIMD). v0.8.32 adds a small
+default backend; IR remains opt-in until struct/vector parameters are covered and the 3–6x compute
+gap to C is reduced (width-aware 32-bit arithmetic, SLP/SIMD, parallel `par for`). Arena blocks and
+the `net_*` TCP builtins now work in the IR as well. v0.8.32 adds a small
 assembly peephole (self-moves, `test` instead of `cmp $0`); a jump-to-next-block reduction was tried
 and rejected because it helped nbody but cost matmul and sieve more. v0.8.33 adds a second register
 file: f64 values live in `%xmm2`–`%xmm15` with `movsd` spills, taking nbody to 2.63 s, vecpart to
