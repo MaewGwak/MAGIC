@@ -30,6 +30,12 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.99 — eight-wide saxpy (2026-11-06)
+
+The SSE2 saxpy loop processes two four-lane groups per iteration, halving the loop-control overhead;
+the scalar tail is unchanged. Matmul i-k-j measures 9–11 ms (C 12 ms), checksums and the tail/negative
+cases stay exact. All gates pass, 168 tests, parity 60/60.
+
 ## v0.8.98 — restore saxpy after the mutable-init fix (2026-11-06)
 
 The v0.8.97 mutable-initialiser fix also skipped recording `j=0` for mutable loop variables, which

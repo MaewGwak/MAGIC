@@ -6890,13 +6890,17 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&format!("    movslq -{}(%rbp), %rax\n", voff(f, *av)));
                         out.push_str("    movd %eax, %xmm0\n    pshufd $0, %xmm0, %xmm0\n");
                         out.push_str("    xor %edx, %edx\n");
-                        out.push_str("1:\n    lea 4(%rdx), %rax\n    cmp %rcx, %rax\n    ja 2f\n");
-                        out.push_str("    movdqu (%r8,%rdx,4), %xmm1\n    movdqu (%r9,%rdx,4), %xmm2\n");
-                        out.push_str("    movdqa %xmm2, %xmm3\n    psrlq $32, %xmm3\n");
-                        out.push_str("    pmuludq %xmm0, %xmm2\n    pmuludq %xmm0, %xmm3\n");
-                        out.push_str("    pshufd $8, %xmm2, %xmm2\n    pshufd $8, %xmm3, %xmm3\n");
-                        out.push_str("    punpckldq %xmm3, %xmm2\n    paddd %xmm2, %xmm1\n");
-                        out.push_str("    movdqu %xmm1, (%r8,%rdx,4)\n    add $4, %rdx\n    jmp 1b\n");
+                        let group = |off: &str| format!(
+                            "    movdqu {}(%r8,%rdx,4), %xmm1\n    movdqu {}(%r9,%rdx,4), %xmm2\n    movdqa %xmm2, %xmm3\n    psrlq $32, %xmm3\n    pmuludq %xmm0, %xmm2\n    pmuludq %xmm0, %xmm3\n    pshufd $8, %xmm2, %xmm2\n    pshufd $8, %xmm3, %xmm3\n    punpckldq %xmm3, %xmm2\n    paddd %xmm2, %xmm1\n    movdqu %xmm1, {}(%r8,%rdx,4)\n",
+                            off, off, off
+                        );
+                        out.push_str("1:\n    lea 8(%rdx), %rax\n    cmp %rcx, %rax\n    ja 4f\n");
+                        out.push_str(&group("0"));
+                        out.push_str(&group("16"));
+                        out.push_str("    add $8, %rdx\n    jmp 1b\n");
+                        out.push_str("4:\n    lea 4(%rdx), %rax\n    cmp %rcx, %rax\n    ja 2f\n");
+                        out.push_str(&group("0"));
+                        out.push_str("    add $4, %rdx\n    jmp 4b\n");
                         out.push_str("2:\n    movd %xmm0, %esi\n    cmp %rcx, %rdx\n    jae 8f\n");
                         out.push_str("3:\n    movslq (%r9,%rdx,4), %rax\n    imul %esi, %eax\n");
                         out.push_str("    add %eax, (%r8,%rdx,4)\n    inc %rdx\n    cmp %rcx, %rdx\n    jb 3b\n");
