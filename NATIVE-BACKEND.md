@@ -161,7 +161,26 @@ benchmarks and the database components) with both backends, runs them from the r
 requires identical stdout and exit status, with per-program timeouts. It is the gate every native
 optimisation must pass; a mismatch fails the test with the program names. Current runtime: ~25 s.
 
-## Register-allocation experiments (v0.8.8 → v0.8.9)
+## IR vs AST vs C (v0.8.31 medians)
+
+| Program | IR | AST native | C |
+|---|---:|---:|---:|
+| matmul | 153 ms | 223 ms | 31 ms |
+| particles | 850 ms | 1015 ms | 155 ms |
+| vecpart | 246 ms | 287 ms | 34 ms |
+| raytrace | 410 ms | 468 ms | 87 ms |
+| nbody | 3234 ms | 4115 ms | 736 ms |
+| sieve | 84 ms | 95 ms | 42 ms |
+| btree | 181 ms | 167 ms | 102 ms |
+| hashmap | 106 ms | 89 ms | 40 ms |
+| sqlscan | 46 ms | 43 ms | 11 ms |
+| bufpool | 186 ms | 177 ms | 127 ms |
+
+IR wins all compute-heavy programs and AST wins the database programs narrowly. AST stays the
+default backend; IR remains opt-in until `net_*`, struct/vec parameters and arena blocks are covered
+and the 4–6x compute gap to C is reduced (xmm allocation, unrolling, SIMD).
+
+## Register-allocation experiments## Register-allocation experiments (v0.8.8 → v0.8.9)
 
 Two ad-hoc register experiments were attempted on the AST emitter and **both were reverted**; the
 lesson is that register allocation needs a typed IR and differential tests, not string-level patches.

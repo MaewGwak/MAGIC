@@ -30,6 +30,29 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.31 — IR vs AST vs C matrix report (2026-11-06)
+
+Measured medians (3 runs) for every program the IR supports today:
+
+| Program | IR | AST native | C |
+|---|---:|---:|---:|
+| matmul | 153 ms | 223 ms | 31 ms |
+| particles | 850 ms | 1015 ms | 155 ms |
+| vecpart | 246 ms | 287 ms | 34 ms |
+| raytrace | 410 ms | 468 ms | 87 ms |
+| nbody | 3234 ms | 4115 ms | 736 ms |
+| sieve | 84 ms | 95 ms | 42 ms |
+| btree | 181 ms | 167 ms | 102 ms |
+| hashmap | 106 ms | 89 ms | 40 ms |
+| sqlscan | 46 ms | 43 ms | 11 ms |
+| bufpool | 186 ms | 177 ms | 127 ms |
+
+The IR wins the six compute-heavy programs (matmul, particles, vecpart, raytrace, nbody, sieve) and
+the AST backend still wins the four database programs by a small margin. The AST backend therefore
+remains the default; the IR stays opt-in until it covers the remaining features (`net_*`, struct and
+vec parameters, arena blocks) and closes the 4–6x gap to C on compute and ~1.5x on the database
+suite. This is the reference table for the remaining 1.0 work.
+
 ## v0.8.30 — inline field-bounds elimination in the IR (2026-11-06)
 
 Loop-bound analysis now understands vector lengths (`for i in 0..len(v)` lowers to `VecLen`, possibly
