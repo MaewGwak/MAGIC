@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.32 — IR assembly peephole (2026-11-06)
+
+The IR emitter now removes self-moves (`mov %rX, %rX`) and rewrites `cmp $0, %rX` as
+`test %rX, %rX` after emission. Dropping a `jmp` whose target is the immediately following block was
+also measured: it helped nbody (~3.16 s vs 3.24 s) but cost matmul (160 vs 151 ms) and sieve
+(89 vs 83 ms), so it is deliberately not enabled. The retained cleanups keep matmul at ~151 ms and
+sieve at ~83 ms, with the other benchmarks unchanged.
+
 ## v0.8.31 — IR vs AST vs C matrix report (2026-11-06)
 
 Measured medians (3 runs) for every program the IR supports today:

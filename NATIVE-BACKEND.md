@@ -178,7 +178,9 @@ optimisation must pass; a mismatch fails the test with the program names. Curren
 
 IR wins all compute-heavy programs and AST wins the database programs narrowly. AST stays the
 default backend; IR remains opt-in until `net_*`, struct/vec parameters and arena blocks are covered
-and the 4–6x compute gap to C is reduced (xmm allocation, unrolling, SIMD).
+and the 4–6x compute gap to C is reduced (xmm allocation, unrolling, SIMD). v0.8.32 adds a small
+assembly peephole (self-moves, `test` instead of `cmp $0`); a jump-to-next-block reduction was tried
+and rejected because it helped nbody but cost matmul and sieve more.
 
 ## Register-allocation experiments## Register-allocation experiments (v0.8.8 → v0.8.9)
 

@@ -88,6 +88,8 @@ pub struct Block {
 #[derive(Clone, Debug)]
 pub struct IrFunc {
     pub name: String,
+    pub vty: Vec<Ty>,
+    pub var_ty: Vec<Ty>,
     pub argc_var: Option<usize>,
     pub argv_var: Option<usize>,
     pub extra_frame: usize,
@@ -1048,6 +1050,16 @@ impl Builder {
     fn finish(&mut self) -> IrFunc {
         IrFunc {
             name: String::new(),
+            vty: self.vty.clone(),
+            var_ty: {
+                let mut out = vec![Ty::I32; self.nvars];
+                for (name, var) in &self.vars {
+                    if let Some(ty) = self.var_ty.get(name) {
+                        out[*var] = *ty;
+                    }
+                }
+                out
+            },
             argc_var: None,
             argv_var: None,
             extra_frame: self.struct_bytes.max(0) as usize,
@@ -3357,7 +3369,41 @@ pub fn emit(prog: &IrProgram) -> String {
         }
     }
     out.push_str(".section .note.GNU-stack,\"\",@progbits\n");
-    out
+    peephole_asm(out)
+}
+
+/// Small assembly cleanups: remove self-moves and use `test` for comparisons
+/// against zero. (Dropping a `jmp` to the next label was tried too: it helped
+/// nbody slightly but cost matmul/sieve more, so it stays out.)
+fn peephole_asm(asm: String) -> String {
+    let lines: Vec<&str> = asm.lines().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    while i < lines.len() {
+        let line = lines[i];
+        // jmp to the next label (skipping alignment directives)
+        if line.starts_with("    mov %") {
+            if let Some((a, b)) = line.trim().strip_prefix("mov ").and_then(|rest| {
+                let mut parts = rest.split(", ");
+                Some((parts.next()?, parts.next()?))
+            }) {
+                if a == b {
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        if let Some(rest) = line.trim().strip_prefix("cmp $0, ") {
+            out.push(format!("    test {}, {}", rest, rest));
+            i += 1;
+            continue;
+        }
+        out.push(line.to_string());
+        i += 1;
+    }
+    let mut result = out.join("\n");
+    result.push('\n');
+    result
 }
 
 fn asm_escape(text: &str) -> String {
