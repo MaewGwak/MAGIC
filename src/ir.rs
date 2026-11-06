@@ -165,6 +165,7 @@ struct Builder {
     nvalues: usize,
     vbool: Vec<bool>,
     vty: Vec<Ty>,
+    narrow: Vec<bool>,
     var_bool: HashMap<String, bool>,
     var_ty: HashMap<String, Ty>,
     sigs: HashMap<String, Ty>,
@@ -192,6 +193,7 @@ impl Builder {
             nvalues: 0,
             vbool: Vec::new(),
             vty: Vec::new(),
+            narrow: Vec::new(),
             var_bool: HashMap::new(),
             var_ty: HashMap::new(),
             sigs: HashMap::new(),
@@ -215,6 +217,7 @@ impl Builder {
         self.nvalues += 1;
         self.vbool.push(false);
         self.vty.push(Ty::I32);
+        self.narrow.push(false);
         v
     }
 
@@ -283,11 +286,9 @@ impl Builder {
             ExprKind::Int(v) => {
                 let dst = self.value();
                 self.push(Instr::Const { dst, v: *v });
-                self.vty[dst.0 as usize] = if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
-                    Ty::I32
-                } else {
-                    Ty::I64
-                };
+                let fits = *v >= i32::MIN as i64 && *v <= i32::MAX as i64;
+                self.vty[dst.0 as usize] = if fits { Ty::I32 } else { Ty::I64 };
+                self.narrow[dst.0 as usize] = fits;
                 Ok(dst)
             }
             ExprKind::Bool(b) => {
@@ -417,6 +418,7 @@ impl Builder {
                 ) {
                     self.vbool[dst.0 as usize] = true;
                     self.vty[dst.0 as usize] = Ty::Bool;
+                    self.narrow[dst.0 as usize] = true;
                     return Ok(dst);
                 }
                 let ta = self.vty[a.0 as usize];
@@ -428,6 +430,7 @@ impl Builder {
                 };
                 self.vty[dst.0 as usize] = rt;
                 if rt == Ty::I32 {
+                    self.narrow[dst.0 as usize] = false;
                     return self.truncate_value(dst, Ty::I32);
                 }
                 Ok(dst)
@@ -448,11 +451,13 @@ impl Builder {
                 if *op == UnOp::Not {
                     self.vbool[dst.0 as usize] = true;
                     self.vty[dst.0 as usize] = Ty::Bool;
+                    self.narrow[dst.0 as usize] = true;
                     return Ok(dst);
                 }
                 let ta = self.vty[a.0 as usize];
                 self.vty[dst.0 as usize] = ta;
                 if ta == Ty::I32 {
+                    self.narrow[dst.0 as usize] = false;
                     return self.truncate_value(dst, Ty::I32);
                 }
                 Ok(dst)
@@ -478,6 +483,7 @@ impl Builder {
                 let dst = self.value();
                 self.push(Instr::IndexLoad { dst, ptr_var, idx, elem });
                 self.vty[dst.0 as usize] = elem;
+                self.narrow[dst.0 as usize] = matches!(elem, Ty::I32 | Ty::U8 | Ty::Bool);
                 Ok(dst)
             }
             ExprKind::Field { base, field } => {
@@ -490,6 +496,7 @@ impl Builder {
                 let dst = self.value();
                 self.push(Instr::FieldLoad { dst, var_index, slots, off, ty });
                 self.vty[dst.0 as usize] = ty;
+                self.narrow[dst.0 as usize] = matches!(ty, Ty::I32 | Ty::U8 | Ty::Bool);
                 Ok(dst)
             }
             ExprKind::FieldPath { base, path } => {
@@ -502,6 +509,7 @@ impl Builder {
                 let dst = self.value();
                 self.push(Instr::FieldLoad { dst, var_index, slots, off, ty });
                 self.vty[dst.0 as usize] = ty;
+                self.narrow[dst.0 as usize] = matches!(ty, Ty::I32 | Ty::U8 | Ty::Bool);
                 Ok(dst)
             }
             ExprKind::IndexField { name, index, field } => {
@@ -553,6 +561,7 @@ impl Builder {
                     line: e.line,
                 });
                 self.vty[dst.0 as usize] = ty;
+                self.narrow[dst.0 as usize] = matches!(ty, Ty::I32 | Ty::U8 | Ty::Bool);
                 Ok(dst)
             }
             ExprKind::IndexFieldPath { name, index, path } => {
@@ -633,6 +642,7 @@ impl Builder {
                     LenRef::Const(n) => self.push(Instr::Const { dst, v: n }),
                     LenRef::Var(v) => self.push(Instr::LoadVar { dst, var: v }),
                 }
+                self.narrow[dst.0 as usize] = true;
                 Ok(dst)
             }
             ExprKind::Call { name, args } => {
@@ -773,17 +783,40 @@ impl Builder {
         }
     }
 
+    fn coerce_value(&mut self, v: Value, target: Ty) -> Result<Value, String> {
+        if target == Ty::F64 {
+            if self.vty[v.0 as usize] == Ty::F64 {
+                return Ok(v);
+            }
+            let dst = self.value();
+            self.push(Instr::I2F { dst, a: v });
+            self.vty[dst.0 as usize] = Ty::F64;
+            return Ok(dst);
+        }
+        if self.vty[v.0 as usize] == Ty::F64 {
+            let iv = self.value();
+            self.push(Instr::F2I { dst: iv, a: v });
+            self.vty[iv.0 as usize] = Ty::I64;
+            return self.truncate_value(iv, target);
+        }
+        match target {
+            Ty::I64 | Ty::Str | Ty::Struct(_) | Ty::Void => Ok(v),
+            _ => self.truncate_value(v, target),
+        }
+    }
+
     fn truncate_value(&mut self, v: Value, ty: Ty) -> Result<Value, String> {
         let from = self.vty[v.0 as usize];
         if from == Ty::F64 || ty == Ty::F64 || ty == Ty::I64 || ty == Ty::Str {
             return Ok(v);
         }
-        if from == ty {
+        if self.narrow[v.0 as usize] && from == ty {
             return Ok(v);
         }
         let dst = self.value();
         self.push(Instr::Trunc { dst, ty, a: v });
         self.vty[dst.0 as usize] = ty;
+        self.narrow[dst.0 as usize] = true;
         self.vbool[dst.0 as usize] = ty == Ty::Bool;
         Ok(dst)
     }
@@ -867,7 +900,7 @@ impl Builder {
                 self.push(Instr::Assert { cond: c, line: s.line });
                 return Ok(());
             }
-            StmtKind::Let { name, init, .. } => {
+            StmtKind::Let { name, ty: declared, init, .. } => {
                 if let ExprKind::StructLit { name: sname, fields } = &init.kind {
                     let id = self
                         .struct_defs
@@ -891,25 +924,24 @@ impl Builder {
                 }
                 let v = self.lower_expr(init)?;
                 let is_bool = self.vbool[v.0 as usize];
-                let ty = self.vty[v.0 as usize];
+                let ty = declared.unwrap_or(self.vty[v.0 as usize]);
                 let var = self.var(name);
-                let v = self.truncate_value(v, ty)?;
+                let v = self.coerce_value(v, ty)?;
                 self.push(Instr::StoreVar { var, src: v });
-                self.var_bool.insert(name.clone(), is_bool);
+                self.var_bool.insert(name.clone(), ty == Ty::Bool);
                 self.var_ty.insert(name.clone(), ty);
             }
             StmtKind::Assign { name, value } => {
                 let v = self.lower_expr(value)?;
-                let is_bool = self.vbool[v.0 as usize];
                 let var = *self
                     .vars
                     .get(name)
                     .ok_or_else(|| format!("line {}: IR: unknown variable `{}`", s.line, name))?;
-                let ty = self.vty[v.0 as usize];
-                let v = self.truncate_value(v, ty)?;
+                let target = self.var_ty.get(name).copied().unwrap_or(Ty::I64);
+                let v = self.coerce_value(v, target)?;
                 self.push(Instr::StoreVar { var, src: v });
-                self.var_bool.insert(name.clone(), is_bool);
-                self.var_ty.insert(name.clone(), ty);
+                self.var_bool.insert(name.clone(), target == Ty::Bool);
+                self.var_ty.insert(name.clone(), target);
             }
             StmtKind::ArrayLet { name, elem, value, count } => {
                 let lenv = self.lower_expr(count)?;

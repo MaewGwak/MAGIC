@@ -30,6 +30,19 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.53 — real i32 wrap semantics and differential fuzzing (2026-11-06)
+
+A differential fuzzer that mutates integer literals in valid programs (`tests/fuzz_diff.rs`) found
+two real semantic bugs: the IR only *claimed* to truncate `i32` arithmetic but `truncate_value`
+returned early when the value's type was already `i32`, so overflow never wrapped; and `let`/`
+assignment used the initialiser's inferred type instead of the declared type, turning `var total: i64
+= 0` into a 32-bit accumulator. Both are fixed with explicit narrow tracking and type coercion
+(wraps, widening, float casts). The fuzzer now agrees on all cases, including `INT_MIN / -1`,
+overflowing adds/multiplies and negative division. Honest cost: matmul 125 → 295 ms, btree 154 →
+169 ms, hashmap 96 → 103 ms; float benchmarks are unchanged. Recovering that cost needs width-aware
+32-bit code generation (emit `addl`/`imull` and keep values in 32 bits) instead of the current
+64-bit-plus-`movslq` scheme; that is the next codegen milestone.
+
 ## v0.8.52 — post-refactor matrix measurement (2026-11-06)
 
 Five-run medians after the per-block pool and division work:
