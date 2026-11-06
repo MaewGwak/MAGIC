@@ -206,16 +206,16 @@ register path, taking btree to 158 ms and hashmap to 96 ms.
 
 | Program | IR | AST native | C |
 |---|---:|---:|---:|
-| matmul | 125 ms | 221 ms | 31 ms |
-| particles | 545 ms | 1013 ms | 153 ms |
+| matmul | 198 ms | 221 ms | 31 ms |
+| particles | 540 ms | 1013 ms | 153 ms |
 | vecpart | 160 ms | 289 ms | 35 ms |
-| raytrace | 270 ms | 484 ms | 91 ms |
-| nbody | 2243 ms | 4207 ms | 738 ms |
-| sieve | 86 ms | 89 ms | 40 ms |
-| btree | 154 ms | 167 ms | 103 ms |
-| hashmap | 96 ms | 89 ms | 41 ms |
-| sqlscan | 35 ms | 32 ms | 10 ms |
-| bufpool | 178 ms | 178 ms | 130 ms |
+| raytrace | 269 ms | 484 ms | 91 ms |
+| nbody | 2127 ms | 4207 ms | 738 ms |
+| sieve | 95 ms | 89 ms | 40 ms |
+| btree | 172 ms | 167 ms | 103 ms |
+| hashmap | 101 ms | 89 ms | 41 ms |
+| sqlscan | 34 ms | 32 ms | 10 ms |
+| bufpool | 194 ms | 178 ms | 130 ms |
 
 IR wins all compute-heavy programs and AST wins the database programs narrowly. AST stays the
 default backend; IR remains opt-in until `net_*`, struct/vec parameters and arena blocks are covered

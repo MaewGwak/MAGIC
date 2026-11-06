@@ -30,6 +30,29 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.55 — post-correctness matrix and the cost of wrapping (2026-11-06)
+
+Five-run IR medians after the interval-analysis pass:
+
+| Program | IR (v0.8.55) | IR (v0.8.52) | AST | C |
+|---|---:|---:|---:|---:|
+| matmul | 198 ms | 125 ms | 221 ms | 31 ms |
+| particles | 540 ms | 545 ms | 1013 ms | 153 ms |
+| vecpart | 160 ms | 160 ms | 289 ms | 35 ms |
+| raytrace | 269 ms | 270 ms | 484 ms | 91 ms |
+| nbody | 2127 ms | 2243 ms | 4207 ms | 738 ms |
+| sieve | 95 ms | 86 ms | 89 ms | 40 ms |
+| btree | 172 ms | 154 ms | 167 ms | 103 ms |
+| hashmap | 101 ms | 96 ms | 89 ms | 41 ms |
+| sqlscan | 34 ms | 35 ms | 32 ms | 10 ms |
+| bufpool | 194 ms | 178 ms | 178 ms | 130 ms |
+
+The `i32` wrap fix costs 20–60% on integer-heavy programs because each arithmetic result is
+sign-extended; the interval pass already removes the address/index truncations. Recovering the
+remaining cost needs element-range analysis for arrays (matmul's `s = s + a*b`) and accumulator
+bounds over counted loops, tracked as the next codegen milestone. The mutation fuzzer is now part of
+the docs test count (162 tests).
+
 ## v0.8.54 — interval analysis removes redundant i32 truncations (2026-11-06)
 
 The wrap-correctness fix cost matmul 2.4x because every `i32` operation ended with a `movslq`. A new
