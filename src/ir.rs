@@ -113,6 +113,7 @@ pub struct IrFunc {
     pub nvars: usize,
     pub nvalues: usize,
     pub nparams: usize,
+    pub array_len_args: Vec<(usize, usize)>,
     pub blocks: Vec<Block>,
     pub narrow_index: std::collections::HashSet<Value>,
 }
@@ -2113,6 +2114,7 @@ impl Builder {
             nvars: self.nvars,
             nvalues: self.nvalues,
             nparams: 0,
+            array_len_args: Vec::new(),
             blocks: std::mem::take(&mut self.blocks),
             narrow_index: std::collections::HashSet::new(),
         }
@@ -2181,6 +2183,7 @@ fn lower_func(
     b.struct_defs = structs.to_vec();
     b.inlinable = inlinable.clone();
     let mut nparams = 0usize;
+    let mut array_len_args: Vec<(usize, usize)> = Vec::new();
     let mut struct_params: Vec<(String, u16, usize)> = Vec::new();
     let mut vec_params: Vec<(String, Ty, usize, usize, usize, u64)> = Vec::new();
     for (name, pty) in &f.params {
@@ -2203,6 +2206,7 @@ fn lower_func(
                 let lv = b.nvars;
                 b.nvars += 1;
                 b.arrays.insert(name.clone(), (*elem, LenRef::Var(lv)));
+                array_len_args.push((nparams + 1, lv));
                 let _ = pv;
                 nparams += 2;
             }
@@ -2282,6 +2286,7 @@ fn lower_func(
     let mut out = b.finish();
     out.name = f.name.clone();
     out.nparams = nparams;
+    out.array_len_args = array_len_args;
     out.argc_var = argc_var;
     out.argv_var = argv_var;
     Ok((out, extras))
@@ -5483,6 +5488,100 @@ fn try_aos_window(
 
 }
 
+/// When every call site passes the same constant length for an array
+/// parameter (recursive calls that pass the parameter through are allowed),
+/// replace loads of that length parameter with the constant. This lets the
+/// bounds prover see the real length even though the ABI still passes it.
+fn propagate_const_array_lens(prog: &mut IrProgram) {
+    let mut consts: HashMap<(usize, usize), i64> = HashMap::new();
+    for _ in 0..6 {
+        let mut maps: Vec<HashMap<Value, i64>> = Vec::new();
+        for f in &prog.funcs {
+            let mut vc: HashMap<usize, i64> = HashMap::new();
+            let mut vals: HashMap<Value, i64> = HashMap::new();
+            for _ in 0..6 {
+                vals = compute_value_consts(f, &vc);
+                let next = compute_var_consts(f, &vals);
+                if next == vc {
+                    break;
+                }
+                vc = next;
+            }
+            maps.push(vals);
+        }
+        let mut changed = false;
+        for (fi, f) in prog.funcs.iter().enumerate() {
+            for (arg_pos, var) in &f.array_len_args {
+                if consts.contains_key(&(fi, *var)) {
+                    continue;
+                }
+                let mut found: Option<i64> = None;
+                let mut ok = true;
+                let mut calls = 0usize;
+                for (ci, caller) in prog.funcs.iter().enumerate() {
+                    let caller_vals = &maps[ci];
+                    for b in &caller.blocks {
+                        for ins in &b.instrs {
+                            let Instr::Call { name, args, .. } = ins else { continue };
+                            if name != &f.name {
+                                continue;
+                            }
+                            let Some(a) = args.get(*arg_pos).copied() else {
+                                ok = false;
+                                continue;
+                            };
+                            calls += 1;
+                            if let Some(c) = caller_vals.get(&a) {
+                                match found {
+                                    None => found = Some(*c),
+                                    Some(prev) if prev == *c => {}
+                                    _ => ok = false,
+                                }
+                            } else if ci == fi {
+                                // recursive pass-through of one of our own
+                                // length parameters
+                                let is_own_len = matches!(
+                                    caller.blocks.iter().flat_map(|b| b.instrs.iter()).find(|i| dst_of(i) == Some(a)),
+                                    Some(Instr::LoadVar { var: lv, .. }) if lv == var
+                                );
+                                if !is_own_len {
+                                    ok = false;
+                                }
+                            } else {
+                                ok = false;
+                            }
+                        }
+                    }
+                }
+                if ok && calls > 0 {
+                    if let Some(c) = found {
+                        consts.insert((fi, *var), c);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    for ((fi, var), c) in consts.into_iter() {
+        let f = &mut prog.funcs[fi];
+        if f.blocks.iter().any(|b| b.instrs.iter().any(|i| matches!(i, Instr::StoreVar { var: v, .. } if *v == var))) {
+            continue;
+        }
+        for b in f.blocks.iter_mut() {
+            for ins in b.instrs.iter_mut() {
+                if let Instr::LoadVar { dst, var: v } = ins {
+                    if *v == var {
+                        *ins = Instr::Const { dst: *dst, v: c };
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn resolve_constant_lengths(prog: &mut IrProgram) {
     for f in &mut prog.funcs {
         let mut var_consts: HashMap<usize, i64> = HashMap::new();
@@ -5658,6 +5757,7 @@ fn narrow_index_chains(prog: &mut IrProgram) {
 }
 
 pub fn optimize(prog: &mut IrProgram) {
+    propagate_const_array_lens(prog);
     resolve_constant_lengths(prog);
     remove_redundant_bounds(prog);
     strength_reduce_pow2(prog);

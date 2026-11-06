@@ -387,6 +387,20 @@ fn main() {
 "#,
         ),
         (
+            "const_array_len_params",
+            r#"
+fn sum(a: [i32], n: i32) -> i32 {
+    if n <= 0 { return 0; }
+    return a[n - 1] + sum(a, n - 1);
+}
+fn main() {
+    var a: [i32] = [0; 8];
+    for i in 0..8 { a[i] = i + 1; }
+    print(sum(a, 8));
+}
+"#,
+        ),
+        (
             "aos_pair_simd",
             r#"
 struct P { x: f64, y: f64, vx: f64, vy: f64 }

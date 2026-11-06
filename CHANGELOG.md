@@ -30,6 +30,18 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.84 — interprocedural constant array lengths (2026-11-06)
+
+Function metadata now records which IR arguments are array-length parameters. When every call site
+passes the same constant length (recursive calls that pass the same length parameter through are
+allowed), the callee's length-parameter loads are replaced by that constant before the bounds prover
+runs. A recursive differential case covers the transformation. No benchmark moved measurably: binary
+trees stays ~4.5 s versus C 704 ms because its cost is dominated by the recursive call convention
+(three array parameters expand to six pointer/length arguments, seven with the depth), and the
+fannkuch functions keep checks whose indexes are not provable from the length alone. The metadata is
+the groundwork for the next step: dropping the now-unused length arguments from signatures and call
+sites. All gates pass, 168 tests, repo parity 60/60.
+
 ## v0.8.83 — one fused SIMD step (2026-11-06)
 
 The pair add and pair multiply for `x += vx; y += vy; vx *= k; vy *= k` are now one `Aos2Step`
