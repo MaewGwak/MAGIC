@@ -94,8 +94,10 @@ fn ir_matches_c_on_small_integer_programs() {
         let src = std::fs::read_to_string(root.join(format!("examples/{ex}.magic"))).unwrap();
         corpus.push((format!("example_{ex}"), src));
     }
-    let mm = std::fs::read_to_string(root.join("bench-suite/matmul_magic.magic")).unwrap();
-    corpus.push(("matmul".to_string(), mm));
+    for bench in ["matmul_magic", "raytrace_magic", "particles_magic", "vecpart_magic", "nbody_magic"] {
+        let src = std::fs::read_to_string(root.join(format!("bench-suite/{bench}.magic"))).unwrap();
+        corpus.push((format!("bench_{bench}"), src));
+    }
     for db in ["btree_magic", "hashmap_magic", "sqlscan_magic"] {
         let src = std::fs::read_to_string(root.join(format!("bench-db/{db}.magic"))).unwrap();
         corpus.push((format!("db_{db}"), src));

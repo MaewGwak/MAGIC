@@ -2765,8 +2765,271 @@ fn emit_fast_block(
     }
 }
 
+fn ty_code(t: Ty) -> i64 {
+    match t {
+        Ty::I32 => 1,
+        Ty::I64 => 2,
+        Ty::U8 => 3,
+        Ty::F64 => 4,
+        Ty::Bool => 5,
+        Ty::Str => 6,
+        Ty::Void => 7,
+        Ty::Struct(i) => 100 + i as i64,
+    }
+}
+
+fn expr_key(ins: &Instr) -> Option<(u8, Vec<i64>)> {
+    let mut k: Vec<i64> = Vec::new();
+    match ins {
+        Instr::Const { v, .. } => {
+            k.push(1);
+            k.push(*v);
+        }
+        Instr::LoadVar { var, .. } => {
+            k.push(2);
+            k.push(*var as i64);
+        }
+        Instr::Bin { op, l, r, .. } => {
+            k.push(3);
+            k.push(*op as i64);
+            let (a, b) = if matches!(op, Op::Add | Op::Mul | Op::And | Op::Or) && l.0 > r.0 {
+                (*r, *l)
+            } else {
+                (*l, *r)
+            };
+            k.push(a.0 as i64);
+            k.push(b.0 as i64);
+        }
+        Instr::Un { neg, a, .. } => {
+            k.push(4);
+            k.push(*neg as i64);
+            k.push(a.0 as i64);
+        }
+        Instr::Trunc { ty, a, .. } => {
+            k.push(5);
+            k.push(ty_code(*ty));
+            k.push(a.0 as i64);
+        }
+        Instr::FBin { op, l, r, .. } => {
+            k.push(6);
+            k.push(*op as i64);
+            k.push(l.0 as i64);
+            k.push(r.0 as i64);
+        }
+        Instr::FNeg { a, .. } | Instr::I2F { a, .. } | Instr::F2I { a, .. } | Instr::Sqrt { a, .. } => {
+            k.push(7);
+            k.push(match ins {
+                Instr::FNeg { .. } => 1,
+                Instr::I2F { .. } => 2,
+                Instr::F2I { .. } => 3,
+                _ => 4,
+            });
+            k.push(a.0 as i64);
+        }
+        Instr::FCmp { op, l, r, .. } => {
+            k.push(8);
+            k.push(*op as i64);
+            k.push(l.0 as i64);
+            k.push(r.0 as i64);
+        }
+        _ => return None,
+    }
+    Some((k[0] as u8, k[1..].to_vec()))
+}
+
+fn dst_of(ins: &Instr) -> Option<Value> {
+    match ins {
+        Instr::Const { dst, .. }
+        | Instr::LoadVar { dst, .. }
+        | Instr::Bin { dst, .. }
+        | Instr::Un { dst, .. }
+        | Instr::Trunc { dst, .. }
+        | Instr::FBin { dst, .. }
+        | Instr::FNeg { dst, .. }
+        | Instr::I2F { dst, .. }
+        | Instr::F2I { dst, .. }
+        | Instr::Sqrt { dst, .. }
+        | Instr::FCmp { dst, .. } => Some(*dst),
+        _ => None,
+    }
+}
+
+/// Local value numbering inside each block: duplicate constant loads, variable
+/// loads and pure arithmetic are replaced by the first occurrence. Only values
+/// that are not used outside the block are merged (their slot stays unused).
+fn cse_blocks(prog: &mut IrProgram) {
+    for f in &mut prog.funcs {
+        let n = f.blocks.len();
+        let mut used_outside = vec![false; f.nvalues.max(1)];
+        for (bi, b) in f.blocks.iter().enumerate() {
+            for ins in &b.instrs {
+                let mut u = Vec::new();
+                let mut d = Vec::new();
+                instr_uses_defs(ins, &mut u, &mut d);
+                for v in u {
+                    // record whether this value is used in another block
+                    let _ = &d;
+                }
+            }
+            let _ = bi;
+        }
+        // per-block use membership
+        let mut uses_in: Vec<std::collections::HashSet<Value>> =
+            vec![Default::default(); n];
+        for (bi, b) in f.blocks.iter().enumerate() {
+            for ins in &b.instrs {
+                let mut u = Vec::new();
+                let mut d = Vec::new();
+                instr_uses_defs(ins, &mut u, &mut d);
+                for v in u {
+                    uses_in[bi].insert(v);
+                }
+            }
+        }
+        // a value is "external" if any *other* block uses it
+        let mut external = vec![false; f.nvalues.max(1)];
+        for bi in 0..n {
+            for v in &uses_in[bi] {
+                let outside = (0..n).any(|other| other != bi && uses_in[other].contains(v));
+                if outside {
+                    external[v.0 as usize] = true;
+                }
+            }
+        }
+        for bi in 0..n {
+            let mut subst: HashMap<Value, Value> = HashMap::new();
+            let resolve = |v: Value, subst: &HashMap<Value, Value>| -> Value {
+                let mut cur = v;
+                let mut hops = 0;
+                while let Some(next) = subst.get(&cur) {
+                    cur = *next;
+                    hops += 1;
+                    if hops > 64 {
+                        break;
+                    }
+                }
+                cur
+            };
+            let mut keys: HashMap<(u8, Vec<i64>), Value> = HashMap::new();
+            let mut remove: std::collections::HashSet<usize> = Default::default();
+            let mut var_invalid = false;
+            for (ii, ins) in f.blocks[bi].instrs.iter().enumerate() {
+                if let Instr::StoreVar { var, .. } = ins {
+                    keys.retain(|(kind, rest), _| !(*kind == 2 && rest[0] == *var as i64));
+                    var_invalid = true;
+                    continue;
+                }
+                let _ = var_invalid;
+                if let Some(dst) = dst_of(ins) {
+                    if !external[dst.0 as usize] {
+                        // rewrite operand keys through substitutions
+                        let mut canon = ins.clone();
+                        rewrite_operands(&mut canon, &|v| resolve(v, &subst));
+                        if let Some(mut k) = expr_key(&canon) {
+                            let vt = f
+                                .vty
+                                .get(dst.0 as usize)
+                                .copied()
+                                .unwrap_or(Ty::I32);
+                            k.1.push(ty_code(vt));
+                            if let Some(prev) = keys.get(&k) {
+                                subst.insert(dst, *prev);
+                                remove.insert(ii);
+                                continue;
+                            }
+                            keys.insert(k, dst);
+                        }
+                    }
+                }
+            }
+            if remove.is_empty() {
+                continue;
+            }
+            let old = std::mem::take(&mut f.blocks[bi].instrs);
+            let mut new_instrs = Vec::new();
+            for (ii, mut ins) in old.into_iter().enumerate() {
+                if remove.contains(&ii) {
+                    continue;
+                }
+                rewrite_operands(&mut ins, &|v| resolve(v, &subst));
+                new_instrs.push(ins);
+            }
+            f.blocks[bi].instrs = new_instrs;
+        }
+    }
+}
+
+fn rewrite_operands(ins: &mut Instr, f: &dyn Fn(Value) -> Value) {
+    let mut rw = |v: &mut Value| *v = f(*v);
+    match ins {
+        Instr::Bin { l, r, .. } => {
+            rw(l);
+            rw(r);
+        }
+        Instr::Un { a, .. }
+        | Instr::Trunc { a, .. }
+        | Instr::FNeg { a, .. }
+        | Instr::I2F { a, .. }
+        | Instr::F2I { a, .. }
+        | Instr::Sqrt { a, .. } => rw(a),
+        Instr::FBin { l, r, .. } | Instr::FCmp { l, r, .. } => {
+            rw(l);
+            rw(r);
+        }
+        Instr::StoreVar { src, .. } => rw(src),
+        Instr::Print { v, .. } => rw(v),
+        Instr::PrintPrec { v, prec } => {
+            rw(v);
+            rw(prec);
+        }
+        Instr::Ret(Some(v)) => rw(v),
+        Instr::Br { cond, .. } => rw(cond),
+        Instr::Assert { cond, .. } => rw(cond),
+        Instr::Fill { len, value, .. } => {
+            rw(len);
+            rw(value);
+        }
+        Instr::BoundsCheck { idx, .. } => rw(idx),
+        Instr::Alloc { len, .. } => rw(len),
+        Instr::IndexLoad { idx, .. } => rw(idx),
+        Instr::IndexStore { idx, src, .. } => {
+            rw(idx);
+            rw(src);
+        }
+        Instr::FieldStore { src, .. } => rw(src),
+        Instr::IndexFieldLoad { idx, .. } => rw(idx),
+        Instr::IndexFieldStore { idx, src, .. } => {
+            rw(idx);
+            rw(src);
+        }
+        Instr::StructInit { fields, .. } => {
+            for (_, _, v) in fields {
+                rw(v);
+            }
+        }
+        Instr::VecReserve { need, .. } => rw(need),
+        Instr::VecPushScalar { src, .. } => rw(src),
+        Instr::Argv { idx, .. } => rw(idx),
+        Instr::InputRead { buf, len, .. } => {
+            rw(buf);
+            rw(len);
+        }
+        Instr::PrintBytes { buf, len, .. } => {
+            rw(buf);
+            rw(len);
+        }
+        Instr::Call { args, .. } => {
+            for a in args {
+                rw(a);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn optimize(prog: &mut IrProgram) {
     remove_redundant_bounds(prog);
+    cse_blocks(prog);
 }
 
 pub fn emit(prog: &IrProgram) -> String {

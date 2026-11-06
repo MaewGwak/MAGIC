@@ -30,6 +30,20 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.40 — local value numbering in the IR (2026-11-06)
+
+A new CSE pass merges duplicate constants, variable loads and pure arithmetic inside each basic
+block; values used outside their block are never merged, and variable loads are invalidated by
+stores. This removes the repeated `LoadVar i` copies and repeated address arithmetic that dominated
+the float loops. Medians after the type-aware fix: raytrace 363 → 277 ms (−24%), matmul 153 → 118 ms
+(−23%), nbody 2634 → 1925 ms (−27%), vecpart 191 → 170 ms, particles 763 → 735 ms, btree 184 →
+177 ms. All differential
+tests and benchmark checksums match the C backend. Two bugs were caught by the differential tests before
+release: the first version forgot to rewrite the `Alloc` size operand, and it merged int and f64
+constants with identical bit patterns (e.g. `0` and `0.0`), whose slots are only written on demand;
+keys now include the value type and the float benchmarks (raytrace, particles, vecpart, nbody) were
+added to the IR corpus.
+
 ## v0.8.39 — parser recursion limits and a fuzz harness (2026-11-06)
 
 A deterministic fuzz test (`tests/fuzz.rs`) now feeds 2000 random token soups through `compile_to_c`,

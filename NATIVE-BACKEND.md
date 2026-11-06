@@ -182,7 +182,10 @@ baseline is not available from codegen alone; it requires runtime memory policie
 allocation, compressed containers). This audit gates the 1.0 memory claim. v0.8.38 additionally uses
 `shl` for power-of-two struct/vector strides (vecpart 203 → 191 ms). v0.8.39 adds a deterministic
 fuzz harness and parser recursion limits (512 chained operators, 256 statement/unary/block depth)
-after the fuzzer found compiler stack overflows on pathological inputs.
+after the fuzzer found compiler stack overflows on pathological inputs. v0.8.40 adds local value
+numbering per basic block (duplicate constants, variable loads and pure arithmetic), taking raytrace
+to 277 ms, matmul to 118 ms and nbody to 1.93 s (type-aware keys prevent merging int and f64
+constants with the same bit pattern).
 
 ## IR vs AST vs C (v0.8.31 medians)## IR vs AST vs C (v0.8.31 medians)
 
