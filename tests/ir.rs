@@ -113,6 +113,41 @@ fn main() {
 "#,
         ),
         (
+            "struct_return_values",
+            r#"
+struct P { x: i32, y: i32 }
+fn make(a: i32) -> P { return P { x: a, y: a + 1 }; }
+fn ident(p: P) -> P { return p; }
+fn sum(p: P) -> i32 { return p.x + p.y; }
+fn pick(a: i32) -> P {
+    if a > 2 { return P { x: a, y: 10 }; }
+    return P { x: 1, y: 2 };
+}
+fn main() {
+    var p = make(3);
+    print(p.x + p.y);
+    print(sum(p));
+    print(sum(P { x: 5, y: 6 }));
+    var q = ident(P { x: 7, y: 8 });
+    print(q.x * q.y);
+    print(sum(make(10)));
+    var r = pick(9);
+    print(r.x + r.y);
+    var s = pick(0);
+    print(s.x + s.y);
+}
+"#,
+        ),
+        (
+            "struct_return_multi_slot",
+            r#"
+struct Q { a: i64, b: i32, c: i32, d: i64 }
+fn mk(k: i64) -> Q { var q = Q { a: k, b: 2, c: 3, d: k * 10 }; return q; }
+fn total(q: Q) -> i64 { return q.a + q.d + (q.b as i64) + (q.c as i64); }
+fn main() { var q = mk(5); print(total(q)); print(q.b); var r = mk(7); print(total(r)); }
+"#,
+        ),
+        (
             "break_continue_loops",
             r#"
 fn main() {

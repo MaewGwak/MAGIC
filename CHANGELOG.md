@@ -30,6 +30,20 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.71 — struct literals in expression position and struct returns (2026-11-06)
+
+Struct literals now lower anywhere an expression is allowed: the IR allocates a temporary slot block,
+runs `StructInit`, and yields a pointer value. Functions returning a struct use a hidden `sret` pointer
+appended as the last parameter; the callee copies the result slots into it, the caller allocates a
+temporary, and `let` copies the returned slots into the named struct variable. Early returns, returning
+a struct variable, struct literals as arguments, and nested calls (`sum(make(10))`) all match C.
+
+Two bugs were found while testing: the AST inliner treated `ParamTy::Scalar(Ty::Struct)` as inlineable,
+so `ident(P {7,8})` resolved `p` to the caller's variable and printed 12 instead of 56; struct-typed
+parameters are now excluded from inlining, and substitution takes precedence over struct/vector
+lookup for `Var` (which also protects future inlined struct parameters). Two differential cases cover
+the expression forms and a multi-slot (`i64,i32,i32,i64`) struct; repo parity stays 60/60. 165 tests.
+
 ## v0.8.70 — `break`/`continue` in the IR (2026-11-06)
 
 The IR lowering keeps a loop-context stack: `break` jumps to the loop exit and `continue` to the

@@ -60,6 +60,7 @@ pub enum Instr {
     StructInit { var_index: usize, slots: usize, fields: Vec<(u64, Ty, Value)> },
     AddrVar { dst: Value, var_index: usize, slots: usize },
     CopySlots { ptr_var: usize, var_index: usize, slots: usize },
+    CopySlotsTo { dst_ptr_var: usize, src: Value, slots: usize },
     StoreVec { src_ptr_var: usize, ptr_var: usize, len_var: usize, cap_var: usize },
     LoadPtr { dst_var: usize, src_var: usize },
     StorePtr { dst_ptr_var: usize, src_var: usize },
@@ -188,6 +189,8 @@ struct Builder {
     arena_depth: usize,
     ret: Ty,
     loops: Vec<(usize, usize)>,
+    sret_var: Option<usize>,
+    sret_hint: Option<(String, usize, usize)>,
 }
 
 fn stmt_has_continue(st: &Stmt) -> bool {
@@ -228,6 +231,8 @@ impl Builder {
             subst_stack: Vec::new(),
             arena_depth: 0,
             loops: Vec::new(),
+            sret_var: None,
+            sret_hint: None,
             ret,
         }
     }
@@ -437,7 +442,34 @@ impl Builder {
                 self.narrow[dst.0 as usize] = true;
                 Ok(dst)
             }
+            ExprKind::StructLit { name: sname, fields } => {
+                let id = self
+                    .struct_defs
+                    .iter()
+                    .position(|d| d.name == *sname)
+                    .ok_or_else(|| format!("line {}: IR: unknown struct `{}`", e.line, sname))?
+                    as u16;
+                let (size, _) = struct_layout(&self.struct_defs, id);
+                let slots = ((size + 7) / 8) as usize;
+                let var_index = self.nvars;
+                self.nvars += slots;
+                let mut inits = Vec::new();
+                self.lower_struct_into(id, 0, fields, &mut inits)?;
+                self.push(Instr::StructInit { var_index, slots, fields: inits });
+                let dst = self.value();
+                self.push(Instr::AddrVar { dst, var_index, slots });
+                self.vty[dst.0 as usize] = Ty::I64;
+                Ok(dst)
+            }
             ExprKind::Var(n) => {
+                if let Some(v) = self
+                    .subst_stack
+                    .iter()
+                    .rev()
+                    .find_map(|m| m.get(n).copied())
+                {
+                    return Ok(v);
+                }
                 if let Some((_, pv, _, _, _)) = self.vecs.get(n).copied() {
                     let dst = self.value();
                     self.push(Instr::AddrVar { dst, var_index: pv, slots: 3 });
@@ -449,14 +481,6 @@ impl Builder {
                     self.push(Instr::AddrVar { dst, var_index, slots });
                     self.vty[dst.0 as usize] = Ty::I64;
                     return Ok(dst);
-                }
-                if let Some(v) = self
-                    .subst_stack
-                    .iter()
-                    .rev()
-                    .find_map(|m| m.get(n).copied())
-                {
-                    return Ok(v);
                 }
                 let var = *self
                     .vars
@@ -988,13 +1012,30 @@ impl Builder {
                 for a in args {
                     vals.push(self.lower_expr(a)?);
                 }
+                let ret = self.sigs.get(name).copied();
+                if let Some(Ty::Struct(id)) = ret {
+                    let (size, _) = struct_layout(&self.struct_defs, id);
+                    let slots = ((size + 7) / 8) as usize;
+                    let vi = self.nvars;
+                    self.nvars += slots;
+                    let addr = self.value();
+                    self.push(Instr::AddrVar { dst: addr, var_index: vi, slots });
+                    self.vty[addr.0 as usize] = Ty::I64;
+                    vals.push(addr);
+                    self.push(Instr::Call {
+                        dst: None,
+                        name: builtin.unwrap_or(name.as_str()).to_string(),
+                        args: vals,
+                    });
+                    return Ok(addr);
+                }
                 let dst = self.value();
                 self.push(Instr::Call {
                     dst: Some(dst),
                     name: builtin.unwrap_or(name.as_str()).to_string(),
                     args: vals,
                 });
-                self.vty[dst.0 as usize] = self.sigs.get(name).copied().unwrap_or(Ty::I32);
+                self.vty[dst.0 as usize] = ret.unwrap_or(Ty::I32);
                 Ok(dst)
             }
             other => Err(format!(
@@ -1154,6 +1195,21 @@ impl Builder {
                         fields: inits,
                     });
                     return Ok(());
+                }
+                if let ExprKind::Call { name: cname, .. } = &init.kind {
+                    if let Some(Ty::Struct(id)) = self.sigs.get(cname).copied() {
+                        let (size, _) = struct_layout(&self.struct_defs, id);
+                        let slots = ((size + 7) / 8) as usize;
+                        let var_index = self.nvars;
+                        self.nvars += slots;
+                        self.struct_vars.insert(name.clone(), (var_index, slots, id));
+                        let ptr = self.lower_expr(init)?;
+                        let scratch = self.nvars;
+                        self.nvars += 1;
+                        self.push(Instr::StoreVar { var: scratch, src: ptr });
+                        self.push(Instr::CopySlots { ptr_var: scratch, var_index, slots });
+                        return Ok(());
+                    }
                 }
                 let v = self.lower_expr(init)?;
                 let is_bool = self.vbool[v.0 as usize];
@@ -1334,6 +1390,20 @@ impl Builder {
                 self.push(Instr::Print { v, boolean, float, string });
             }
             StmtKind::Return(e) => {
+                if let Ty::Struct(id) = self.ret {
+                    let (size, _) = struct_layout(&self.struct_defs, id);
+                    let slots = ((size + 7) / 8) as usize;
+                    let Some(sret) = self.sret_var else {
+                        return Err(format!("line {}: IR: missing sret slot", s.line));
+                    };
+                    let src = match e {
+                        Some(e) => self.lower_expr(e)?,
+                        None => return Err(format!("line {}: IR: struct return needs a value", s.line)),
+                    };
+                    self.push(Instr::CopySlotsTo { dst_ptr_var: sret, src, slots });
+                    self.push(Instr::Ret(None));
+                    return Ok(());
+                }
                 let v = match e {
                     Some(e) => {
                         let val = self.lower_expr(e)?;
@@ -1518,6 +1588,7 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
             .params
             .iter()
             .filter_map(|(n, p)| match p {
+                ParamTy::Scalar(Ty::Struct(_)) => None,
                 ParamTy::Scalar(_) => Some(n.clone()),
                 _ => None,
             })
@@ -1591,6 +1662,12 @@ fn lower_func(
                 nparams += 3;
             }
         }
+    }
+    if let Ty::Struct(_) = f.ret {
+        let sv = b.var("#sret");
+        b.var_ty.insert("#sret".to_string(), Ty::I64);
+        b.sret_var = Some(sv);
+        nparams += 1;
     }
     for (name, id, ptr_var) in struct_params {
         let (size, _) = struct_layout(&b.struct_defs, id);
@@ -2279,6 +2356,7 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
         | Instr::StoreVec { .. }
         | Instr::LoadPtr { .. }
         | Instr::StorePtr { .. } => {}
+        Instr::CopySlotsTo { src, .. } => uses.push(*src),
         Instr::StructInit { fields, .. } => {
             for (_, _, v) in fields {
                 uses.push(*v);
@@ -2351,6 +2429,7 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::StoreVec { .. }
                 | Instr::LoadPtr { .. }
                 | Instr::StorePtr { .. }
+                | Instr::CopySlotsTo { .. }
         | Instr::AddrVar { .. }
                 | Instr::VecNew { .. }
                 | Instr::VecReserve { .. }
@@ -2693,10 +2772,11 @@ fn emit_fast_block(
     for (ii, ins) in instrs.iter().enumerate() {
         match ins {
             Instr::AddrVar { .. }
-        | Instr::CopySlots { .. }
-        | Instr::StoreVec { .. }
-        | Instr::LoadPtr { .. }
-        | Instr::StorePtr { .. } => {}
+            | Instr::CopySlots { .. }
+            | Instr::StoreVec { .. }
+            | Instr::LoadPtr { .. }
+            | Instr::StorePtr { .. }
+            | Instr::CopySlotsTo { .. } => {}
             Instr::Const { dst, v } => {
                 if ra.is_float(*dst) {
                     let d = ra.xdst(*dst);
@@ -3644,6 +3724,7 @@ fn rewrite_operands(ins: &mut Instr, f: &dyn Fn(Value) -> Value) {
         | Instr::StoreVec { .. }
         | Instr::LoadPtr { .. }
         | Instr::StorePtr { .. } => {}
+        Instr::CopySlotsTo { src, .. } => rw(src),
         Instr::StructInit { fields, .. } => {
             for (_, _, v) in fields {
                 rw(v);
@@ -4653,6 +4734,18 @@ pub fn emit(prog: &IrProgram) -> String {
             for ins in &b.instrs {
                 let ld = |v: Value| format!("    mov -{}(%rbp), %rax\n", voff(f, v));
                 match ins {
+                    Instr::CopySlotsTo { dst_ptr_var, src, slots } => {
+                        if let Some(reg) = var_regs.get(dst_ptr_var) {
+                            out.push_str(&format!("    mov {}, %rax\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*dst_ptr_var)));
+                        }
+                        out.push_str(&format!("    mov -{}(%rbp), %rdx\n", voff(f, *src)));
+                        for i in 0..*slots {
+                            out.push_str(&format!("    mov -{}(%rdx), %rcx\n", i * 8));
+                            out.push_str(&format!("    mov %rcx, -{}(%rax)\n", i * 8));
+                        }
+                    }
                     Instr::Const { dst, v } => {
                         if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
                             out.push_str(&format!("    mov ${}, %rax\n", v));
