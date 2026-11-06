@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.27 — float and struct-field operations in the register-allocated IR path (2026-11-06)
+
+Float arithmetic, comparisons, casts, `sqrt`, negative, and struct field loads/stores (including
+`IndexField` with bounds checks) now run through the block register allocator instead of the slot
+emitter: float values move between pool registers and `%xmm` with `movq`, and field addresses are
+formed from pool registers plus the loop-scaled index. A scratch-register bug (`%r8` used while it
+was still in the allocation pool) was fixed before the numbers below. Medians through `--backend ir`:
+nbody 4.9 → 3.17 s (AST ~4.2 s, C 738 ms), particles 1.05 → 0.83 s (AST ~1.0 s, C 155 ms), raytrace
+547 → 413 ms (C 92 ms) and vecpart 344 → 251 ms (C 34 ms); matmul and sieve are unchanged.
+
 ## v0.8.26 — vectors in the IR (2026-11-06)
 
 The IR now lowers `[T+]` vectors: `VecLet` allocates a heap block with length 0 and capacity 8,

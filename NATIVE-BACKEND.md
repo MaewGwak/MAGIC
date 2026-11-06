@@ -140,7 +140,9 @@ field/`IndexField` access with bounds checks, and struct arrays zero-initialised
 test matches the C backend and particles prints 500094707846.643 through the IR (1.05 s, AST ~1.0 s,
 C 155 ms). v0.8.26 adds vectors: `[T+]`, `reserve`, `push`, `len` and runtime-length bounds checks.
 `examples/vec` prints 10/285 and vecpart prints 125024147186.169 through the IR in 344 ms
-(AST ~260 ms, C 34 ms).
+(AST ~260 ms, C 34 ms). v0.8.27 moves float arithmetic and struct-field accesses into the
+register-allocated blocks, taking nbody to 3.17 s, particles to 0.83 s, raytrace to 413 ms and
+vecpart to 251 ms.
 Affine indexes like
 `a[i * n + j]` are proved in v0.8.15 after constant propagation makes `n` and `n * n` literal: the
 maximum `(n-1)*n + (n-1)` is compared with the array length, so matmul's inner checks disappear

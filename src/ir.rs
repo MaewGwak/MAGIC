@@ -1579,19 +1579,9 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::Fill { .. }
                 | Instr::Print { .. }
                 | Instr::Str { .. }
-                | Instr::FBin { .. }
-                | Instr::FNeg { .. }
-                | Instr::FCmp { .. }
-                | Instr::I2F { .. }
-                | Instr::F2I { .. }
-                | Instr::Sqrt { .. }
                 | Instr::PrintPrec { .. }
                 | Instr::Print { float: true, .. }
                 | Instr::StructInit { .. }
-                | Instr::FieldLoad { .. }
-                | Instr::FieldStore { .. }
-                | Instr::IndexFieldLoad { .. }
-                | Instr::IndexFieldStore { .. }
                 | Instr::VecNew { .. }
                 | Instr::VecReserve { .. }
                 | Instr::VecLen { .. }
@@ -2108,6 +2098,164 @@ fn emit_fast_block(
                     _ => ra.out.push_str("    movq %rcx, (%r10,%rax,8)\n"),
                 }
             }
+            Instr::FieldLoad { dst, var_index, slots, off, ty } => {
+                let addr = -8 * (*var_index + *slots) as i64 + *off as i64;
+                let d = ra.dst(*dst);
+                match ty {
+                    Ty::U8 | Ty::Bool => ra.out.push_str(&format!("    movzbq {}(%rbp), {}\n", addr, POOL[d].0)),
+                    Ty::I32 => ra.out.push_str(&format!("    movslq {}(%rbp), {}\n", addr, POOL[d].0)),
+                    _ => ra.out.push_str(&format!("    mov {}(%rbp), {}\n", addr, POOL[d].0)),
+                }
+                ra.def_store(*dst, d);
+            }
+            Instr::FieldStore { var_index, slots, off, ty, src } => {
+                let addr = -8 * (*var_index + *slots) as i64 + *off as i64;
+                let a = ra.operand(*src);
+                match ty {
+                    Ty::U8 | Ty::Bool => ra.out.push_str(&format!("    mov {}, {}(%rbp)\n", POOL[a].2, addr)),
+                    Ty::I32 => ra.out.push_str(&format!("    mov {}, {}(%rbp)\n", POOL[a].1, addr)),
+                    _ => ra.out.push_str(&format!("    mov {}, {}(%rbp)\n", POOL[a].0, addr)),
+                }
+            }
+            Instr::IndexFieldLoad { dst, ptr_var, idx, size, off, ty, len, line } => {
+                let i = ra.operand(*idx);
+                ra.out.push_str(&format!("    mov {}, %rax\n", POOL[i].0));
+                match len {
+                    LenRef::Const(n) => ra.out.push_str(&format!("    mov ${}, %rcx\n", n)),
+                    LenRef::Var(v) => {
+                        if let Some(reg) = var_regs.get(v) {
+                            ra.out.push_str(&format!("    mov {}, %rcx\n", reg));
+                        } else {
+                            ra.out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                        }
+                    }
+                }
+                ra.out.push_str("    cmp %rcx, %rax\n    jb 1f\n");
+                ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                ra.out.push_str("    call .Lir_panic\n1:\n");
+                let ptr_slot = var_regs.get(ptr_var).copied();
+                let d = ra.dst_excluding(*dst, &[i]);
+                let base = match ptr_slot {
+                    Some(reg) => reg.to_string(),
+                    None => {
+                        let p = ra.alloc_excluding(&[i, d]);
+                        ra.out.push_str(&format!("    mov -{}(%rbp), {}\n", varoff(*ptr_var), POOL[p].0));
+                        let b = POOL[p].0.to_string();
+                        // keep p reserved by inserting a dummy live value keyed by dst? simpler: reload later
+                        ra.free.push(p);
+                        b
+                    }
+                };
+                ra.out.push_str(&format!("    mov {}, {}\n", POOL[i].0, POOL[d].0));
+                ra.out.push_str(&format!("    imul ${}, {}\n", size, POOL[d].0));
+                if *off > 0 {
+                    ra.out.push_str(&format!("    add ${}, {}\n", off, POOL[d].0));
+                }
+                match ty {
+                    Ty::U8 | Ty::Bool => ra.out.push_str(&format!("    movzbq ({},{},1), {}\n", base, POOL[d].0, POOL[d].0)),
+                    Ty::I32 => ra.out.push_str(&format!("    movslq ({},{},1), {}\n", base, POOL[d].0, POOL[d].0)),
+                    _ => ra.out.push_str(&format!("    mov ({},{},1), {}\n", base, POOL[d].0, POOL[d].0)),
+                }
+                ra.def_store(*dst, d);
+            }
+            Instr::IndexFieldStore { ptr_var, idx, size, off, ty, src, len, line } => {
+                let sreg = ra.operand(*src);
+                ra.out.push_str(&format!("    mov {}, %rcx\n", POOL[sreg].0));
+                let i = ra.operand_excluding(*idx, &[sreg]);
+                ra.out.push_str(&format!("    mov {}, %rax\n", POOL[i].0));
+                match len {
+                    LenRef::Const(n) => ra.out.push_str(&format!("    mov ${}, %r10\n", n)),
+                    LenRef::Var(v) => {
+                        if let Some(reg) = var_regs.get(v) {
+                            ra.out.push_str(&format!("    mov {}, %r10\n", reg));
+                        } else {
+                            ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*v)));
+                        }
+                    }
+                }
+                ra.out.push_str("    cmp %r10, %rax\n    jb 1f\n");
+                ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                ra.out.push_str("    call .Lir_panic\n1:\n");
+                if let Some(reg) = var_regs.get(ptr_var) {
+                    ra.out.push_str(&format!("    mov {}, %r10\n", reg));
+                } else {
+                    ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                }
+                ra.out.push_str(&format!("    imul ${}, %rax\n", size));
+                if *off > 0 {
+                    ra.out.push_str(&format!("    add ${}, %rax\n", off));
+                }
+                match ty {
+                    Ty::U8 | Ty::Bool => ra.out.push_str("    movb %cl, (%r10,%rax)\n"),
+                    Ty::I32 => ra.out.push_str("    movl %ecx, (%r10,%rax)\n"),
+                    _ => ra.out.push_str("    movq %rcx, (%r10,%rax)\n"),
+                }
+            }
+            Instr::FBin { dst, op, l, r } => {
+                let a = ra.operand(*l);
+                let b = ra.operand_excluding(*r, &[a]);
+                let d = ra.dst_excluding(*dst, &[a, b]);
+                ra.out.push_str(&format!("    movq {}, %xmm0\n    movq {}, %xmm1\n", POOL[a].0, POOL[b].0));
+                let m = match op {
+                    Op::Add => "addsd",
+                    Op::Sub => "subsd",
+                    Op::Mul => "mulsd",
+                    Op::Div => "divsd",
+                    _ => "addsd",
+                };
+                ra.out.push_str(&format!("    {} %xmm1, %xmm0\n    movq %xmm0, {}\n", m, POOL[d].0));
+                ra.def_store(*dst, d);
+            }
+            Instr::FNeg { dst, a } => {
+                let s = ra.operand(*a);
+                let d = ra.dst_excluding(*dst, &[s]);
+                ra.out.push_str(&format!("    mov {}, {}\n", POOL[s].0, POOL[d].0));
+                ra.out.push_str(&format!("    btc $63, {}\n", POOL[d].0));
+                ra.def_store(*dst, d);
+            }
+            Instr::FCmp { dst, op, l, r } => {
+                let a = ra.operand(*l);
+                let b = ra.operand_excluding(*r, &[a]);
+                let d = ra.dst_excluding(*dst, &[a, b]);
+                let (pred, swap) = match op {
+                    Op::Eq => (0, false),
+                    Op::Ne => (4, false),
+                    Op::Lt => (1, false),
+                    Op::Le => (2, false),
+                    Op::Gt => (1, true),
+                    Op::Ge => (2, true),
+                    _ => (0, false),
+                };
+                ra.out.push_str(&format!("    movq {}, %xmm0\n    movq {}, %xmm1\n", POOL[a].0, POOL[b].0));
+                if swap {
+                    ra.out.push_str(&format!("    cmpsd ${}, %xmm0, %xmm1\n    movq %xmm1, %rax\n", pred));
+                } else {
+                    ra.out.push_str(&format!("    cmpsd ${}, %xmm1, %xmm0\n    movq %xmm0, %rax\n", pred));
+                }
+                ra.out.push_str("    and $1, %rax\n");
+                ra.out.push_str(&format!("    mov %rax, {}\n", POOL[d].0));
+                ra.def_store(*dst, d);
+            }
+            Instr::I2F { dst, a } => {
+                let s = ra.operand(*a);
+                let d = ra.dst_excluding(*dst, &[s]);
+                ra.out.push_str(&format!("    cvtsi2sd {}, %xmm0\n    movq %xmm0, {}\n", POOL[s].0, POOL[d].0));
+                ra.def_store(*dst, d);
+            }
+            Instr::F2I { dst, a } => {
+                let s = ra.operand(*a);
+                let d = ra.dst_excluding(*dst, &[s]);
+                ra.out.push_str(&format!("    movq {}, %xmm0\n    cvttsd2si %xmm0, %rax\n", POOL[s].0));
+                ra.out.push_str(&format!("    mov %rax, {}\n", POOL[d].0));
+                ra.def_store(*dst, d);
+            }
+            Instr::Sqrt { dst, a } => {
+                let s = ra.operand(*a);
+                let d = ra.dst_excluding(*dst, &[s]);
+                ra.out.push_str(&format!("    movq {}, %xmm0\n    sqrtsd %xmm0, %xmm0\n", POOL[s].0));
+                ra.out.push_str(&format!("    movq %xmm0, {}\n", POOL[d].0));
+                ra.def_store(*dst, d);
+            }
             Instr::Br { cond, then_bb, else_bb } => {
                 if let Some((op, l, r, _)) = ra.deferred.get(cond).copied() {
                     let a = ra.operand(l);
@@ -2152,18 +2300,8 @@ fn emit_fast_block(
             | Instr::Fill { .. }
             | Instr::Str { .. }
             | Instr::Print { .. }
-            | Instr::FBin { .. }
-            | Instr::FNeg { .. }
-            | Instr::FCmp { .. }
-            | Instr::I2F { .. }
-            | Instr::F2I { .. }
-            | Instr::Sqrt { .. }
             | Instr::PrintPrec { .. }
             | Instr::StructInit { .. }
-            | Instr::FieldLoad { .. }
-            | Instr::FieldStore { .. }
-            | Instr::IndexFieldLoad { .. }
-            | Instr::IndexFieldStore { .. }
             | Instr::VecNew { .. }
             | Instr::VecReserve { .. }
             | Instr::VecLen { .. }
