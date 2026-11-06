@@ -40,7 +40,7 @@ the existing 132-test suite runs against both.
 3. **Runtime** (`runtime/magic_rt.c` -> later `runtime/magic_rt.S`): the existing builtins as a
    small static library, written in C at first (that is not the compiler backend), then in assembly
    or MAGIC itself.
-4. **Driver**: `magicc build --backend native`; default stays `c` until the native path passes the
+4. **Driver**: `magicc build --backend native`; the IR path is the default since v0.8.73, while the
    whole suite. `--emit asm` and `--emit obj` for debugging.
 5. **Assembling/linking** ✅: `as` + `ld` with discovered crt objects and glibc; no C compiler or
    driver. A direct ELF writer is not needed for 0.9.0.
@@ -217,9 +217,10 @@ register path, taking btree to 158 ms and hashmap to 96 ms.
 | sqlscan | 34 ms | 32 ms | 10 ms |
 | bufpool | 194 ms | 178 ms | 130 ms |
 
-IR wins all compute-heavy programs and AST wins the database programs narrowly. AST stays the
-default backend; IR remains opt-in until the 3–6x compute gap to C is reduced (width-aware 32-bit arithmetic,
-SLP/SIMD, parallel `par for`). Arena blocks, the `net_*` TCP builtins, struct parameters (by value,
+IR wins all compute-heavy programs and AST wins the database programs narrowly. Since v0.8.73 the
+IR backend is the default (`--backend native` selects AST, `--backend c` the C11 path); closing the
+3–6x compute gap to C (width-aware 32-bit arithmetic, SLP/SIMD) and real parallel `par for` remain the
+main milestones. Arena blocks, the `net_*` TCP builtins, struct parameters (by value,
 copied into the callee at entry) and growable-array parameters now work in the IR as well. The AST
 native backend still rejects vector parameters with an explicit error, while the C and IR backends
 support them (prt/len/cap are passed by reference, so `push` inside a callee updates the caller). v0.8.32 adds a small

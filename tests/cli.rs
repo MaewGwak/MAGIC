@@ -188,7 +188,7 @@ fn report_counts_struct_arrays() {
 #[test]
 fn emit_prints_c() {
     let out = Command::new(magicc())
-        .args(["emit", examples().join("hello.magic").to_str().unwrap()])
+        .args(["--backend", "c", "emit", examples().join("hello.magic").to_str().unwrap()])
         .output()
         .expect("run magicc");
     assert!(out.status.success());
@@ -253,7 +253,7 @@ fn dev_flag_builds() {
     let src = dir.path().join("d.magic");
     std::fs::write(&src, "fn main() { print(3); }\n").unwrap();
     let out = Command::new(magicc())
-        .args(["build", src.to_str().unwrap(), "--dev"])
+        .args(["--backend", "c", "build", src.to_str().unwrap(), "--dev"])
         .output()
         .expect("run magicc");
     assert!(
@@ -350,7 +350,7 @@ fn unroll_warns_for_gcc() {
     std::fs::write(&src, "fn main() { var s = 0; for i in 0..3 { s = s + i; } print(s); }\n")
         .unwrap();
     let out = Command::new(magicc())
-        .args(["build", src.to_str().unwrap(), "--unroll"])
+        .args(["--backend", "c", "build", src.to_str().unwrap(), "--unroll"])
         .output()
         .expect("run magicc");
     let err = String::from_utf8_lossy(&out.stderr);
@@ -371,7 +371,7 @@ fn unroll_flag_emits_straight_line_and_runs() {
     )
     .unwrap();
     let emitted = Command::new(magicc())
-        .args(["emit", src.to_str().unwrap(), "--unroll"])
+        .args(["--backend", "c", "emit", src.to_str().unwrap(), "--unroll"])
         .output()
         .expect("run magicc");
     let text = String::from_utf8_lossy(&emitted.stdout);
@@ -393,7 +393,7 @@ fn unroll_flag_emits_straight_line_and_runs() {
     )
     .unwrap();
     let emitted2 = Command::new(magicc())
-        .args(["emit", src2.to_str().unwrap(), "--unroll"])
+        .args(["--backend", "c", "emit", src2.to_str().unwrap(), "--unroll"])
         .output()
         .expect("run magicc");
     let text2 = String::from_utf8_lossy(&emitted2.stdout);
@@ -406,7 +406,7 @@ fn unroll_flag_emits_straight_line_and_runs() {
         return;
     }
     let out = Command::new(magicc())
-        .args(["build", src.to_str().unwrap(), "--unroll"])
+        .args(["--backend", "c", "build", src.to_str().unwrap(), "--unroll"])
         .output()
         .expect("run magicc");
     assert!(
@@ -487,7 +487,7 @@ fn cc_flag_overrides_cc_env() {
     let src = dir.path().join("f.magic");
     std::fs::write(&src, "fn main() { print(6 * 7); }\n").unwrap();
     let out = Command::new(magicc())
-        .args(["build", src.to_str().unwrap(), "--cc", "gcc -O1"])
+        .args(["--backend", "c", "build", src.to_str().unwrap(), "--cc", "gcc -O1"])
         .env("CC", "definitely-not-a-compiler")
         .output()
         .expect("run magicc");
@@ -535,7 +535,7 @@ fn changing_the_cc_rebuilds_the_program() {
     std::fs::write(&src, "fn main() { print(1); }\n").expect("write source");
     let first = Command::new(magicc())
         .current_dir(dir.path())
-        .args(["build", "hello.magic"])
+        .args(["--backend", "c", "build", "hello.magic"])
         .output()
         .expect("run magicc");
     assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
@@ -552,7 +552,7 @@ fn changing_the_cc_rebuilds_the_program() {
         .to_string();
     let second = Command::new(magicc())
         .current_dir(dir.path())
-        .args(["build", "hello.magic", "--cc", &format!("{default_cc} -O1")])
+        .args(["--backend", "c", "build", "hello.magic", "--cc", &format!("{default_cc} -O1")])
         .output()
         .expect("run magicc");
     assert!(second.status.success(), "{}", String::from_utf8_lossy(&second.stderr));
@@ -831,6 +831,7 @@ fn symlinked_artifacts_are_refused() {
     }
     let out = Command::new(magicc())
         .current_dir(dir.path())
+        .args(["--backend", "c"])
         .arg("build")
         .arg("t.magic")
         .output()
@@ -1356,4 +1357,52 @@ fn native_bool_arrays_are_bit_packed() {
         String::from_utf8_lossy(&run.stdout).trim(),
         "44\ntrue\nfalse\ntrue"
     );
+}
+
+#[test]
+fn default_backend_builds_ir_and_runs() {
+    let dir = TempDir::new("default_ir");
+    let src = dir.path().join("d.magic");
+    std::fs::write(&src, "fn main() { print(6 * 7); }\n").unwrap();
+    let out = Command::new(magicc())
+        .args(["build", src.to_str().unwrap()])
+        .output()
+        .expect("run magicc");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("(ir)"), "stdout was: {text}");
+    let exe = dir.path().join("d.bin");
+    let run = Command::new(&exe).output().expect("run built program");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
+}
+
+#[test]
+fn default_emit_prints_assembly() {
+    let out = Command::new(magicc())
+        .args(["emit", examples().join("hello.magic").to_str().unwrap()])
+        .output()
+        .expect("run magicc");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains(".globl"), "expected assembly, got: {text}");
+    assert!(!text.contains("int main(int magic_argc"), "unexpected C output");
+}
+
+#[test]
+fn default_ir_refuses_symlinked_assembly() {
+    let dir = TempDir::new("symlink_ir");
+    let victim = dir.path().join("victim.txt");
+    std::fs::write(&victim, "untouched").unwrap();
+    std::fs::write(dir.path().join("t.magic"), "fn main() { print(1); }\n").unwrap();
+    if std::os::unix::fs::symlink(&victim, dir.path().join("t.s")).is_err() {
+        return;
+    }
+    let out = Command::new(magicc())
+        .current_dir(dir.path())
+        .arg("build")
+        .arg("t.magic")
+        .output()
+        .expect("run magicc");
+    assert!(!out.status.success(), "build wrote through a symlink");
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched");
 }

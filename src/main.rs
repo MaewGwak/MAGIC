@@ -36,16 +36,30 @@ fn run() -> Result<(), String> {
         cc_override = Some(args[pos + 1].clone());
         args.drain(pos..=pos + 1);
     }
-    let mut backend = "c".to_string();
+    let mut backend = "ir".to_string();
     if let Some(pos) = args.iter().position(|a| a == "--backend") {
         if pos + 1 >= args.len() {
-            return Err("--backend needs a value: c or native".to_string());
+            return Err("--backend needs a value: c, native or ir".to_string());
         }
         backend = args[pos + 1].clone();
         args.drain(pos..=pos + 1);
     }
     if backend != "c" && backend != "native" && backend != "ir" {
-        return Err(format!("unknown backend `{}` (use c or native)", backend));
+        return Err(format!("unknown backend `{}` (use c, native or ir)", backend));
+    }
+    if backend != "c" {
+        if unroll {
+            return Err("--unroll is only supported with --backend c".to_string());
+        }
+        if dev {
+            return Err("--dev is only supported with --backend c".to_string());
+        }
+        if native {
+            return Err("--native (gcc -march=native) is only supported with --backend c".to_string());
+        }
+        if cc_override.is_some() {
+            return Err("--cc is only supported with --backend c".to_string());
+        }
     }
     let mut out_override: Option<PathBuf> = None;
     if let Some(pos) = args.iter().position(|a| a == "-o") {
@@ -67,16 +81,17 @@ fn run() -> Result<(), String> {
     if args.len() == 2 && (args[1] == "--help" || args[1] == "-h") {
         println!(
             "🔮 magicc {} - the MAGIC compiler\n\n\
-             usage: magicc <check|emit|build|run> <file.magic> [--native] [--report] [--dev] [--cc \"cmd\"] [--backend c|native] [-o out]\n\n\
+             usage: magicc <check|emit|build|run> <file.magic> [--report] [--backend c|native|ir] [-o out]\n\n\
              \x20 check   parse + type check only\n\
-             \x20 emit    print the generated C to stdout\n\
-             \x20 build   write <file>.c and compile it\n\
+             \x20 emit    print generated assembly (IR/native) or C (--backend c)\n\
+             \x20 build   build a native executable (default IR backend, as+ld)\n\
              \x20 run     build, then run\n\n\
-             \x20 --native  add -march=native to gcc\n\
+             \x20 --backend c|native|ir   code generator (default ir; c emits C11)\n\
+             \x20 --native  add -march=native to gcc (C backend only)\n\
              \x20 --report  print the static memory bound\n\
-             \x20 --dev     compile at -O0 for fast iteration\n\
+             \x20 --dev     compile at -O0 for fast iteration (C backend only)\n\
              \x20 --cc      C compiler command, may carry arguments (e.g. \"zig cc\")\n\
-             \x20 --unroll  unroll small constant for-loops (wins with clang/zig, loses with gcc)\n\
+             \x20 --unroll  unroll small constant for-loops (C backend only)\n\
              \x20 -o        output executable path (default: <file>.exe)",
             env!("CARGO_PKG_VERSION")
         );
@@ -88,7 +103,7 @@ fn run() -> Result<(), String> {
             env!("CARGO_PKG_VERSION")
         );
         return Err(
-            "usage: magicc <check|emit|build|run> <file.magic> [--native] [--report] [--dev]"
+            "usage: magicc <check|emit|build|run> <file.magic> [--report] [--backend c|native|ir]"
                 .to_string(),
         );
     }
@@ -103,9 +118,6 @@ fn run() -> Result<(), String> {
         load_source(Path::new(p), &mut visited, &mut source, &mut segments)?;
     }
 
-    let c = magic::compile_to_c_opts(&source, unroll)
-        .map_err(|e| map_diagnostic(e, &segments, src_path))?;
-
     if report_bound {
         let rows =
             magic::memory_report(&source).map_err(|e| map_diagnostic(e, &segments, src_path))?;
@@ -118,6 +130,20 @@ fn run() -> Result<(), String> {
 
     match command {
         "check" => {
+            match backend.as_str() {
+                "ir" => {
+                    magic::compile_to_asm_ir(&source)
+                        .map_err(|e| map_diagnostic(e, &segments, src_path))?;
+                }
+                "native" => {
+                    magic::compile_to_asm(&source)
+                        .map_err(|e| map_diagnostic(e, &segments, src_path))?;
+                }
+                _ => {
+                    magic::compile_to_c_opts(&source, unroll)
+                        .map_err(|e| map_diagnostic(e, &segments, src_path))?;
+                }
+            }
             println!("🔮 ok: {}", src_path.display());
             Ok(())
         }
@@ -126,7 +152,13 @@ fn run() -> Result<(), String> {
                 let asm = magic::compile_to_asm_ir(&source)
                     .map_err(|e| map_diagnostic(e, &segments, src_path))?;
                 print!("{}", asm);
+            } else if backend == "native" {
+                let asm = magic::compile_to_asm(&source)
+                    .map_err(|e| map_diagnostic(e, &segments, src_path))?;
+                print!("{}", asm);
             } else {
+                let c = magic::compile_to_c_opts(&source, unroll)
+                    .map_err(|e| map_diagnostic(e, &segments, src_path))?;
                 print!("{}", c);
             }
             Ok(())
@@ -140,8 +172,11 @@ fn run() -> Result<(), String> {
                     command == "run",
                     cc_override.as_deref(),
                     backend == "ir",
-                );
+                )
+                .map_err(|e| map_diagnostic(e, &segments, src_path));
             }
+            let c = magic::compile_to_c_opts(&source, unroll)
+                .map_err(|e| map_diagnostic(e, &segments, src_path))?;
             let dir = src_path.parent().unwrap_or_else(|| Path::new("."));
             let exe_path = out_override.clone().unwrap_or_else(|| {
                 if cfg!(windows) {
@@ -433,18 +468,62 @@ fn build_native(
     if !(cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) {
         return Err("the native backend currently targets Linux x86-64 only; use the C backend".to_string());
     }
-    let asm = if use_ir {
-        magic::compile_to_asm_ir(source)?
-    } else {
-        magic::compile_to_asm(source)?
-    };
-    let exe_path = out_override.unwrap_or_else(|| {
+    let dir = src_path.parent().unwrap_or_else(|| Path::new("."));
+    let exe_path = out_override.clone().unwrap_or_else(|| {
         if cfg!(windows) {
             with_ext(src_path, "exe")
         } else {
             with_ext(src_path, "bin")
         }
     });
+    let stem = if out_override.is_some() {
+        exe_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "out".to_string())
+    } else {
+        src_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "out".to_string())
+    };
+    let flags = format!(
+        "v1|{}|{:x}|{}|{}|{}|{}",
+        env!("CARGO_PKG_VERSION"),
+        fnv64(source.as_bytes()),
+        if use_ir { "ir" } else { "native" },
+        env::var("AS").unwrap_or_default(),
+        env::var("LD").unwrap_or_default(),
+        env::var("MAGIC_CRT_DIR").unwrap_or_default()
+    );
+    let stamp = dir.join(format!("{}.flags", stem));
+    let stamp_text = fs::read_to_string(&stamp).unwrap_or_default();
+    let flags_changed = stamp_text
+        .lines()
+        .next()
+        .map(|l| l.trim() != flags)
+        .unwrap_or(true);
+    let recorded_exe = stamp_text.lines().nth(1).unwrap_or("").trim().to_string();
+    let exe_matches = exe_path.exists()
+        && !recorded_exe.is_empty()
+        && recorded_exe == fnv_file(&exe_path);
+    if !flags_changed && exe_matches {
+        println!("\u{1F52E} up to date {}", exe_path.display());
+        if run {
+            let status = Command::new(&exe_path)
+                .status()
+                .map_err(|e| format!("failed to run {}: {}", exe_path.display(), e))?;
+            if !status.success() {
+                return Err("program exited with a non-zero status".to_string());
+            }
+        }
+        return Ok(());
+    }
+    let asm = if use_ir {
+        magic::compile_to_asm_ir(source)?
+    } else {
+        magic::compile_to_asm(source)?
+    };
     let asm_path = with_ext(src_path, "s");
     let obj_path = with_ext(src_path, "o");
     refuse_symlink(&asm_path)?;
@@ -514,6 +593,8 @@ fn build_native(
     if !status.success() {
         return Err(format!("{} failed while linking {}", ld_cmd, exe_path.display()));
     }
+    let stamp_body = format!("{}\n{}", flags, fnv_file(&exe_path));
+    let _ = write_atomic(&stamp, stamp_body.as_bytes());
     println!(
         "\u{1F52E} built {} ({})",
         exe_path.display(),

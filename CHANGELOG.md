@@ -30,6 +30,20 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.73 — the IR backend becomes the default (2026-11-06)
+
+`magicc build app.magic` now uses the typed-IR native backend by default: GNU assembler plus `ld`,
+no C compiler in the build path, stack traces included. `--backend native` selects the older AST
+emitter and `--backend c` keeps the C11 transpiler for portability and differential testing. The
+native/IR path gained its own incremental cache (compiler version + source hash + backend/tool
+identity + executable hash, so tampered or stale binaries rebuild and up-to-date runs skip the work),
+and diagnostics from the IR path are mapped to the original file:line through the same import-segment
+mapper as the C backend. `check` and `emit` follow the chosen backend (`emit` prints IR/assembly, or C
+with `--backend c`; a long-standing bug where `emit --backend native` printed C is fixed). Flags that
+only make sense for the C path (`--unroll`, `--dev`, `--cc`, gcc `--native`) are rejected instead of
+being silently ignored. C-specific CLI tests are now explicit about `--backend c`; three new tests
+cover the default IR build/run, assembly emission and symlinked-assembly refusal. 168 tests.
+
 ## v0.8.72 — final IR parity pass (2026-11-06)
 
 The remaining C-only language surface is now covered by the IR: `env` (`getenv` wrapper), string

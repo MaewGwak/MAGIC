@@ -3,7 +3,7 @@
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language that
 compiles to C11 and runs anywhere a C compiler does.
 
-**Status: v0.8** — 165 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.8** — 168 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is ~2.5k lines of dependency-free Rust; programs go source → tokens → AST → type
 check → C11 → native binary.
 
@@ -16,7 +16,7 @@ check → C11 → native binary.
   `net_connect`/`net_read`/`net_write`, with the same bounds checking as arrays.
 - **Collections are data plus functions**: `examples/hashmap.magic` is an open-addressing map over two
   arrays; 1,000,000 inserts and lookups take 38 ms against C's 37 ms with the same checksum.
-- **Native x86-64 backend (experimental)**: `magicc build app.magic --backend native` emits GNU
+- **Native x86-64 backend (default)**: `magicc build app.magic` now emits the optimized typed IR to GNU
   assembler directly and links with `ld` — no C compiler in the path. It builds `sieve`, `hashmap`, the PostgreSQL wire-protocol server and the
   2,000-function test in 41 ms, with sockets, file I/O and process arguments wired to libc against the C backend's 96 ms, Goose's 120 ms and
   rustc's 223 ms. Arrays, structs, floats and sockets still use the C backend.
