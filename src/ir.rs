@@ -3893,21 +3893,27 @@ pub fn emit(prog: &IrProgram) -> String {
                             out.push_str("    call memset@PLT\n");
                         } else {
                             let esz = *esz as i64;
-                            out.push_str(&format!(
-                                "    lea (%r10,%r11,{}), %r9\n",
-                                esz
-                            ));
-                            out.push_str("1:\n");
-                            out.push_str(&format!("    lea {}(%r10), %rcx\n", esz * 4));
-                            out.push_str("    cmp %r9, %rcx\n    ja 3f\n");
-                            for k in 0..4 {
-                                match esz {
-                                    1 => out.push_str(&format!("    mov %r8b, {}(%r10)\n", k)),
-                                    4 => out.push_str(&format!("    mov %r8d, {}(%r10)\n", k * 4)),
-                                    _ => out.push_str(&format!("    mov %r8, {}(%r10)\n", k * 8)),
+                            out.push_str(&format!("    lea (%r10,%r11,{}), %r9\n", esz));
+                            if esz == 4 {
+                                out.push_str("    movd %r8d, %xmm0\n    pshufd $0, %xmm0, %xmm0\n");
+                                out.push_str("1:\n    lea 16(%r10), %rcx\n");
+                                out.push_str("    cmp %r9, %rcx\n    ja 3f\n");
+                                out.push_str("    movups %xmm0, (%r10)\n    mov %rcx, %r10\n    jmp 1b\n");
+                            } else if esz == 8 {
+                                out.push_str("    movq %r8, %xmm0\n    punpcklqdq %xmm0, %xmm0\n");
+                                out.push_str("1:\n    lea 32(%r10), %rcx\n");
+                                out.push_str("    cmp %r9, %rcx\n    ja 3f\n");
+                                out.push_str("    movups %xmm0, (%r10)\n    movups %xmm0, 16(%r10)\n");
+                                out.push_str("    mov %rcx, %r10\n    jmp 1b\n");
+                            } else {
+                                out.push_str("1:\n");
+                                out.push_str(&format!("    lea {}(%r10), %rcx\n", esz * 4));
+                                out.push_str("    cmp %r9, %rcx\n    ja 3f\n");
+                                for k in 0..4 {
+                                    out.push_str(&format!("    mov %r8b, {}(%r10)\n", k));
                                 }
+                                out.push_str("    mov %rcx, %r10\n    jmp 1b\n");
                             }
-                            out.push_str("    mov %rcx, %r10\n    jmp 1b\n");
                             out.push_str("3:\n");
                             out.push_str("    cmp %r9, %r10\n    jae 2f\n");
                             match esz {

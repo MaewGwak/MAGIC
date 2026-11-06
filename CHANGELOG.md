@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.43 — SSE2 array fills in the IR (2026-11-06)
+
+Non-zero array initialisers now use packed 16-byte stores: four `i32` or `u32` elements are
+broadcast with `pshufd` and written with one `movups`, and two 8-byte elements are replicated with
+`punpcklqdq` and written two per iteration; a scalar tail handles the remainder. A 20M-element
+`[1; n]` fill drops 35 → 32 ms and the array sum 58 → 54 ms. Byte fills keep the scalar unrolled
+loop, and boolean fills still use `memset`.
+
 ## v0.8.42 — soundness fixes in bounds-check elimination (2026-11-06)
 
 Two security issues in the IR's bounds elimination are fixed. First, the proof only established an
