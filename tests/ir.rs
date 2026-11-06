@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 fn cc() -> Option<String> {
     for name in ["gcc", "clang", "cc"] {
@@ -31,8 +32,24 @@ fn run(src: &str, dir: &Path, name: &str, ir: bool, cc_cmd: &str) -> Option<(Str
             return None;
         }
     }
-    let out = Command::new(&exe).output().ok()?;
-    Some((String::from_utf8_lossy(&out.stdout).to_string(), out.status.code()))
+    let mut child = Command::new(&exe).stdout(std::process::Stdio::piped()).spawn().ok()?;
+    let start = Instant::now();
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) => {
+                let out = child.wait_with_output().ok()?;
+                return Some((String::from_utf8_lossy(&out.stdout).to_string(), status.code()));
+            }
+            None => {
+                if start.elapsed() > Duration::from_secs(60) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
 }
 
 #[test]

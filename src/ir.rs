@@ -13,7 +13,7 @@
 use crate::ast::{BinOp, Expr, ExprKind, Func, ParamTy, Program, Stmt, StmtKind, Ty, UnOp};
 use std::collections::HashMap;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Value(pub u32);
 
 #[derive(Clone, Copy, Debug)]
@@ -507,6 +507,373 @@ fn lower_func(f: &Func) -> Result<IrFunc, String> {
     Ok(out)
 }
 
+fn voff(f: &IrFunc, v: Value) -> i64 {
+    8 * (f.nvars as i64 + v.0 as i64 + 1)
+}
+
+fn varoff(i: usize) -> i64 {
+    8 * (i as i64 + 1)
+}
+
+fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
+    match ins {
+        Instr::Const { dst, .. } => defs.push(*dst),
+        Instr::LoadVar { dst, .. } => defs.push(*dst),
+        Instr::StoreVar { src, .. } => uses.push(*src),
+        Instr::Bin { dst, l, r, .. } => {
+            uses.push(*l);
+            uses.push(*r);
+            defs.push(*dst);
+        }
+        Instr::Un { dst, a, .. } => {
+            uses.push(*a);
+            defs.push(*dst);
+        }
+        Instr::Trunc { dst, a, .. } => {
+            uses.push(*a);
+            defs.push(*dst);
+        }
+        Instr::Call { dst, args, .. } => {
+            uses.extend(args.iter().copied());
+            if let Some(d) = dst {
+                defs.push(*d);
+            }
+        }
+        Instr::Print { v, .. } => uses.push(*v),
+        Instr::Ret(v) => {
+            if let Some(v) = v {
+                uses.push(*v);
+            }
+        }
+        Instr::Br { cond, .. } => uses.push(*cond),
+        Instr::Jmp(_) => {}
+        Instr::Alloc { len, .. } => uses.push(*len),
+        Instr::BoundsCheck { idx, .. } => uses.push(*idx),
+        Instr::IndexLoad { dst, idx, .. } => {
+            uses.push(*idx);
+            defs.push(*dst);
+        }
+        Instr::IndexStore { idx, src, .. } => {
+            uses.push(*idx);
+            uses.push(*src);
+        }
+    }
+}
+
+fn block_successors(instrs: &[Instr]) -> Vec<usize> {
+    match instrs.last() {
+        Some(Instr::Br { then_bb, else_bb, .. }) => vec![*then_bb, *else_bb],
+        Some(Instr::Jmp(bb)) => vec![*bb],
+        _ => Vec::new(),
+    }
+}
+
+/// Blocks that call out (printf/calloc/panic) or divide need the simple
+/// slot-based emitter; everything else runs through the register allocator.
+fn slow_block(instrs: &[Instr]) -> bool {
+    instrs.iter().any(|i| {
+        matches!(
+            i,
+            Instr::Call { .. }
+                | Instr::Alloc { .. }
+                | Instr::Print { .. }
+                | Instr::Bin { op: Op::Div | Op::Rem, .. }
+        )
+    })
+}
+
+const POOL: [(&str, &str, &str); 6] = [
+    ("%rdx", "%edx", "%dl"),
+    ("%rsi", "%esi", "%sil"),
+    ("%rdi", "%edi", "%dil"),
+    ("%r8", "%r8d", "%r8b"),
+    ("%r9", "%r9d", "%r9b"),
+    ("%r11", "%r11d", "%r11b"),
+];
+
+struct RegAlloc<'a> {
+    out: &'a mut String,
+    f: &'a IrFunc,
+    live_out: &'a std::collections::HashSet<Value>,
+    map: HashMap<Value, (usize, bool)>,
+    free: Vec<usize>,
+}
+
+impl<'a> RegAlloc<'a> {
+    fn spill(&mut self) -> usize {
+        // Always write a defined value back: it may still be used later in the
+        // block even when it is not live out.
+        let victim = *self.map.keys().next().expect("non-empty");
+        let (idx, is_def) = self.map.remove(&victim).unwrap();
+        if is_def {
+            self.out.push_str(&format!(
+                "    mov {}, -{}(%rbp)\n",
+                POOL[idx].0,
+                voff(self.f, victim)
+            ));
+        }
+        idx
+    }
+
+    fn spill_excluding(&mut self, protected: &[usize]) -> usize {
+        let victim = self
+            .map
+            .keys()
+            .copied()
+            .find(|v| {
+                let idx = self.map[v].0;
+                !protected.contains(&idx)
+            })
+            .expect("a register outside the protected set");
+        let (idx, is_def) = self.map.remove(&victim).unwrap();
+        if is_def {
+            self.out.push_str(&format!(
+                "    mov {}, -{}(%rbp)\n",
+                POOL[idx].0,
+                voff(self.f, victim)
+            ));
+        }
+        idx
+    }
+
+    fn alloc(&mut self) -> usize {
+        if self.free.is_empty() {
+            let idx = self.spill();
+            self.free.push(idx);
+        }
+        self.free.pop().unwrap()
+    }
+
+    fn alloc_excluding(&mut self, protected: &[usize]) -> usize {
+        if self.free.is_empty() {
+            let idx = self.spill_excluding(protected);
+            self.free.push(idx);
+        }
+        self.free.pop().unwrap()
+    }
+
+    fn operand(&mut self, v: Value) -> usize {
+        if let Some((i, _)) = self.map.get(&v) {
+            return *i;
+        }
+        let idx = self.alloc();
+        self.out.push_str(&format!(
+            "    mov -{}(%rbp), {}\n",
+            voff(self.f, v),
+            POOL[idx].0
+        ));
+        self.map.insert(v, (idx, false));
+        idx
+    }
+
+    fn operand_excluding(&mut self, v: Value, protected: &[usize]) -> usize {
+        if let Some((i, _)) = self.map.get(&v) {
+            return *i;
+        }
+        let idx = self.alloc_excluding(protected);
+        self.out.push_str(&format!(
+            "    mov -{}(%rbp), {}\n",
+            voff(self.f, v),
+            POOL[idx].0
+        ));
+        self.map.insert(v, (idx, false));
+        idx
+    }
+
+    fn dst(&mut self, v: Value) -> usize {
+        let idx = self.alloc();
+        self.map.insert(v, (idx, true));
+        idx
+    }
+
+    fn dst_excluding(&mut self, v: Value, protected: &[usize]) -> usize {
+        let idx = self.alloc_excluding(protected);
+        self.map.insert(v, (idx, true));
+        idx
+    }
+
+    fn def_store(&mut self, v: Value, idx: usize) {
+        if self.live_out.contains(&v) {
+            self.out.push_str(&format!(
+                "    mov {}, -{}(%rbp)\n",
+                POOL[idx].0,
+                voff(self.f, v)
+            ));
+        }
+    }
+}
+
+fn emit_fast_block(
+    out: &mut String,
+    f: &IrFunc,
+    instrs: &[Instr],
+    live_out: &std::collections::HashSet<Value>,
+    name: &str,
+) {
+    let mut ra = RegAlloc {
+        out,
+        f,
+        live_out,
+        map: HashMap::new(),
+        free: (0..POOL.len()).rev().collect(),
+    };
+    for ins in instrs {
+        match ins {
+            Instr::Const { dst, v } => {
+                let d = ra.dst(*dst);
+                if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
+                    ra.out.push_str(&format!("    mov ${}, {}\n", v, POOL[d].0));
+                } else {
+                    ra.out.push_str(&format!("    movabs ${}, {}\n", v, POOL[d].0));
+                }
+                ra.def_store(*dst, d);
+            }
+            Instr::LoadVar { dst, var } => {
+                let d = ra.dst(*dst);
+                ra.out.push_str(&format!(
+                    "    mov -{}(%rbp), {}\n",
+                    varoff(*var),
+                    POOL[d].0
+                ));
+                ra.def_store(*dst, d);
+            }
+            Instr::StoreVar { var, src } => {
+                let a = ra.operand(*src);
+                ra.out.push_str(&format!(
+                    "    mov {}, -{}(%rbp)\n",
+                    POOL[a].0,
+                    varoff(*var)
+                ));
+            }
+            Instr::Bin { dst, op, l, r } => {
+                let a = ra.operand(*l);
+                let b = ra.operand_excluding(*r, &[a]);
+                let d = ra.dst_excluding(*dst, &[a, b]);
+                ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
+                match op {
+                    Op::Add => ra.out.push_str(&format!("    add {}, {}\n", POOL[b].0, POOL[d].0)),
+                    Op::Sub => ra.out.push_str(&format!("    sub {}, {}\n", POOL[b].0, POOL[d].0)),
+                    Op::Mul => ra
+                        .out
+                        .push_str(&format!("    imul {}, {}\n", POOL[b].0, POOL[d].0)),
+                    Op::And => ra.out.push_str(&format!("    and {}, {}\n", POOL[b].0, POOL[d].0)),
+                    Op::Or => ra.out.push_str(&format!("    or {}, {}\n", POOL[b].0, POOL[d].0)),
+                    Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
+                        ra.out.push_str(&format!("    cmp {}, {}\n", POOL[b].0, POOL[d].0));
+                        let set = match op {
+                            Op::Eq => "sete",
+                            Op::Ne => "setne",
+                            Op::Lt => "setl",
+                            Op::Le => "setle",
+                            Op::Gt => "setg",
+                            Op::Ge => "setge",
+                            _ => unreachable!(),
+                        };
+                        ra.out.push_str(&format!("    {} %al\n", set));
+                        ra.out.push_str(&format!("    movzbq %al, {}\n", POOL[d].0));
+                    }
+                    Op::Div | Op::Rem => unreachable!("slow block split"),
+                }
+                ra.def_store(*dst, d);
+            }
+            Instr::Un { dst, neg, a } => {
+                let s = ra.operand(*a);
+                let d = ra.dst_excluding(*dst, &[s]);
+                ra.out.push_str(&format!("    mov {}, {}\n", POOL[s].0, POOL[d].0));
+                if *neg {
+                    ra.out.push_str(&format!("    neg {}\n", POOL[d].0));
+                } else {
+                    ra.out.push_str(&format!("    xor $1, {}\n", POOL[d].0));
+                }
+                ra.def_store(*dst, d);
+            }
+            Instr::Trunc { dst, ty, a } => {
+                let s = ra.operand(*a);
+                let d = ra.dst_excluding(*dst, &[s]);
+                ra.out.push_str(&format!("    mov {}, {}\n", POOL[s].0, POOL[d].0));
+                match ty {
+                    Ty::I32 => ra
+                        .out
+                        .push_str(&format!("    movslq {}, {}\n", POOL[d].1, POOL[d].0)),
+                    Ty::U8 => ra
+                        .out
+                        .push_str(&format!("    movzbq {}, {}\n", POOL[d].2, POOL[d].0)),
+                    Ty::Bool => {
+                        ra.out.push_str(&format!("    test {}, {}\n", POOL[d].0, POOL[d].0));
+                        ra.out.push_str("    setne %al\n");
+                        ra.out.push_str(&format!("    movzbq %al, {}\n", POOL[d].0));
+                    }
+                    _ => {}
+                }
+                ra.def_store(*dst, d);
+            }
+            Instr::BoundsCheck { idx, len, line } => {
+                let a = ra.operand(*idx);
+                ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                match len {
+                    LenRef::Const(n) => {
+                        ra.out.push_str(&format!("    mov ${}, %rcx\n", n));
+                    }
+                    LenRef::Var(v) => {
+                        ra.out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                    }
+                }
+                ra.out.push_str("    cmp %rcx, %rax\n    jb 1f\n");
+                ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                ra.out.push_str("    call .Lir_panic\n1:\n");
+            }
+            Instr::IndexLoad { dst, ptr_var, idx, elem } => {
+                let a = ra.operand(*idx);
+                ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                match elem {
+                    Ty::U8 => ra.out.push_str("    movzbq (%r10,%rax,1), %rax\n"),
+                    Ty::I32 => ra.out.push_str("    movslq (%r10,%rax,4), %rax\n"),
+                    _ => ra.out.push_str("    mov (%r10,%rax,8), %rax\n"),
+                }
+                let d = ra.dst(*dst);
+                ra.out.push_str(&format!("    mov %rax, {}\n", POOL[d].0));
+                ra.def_store(*dst, d);
+            }
+            Instr::IndexStore { ptr_var, idx, elem, src } => {
+                let s = ra.operand(*src);
+                ra.out.push_str(&format!("    mov {}, %rcx\n", POOL[s].0));
+                let a = ra.operand(*idx);
+                ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                match elem {
+                    Ty::U8 => ra.out.push_str("    movb %cl, (%r10,%rax,1)\n"),
+                    Ty::I32 => ra.out.push_str("    movl %ecx, (%r10,%rax,4)\n"),
+                    _ => ra.out.push_str("    movq %rcx, (%r10,%rax,8)\n"),
+                }
+            }
+            Instr::Br { cond, then_bb, else_bb } => {
+                let c = ra.operand(*cond);
+                ra.out.push_str(&format!("    cmp $0, {}\n", POOL[c].0));
+                ra.out.push_str(&format!(
+                    "    jne .L{}_{}\n    jmp .L{}_{}\n",
+                    name, then_bb, name, else_bb
+                ));
+            }
+            Instr::Jmp(bb) => ra
+                .out
+                .push_str(&format!("    jmp .L{}_{}\n", name, bb)),
+            Instr::Ret(v) => {
+                if let Some(v) = v {
+                    let a = ra.operand(*v);
+                    ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                } else {
+                    ra.out.push_str("    xor %eax, %eax\n");
+                }
+                ra.out.push_str(&format!("    jmp .L{}_ret\n", name));
+            }
+            Instr::Call { .. } | Instr::Alloc { .. } | Instr::Print { .. } => {
+                unreachable!("slow block")
+            }
+        }
+    }
+}
+
 pub fn emit(prog: &IrProgram) -> String {
     let mut out = String::new();
     out.push_str(".text\n");
@@ -549,17 +916,68 @@ pub fn emit(prog: &IrProgram) -> String {
         if frame > 0 {
             out.push_str(&format!("    sub ${}, %rsp\n", frame));
         }
-        let voff = |v: Value| -> i64 { 8 * (f.nvars as i64 + v.0 as i64 + 1) };
-        let varoff = |i: usize| -> i64 { 8 * (i as i64 + 1) };
         let regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
         for i in 0..f.nparams.min(6) {
             out.push_str(&format!("    mov {}, -{}(%rbp)\n", regs[i], varoff(i)));
         }
         let lblock = |bb: usize| format!(".L{}_{}", f.name, bb);
+        let nblocks = f.blocks.len();
+        let mut uses: Vec<std::collections::HashSet<Value>> = vec![Default::default(); nblocks];
+        let mut defs: Vec<std::collections::HashSet<Value>> = vec![Default::default(); nblocks];
+        for (bi, b) in f.blocks.iter().enumerate() {
+            let mut defined: std::collections::HashSet<Value> = Default::default();
+            for ins in &b.instrs {
+                let mut u = Vec::new();
+                let mut d = Vec::new();
+                instr_uses_defs(ins, &mut u, &mut d);
+                for v in u {
+                    if !defined.contains(&v) {
+                        uses[bi].insert(v);
+                    }
+                }
+                for v in d {
+                    defs[bi].insert(v);
+                    defined.insert(v);
+                }
+            }
+        }
+        let mut live_in: Vec<std::collections::HashSet<Value>> = vec![Default::default(); nblocks];
+        let mut live_out: Vec<std::collections::HashSet<Value>> = vec![Default::default(); nblocks];
+        loop {
+            let mut changed = false;
+            for bi in (0..nblocks).rev() {
+                let mut out_set: std::collections::HashSet<Value> = Default::default();
+                for succ in block_successors(&f.blocks[bi].instrs) {
+                    if succ < nblocks {
+                        for v in &live_in[succ] {
+                            out_set.insert(*v);
+                        }
+                    }
+                }
+                let mut in_set = uses[bi].clone();
+                for v in &out_set {
+                    if !defs[bi].contains(v) {
+                        in_set.insert(*v);
+                    }
+                }
+                if out_set != live_out[bi] || in_set != live_in[bi] {
+                    live_out[bi] = out_set;
+                    live_in[bi] = in_set;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
         for (bb, b) in f.blocks.iter().enumerate() {
             out.push_str(&format!("{}:\n", lblock(bb)));
+            if !slow_block(&b.instrs) {
+                emit_fast_block(&mut out, f, &b.instrs, &live_out[bb], &f.name);
+                continue;
+            }
             for ins in &b.instrs {
-                let ld = |v: Value| format!("    mov -{}(%rbp), %rax\n", voff(v));
+                let ld = |v: Value| format!("    mov -{}(%rbp), %rax\n", voff(f, v));
                 match ins {
                     Instr::Const { dst, v } => {
                         if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
@@ -567,11 +985,11 @@ pub fn emit(prog: &IrProgram) -> String {
                         } else {
                             out.push_str(&format!("    movabs ${}, %rax\n", v));
                         }
-                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(*dst)));
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
                     Instr::LoadVar { dst, var } => {
                         out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*var)));
-                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(*dst)));
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
                     Instr::StoreVar { var, src } => {
                         out.push_str(&ld(*src));
@@ -579,7 +997,7 @@ pub fn emit(prog: &IrProgram) -> String {
                     }
                     Instr::Bin { dst, op, l, r } => {
                         out.push_str(&ld(*l));
-                        out.push_str(&format!("    mov -{}(%rbp), %rcx\n", voff(*r)));
+                        out.push_str(&format!("    mov -{}(%rbp), %rcx\n", voff(f, *r)));
                         match op {
                             Op::Add => out.push_str("    add %rcx, %rax\n"),
                             Op::Sub => out.push_str("    sub %rcx, %rax\n"),
@@ -609,7 +1027,7 @@ pub fn emit(prog: &IrProgram) -> String {
                             Op::And => out.push_str("    and %rcx, %rax\n"),
                             Op::Or => out.push_str("    or %rcx, %rax\n"),
                         }
-                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(*dst)));
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
                     Instr::Un { dst, neg, a } => {
                         out.push_str(&ld(*a));
@@ -618,7 +1036,7 @@ pub fn emit(prog: &IrProgram) -> String {
                         } else {
                             out.push_str("    xor $1, %rax\n");
                         }
-                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(*dst)));
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
                     Instr::Trunc { dst, ty, a } => {
                         out.push_str(&ld(*a));
@@ -630,15 +1048,15 @@ pub fn emit(prog: &IrProgram) -> String {
                             }
                             _ => {}
                         }
-                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(*dst)));
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
                     Instr::Call { dst, name, args } => {
                         for (i, a) in args.iter().enumerate() {
-                            out.push_str(&format!("    mov -{}(%rbp), {}\n", voff(*a), regs[i]));
+                            out.push_str(&format!("    mov -{}(%rbp), {}\n", voff(f, *a), regs[i]));
                         }
                         out.push_str(&format!("    call {}\n", name));
                         if let Some(d) = dst {
-                            out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(*d)));
+                            out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *d)));
                         }
                     }
                     Instr::Print { v, boolean } => {
@@ -705,7 +1123,7 @@ pub fn emit(prog: &IrProgram) -> String {
                                 out.push_str("    mov (%r10,%rax,8), %rax\n");
                             }
                         }
-                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(*dst)));
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
                     Instr::IndexStore { ptr_var, idx, elem, src } => {
                         out.push_str(&ld(*src));

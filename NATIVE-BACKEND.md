@@ -106,8 +106,13 @@ backend; matmul takes 481 ms against C's 31 ms because every value still has a s
 
 Correctness is checked by `tests/ir.rs`: ten inline programs, `examples/fib`, `for`, `sum`,
 `array_param` and `bench-suite/matmul_magic` must produce byte-identical output through the C and IR
-backends. The register allocator will replace the per-value stack slots; the test and `native_diff`
-remain the gates.
+backends.
+
+v0.8.12 adds a per-block linear-scan allocator: six caller-saved registers for temporaries,
+live-out/spilled values stored to slots, and a slot-mode fallback for blocks containing calls,
+`printf`, `calloc` or division. Matmul keeps its checksum and improves from 481 ms to ~297 ms
+(C: 27 ms). Variables still live in memory; promoting them (with phi-free loop analysis or a
+slot-elimination pass) is the next allocation step.
 
 ## Differential harness## Differential harness
 

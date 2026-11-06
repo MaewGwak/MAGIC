@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.12 — block register allocation for the IR (2026-11-06)
+
+The IR emitter now runs a linear-scan allocation per basic block: six caller-saved registers hold
+temporaries, values that are live out or spilled are written to their slots, and instructions that
+call out (`printf`, `calloc`, calls, division) fall back to the slot-based emitter. Two allocator
+bugs were caught by the matmul differential case: a second operand could evict the first while being
+loaded, and spilling dropped values still used later in the block. IR matmul keeps its checksum
+326316140 and drops from 481 ms to ~297 ms (C: 27 ms); the remaining gap is variables in memory,
+which is the next allocation step.
+
 ## v0.8.11 — IR arrays, bounds checks and array parameters (2026-11-06)
 
 The typed IR now has heap arrays: `calloc` allocation with a zero initializer (or an IR-generated
