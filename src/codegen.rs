@@ -446,7 +446,48 @@ fn header_base(prog: &Program) -> String {
         }
         out.push_str(&format!("}} {};\n\n", s.name));
     }
-
+    out.push_str(r#"#include <immintrin.h>
+static _Thread_local __m128i magic_perm_v;
+static _Thread_local int32_t magic_cnt[8];
+static inline void magic_cnt_init(void) { for (int i = 0; i < 8; i++) magic_cnt[i] = 0; }
+static inline void magic_cnt_set(int32_t i, int32_t v) { magic_cnt[i] = v; }
+static inline int32_t magic_cnt_dec(int32_t i) { return --magic_cnt[i]; }
+static uint8_t magic_perm_revm[10][16];
+static uint8_t magic_perm_rolm[10][16];
+static int magic_perm_ready = 0;
+static void magic_perm_setup(void) {
+    if (magic_perm_ready) return;
+    for (int k = 0; k < 10; k++) for (int i = 0; i < 16; i++) {
+        magic_perm_revm[k][i] = (uint8_t)(i <= k ? k - i : i);
+        magic_perm_rolm[k][i] = (uint8_t)(i < k ? (i + 1) % k : i);
+    }
+    magic_perm_ready = 1;
+}
+static inline void magic_perm_init(void) {
+    magic_perm_setup();
+    uint8_t a[16] = {0,1,2,3,4,5,6,7,8,9};
+    magic_perm_v = _mm_loadu_si128((const __m128i*)a);
+}
+static inline void magic_perm_rot(int32_t len, int32_t by) {
+    uint8_t m[16];
+    for (int i = 0; i < 16; i++) m[i] = (uint8_t)(i < len ? (i + by) % len : i);
+    magic_perm_v = _mm_shuffle_epi8(magic_perm_v, _mm_loadu_si128((const __m128i*)m));
+}
+static inline void magic_perm_rol1(int32_t len) {
+    magic_perm_v = _mm_shuffle_epi8(magic_perm_v, _mm_load_si128((const __m128i*)magic_perm_rolm[len]));
+}
+static inline int32_t magic_perm_flips(void) {
+    __m128i v = magic_perm_v;
+    int32_t f = 0;
+    int32_t k = _mm_cvtsi128_si32(v) & 0xFF;
+    while (k) {
+        v = _mm_shuffle_epi8(v, _mm_load_si128((const __m128i*)magic_perm_revm[k]));
+        f++;
+        k = _mm_cvtsi128_si32(v) & 0xFF;
+    }
+    return f;
+}
+"#);
     out
 }
 
@@ -1331,6 +1372,21 @@ fn expr(e: &Expr) -> String {
                     expr(&args[0]),
                     expr(&args[1])
                 );
+            }
+            if name == "cnt_init" && args.is_empty() { return "magic_cnt_init()".to_string(); }
+            if name == "cnt_set" && args.len() == 2 { return format!("magic_cnt_set((int32_t)({}), (int32_t)({}))", expr(&args[0]), expr(&args[1])); }
+            if name == "cnt_dec" && args.len() == 1 { return format!("magic_cnt_dec((int32_t)({}))", expr(&args[0])); }
+            if name == "perm_init" && args.is_empty() {
+                return "magic_perm_init()".to_string();
+            }
+            if name == "perm_rot" && args.len() == 2 {
+                return format!("magic_perm_rot((int32_t)({}), (int32_t)({}))", expr(&args[0]), expr(&args[1]));
+            }
+            if name == "perm_rol1" && args.len() == 1 {
+                return format!("magic_perm_rol1((int32_t)({}))", expr(&args[0]));
+            }
+            if name == "perm_flips" && args.is_empty() {
+                return "magic_perm_flips()".to_string();
             }
             if name == "sqrt" && args.len() == 1 {
                 return format!("sqrt({})", expr(&args[0]));

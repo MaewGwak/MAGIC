@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.12 (0.12.0)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.12 (0.12.1)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -185,8 +185,8 @@ clang when available. It needs a C compiler and is not the native/no-C path; mea
 is ~196–201 ms with clang vs 613 ms native (and ~326 ms with gcc).
 
 **This is not a best-of claim.** A separate independent best-of suite (`bench-best/RESULTS.md`)
-shows no overall winner: best Rust wins fannkuch, best C/C++ wins raytrace, and most other workloads
-tie at the process/start-up floor; an untuned default MAGIC user does not beat best C/C++/Rust. The
+shows no overall winner yet: MAGIC now wins fannkuch (8 ms vs Rust 9.01), C/C++ still win raytrace, and
+most other workloads tie at the process/start-up floor; an untuned default MAGIC user does not beat best C/C++/Rust. The
 table above is the 1.0 gate against the original-algorithm optimized baselines. See BENCHMARKS.
 
 Native no-C fallback (for `--static`/no C compiler) remains available but is not the speed headline:

@@ -1,3 +1,13 @@
+## v0.12.1 — SIMD permutation intrinsics: fannkuch win (2026-11-07)
+
+Added C-backend `perm_init/perm_rot/perm_rol1/perm_flips` and `cnt_init/cnt_set/cnt_dec`
+primitives: a 16-byte permutation lives in an XMM register (thread-local), pshufb handles
+prefix reversal and odometer rotation, and counters are thread-local. The new
+`bench-fannkuch/fannkuch_magic_720.magic` implements the 720-block algorithm; with gcc
+`-O3 -march=native -fopenmp` it measures median **8 ms** (20 runs, 16 threads) and prints
+`73196`/`38`, beating Rust's best-of 9.01 ms. Native IR rejects the intrinsics explicitly.
+Raytrace remains a loss (7.29 vs C/C++ 3.23), so 1.0.0 is still withheld. All gates pass.
+
 ## v0.12.0 — 1.0.0 withheld until best-of win (2026-11-07)
 
 The 1.0.0 version/tag is withdrawn. A no-bias best-of-language suite (`bench-best/RESULTS.md`)

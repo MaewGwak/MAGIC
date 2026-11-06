@@ -1,0 +1,60 @@
+// Fannkuch-redux n=10, 720 blocks of 7! permutations.
+// perm_* are C-backend SIMD primitives: a 16-byte permutation kept in an XMM
+// register (thread-local), pshufb for prefix reversal and odometer rotation.
+fn main() {
+    let blocks = 720;
+    var sums: [i64] = [0; blocks];
+    var maxes: [i32] = [0; blocks];
+
+
+    par for q in 0..blocks {
+        perm_init();
+        perm_rot(10, q / 72);
+        perm_rot(9, (q / 8) % 9);
+        perm_rot(8, q % 8);
+
+        cnt_init();
+        var r = 7;
+        var sum: i64 = 0;
+        var mx = 0;
+        var parity = 0;
+        var running = true;
+        while running {
+            while r != 1 {
+                cnt_set(r - 1, r);
+                r = r - 1;
+            }
+            var fl = perm_flips();
+            if fl > mx { mx = fl; }
+            if parity == 0 { sum = sum + (fl as i64); }
+            else { sum = sum - (fl as i64); }
+            parity = 1 - parity;
+
+            var advanced = false;
+            while !advanced {
+                if r == 7 {
+                    running = false;
+                    advanced = true;
+                } else {
+                    perm_rol1(r + 1);
+                    var cv = cnt_dec(r);
+                    if cv > 0 { advanced = true; }
+                    else { r = r + 1; }
+                }
+            }
+        }
+        sums[q] = sum;
+        maxes[q] = mx;
+    }
+
+    var checksum: i64 = 0;
+    var mxall = 0;
+    var u = 0;
+    while u < blocks {
+        checksum = checksum + sums[u];
+        if maxes[u] > mxall { mxall = maxes[u]; }
+        u = u + 1;
+    }
+    print(checksum);
+    print(mxall);
+}

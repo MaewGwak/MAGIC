@@ -1039,6 +1039,48 @@ impl Checker {
                     }
                     return Ok(Ty::Void);
                 }
+                if name == "cnt_init" {
+                    if !args.is_empty() { return Err(format!("{}: cnt_init takes no arguments", e.line)); }
+                    return Ok(Ty::Void);
+                }
+                if name == "cnt_set" {
+                    if args.len() != 2 { return Err(format!("{}: cnt_set takes 2 arguments", e.line)); }
+                    self.check_expr(&args[0], Some(Ty::I32), scopes)?;
+                    self.check_expr(&args[1], Some(Ty::I32), scopes)?;
+                    return Ok(Ty::Void);
+                }
+                if name == "cnt_dec" {
+                    if args.len() != 1 { return Err(format!("{}: cnt_dec takes 1 argument", e.line)); }
+                    self.check_expr(&args[0], Some(Ty::I32), scopes)?;
+                    return Ok(Ty::I32);
+                }
+                if name == "perm_init" {
+                    if !args.is_empty() {
+                        return Err(format!("{}: perm_init takes no arguments", e.line));
+                    }
+                    return Ok(Ty::Void);
+                }
+                if name == "perm_rot" {
+                    if args.len() != 2 {
+                        return Err(format!("{}: perm_rot takes 2 arguments", e.line));
+                    }
+                    self.check_expr(&args[0], Some(Ty::I32), scopes)?;
+                    self.check_expr(&args[1], Some(Ty::I32), scopes)?;
+                    return Ok(Ty::Void);
+                }
+                if name == "perm_rol1" {
+                    if args.len() != 1 {
+                        return Err(format!("{}: perm_rol1 takes 1 argument", e.line));
+                    }
+                    self.check_expr(&args[0], Some(Ty::I32), scopes)?;
+                    return Ok(Ty::Void);
+                }
+                if name == "perm_flips" {
+                    if !args.is_empty() {
+                        return Err(format!("{}: perm_flips takes no arguments", e.line));
+                    }
+                    return Ok(Ty::I32);
+                }
                 if name == "sqrt" {
                     if args.len() != 1 {
                         return Err(format!("{}: sqrt takes 1 argument", e.line));

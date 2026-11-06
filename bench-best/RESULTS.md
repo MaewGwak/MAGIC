@@ -16,6 +16,7 @@ valid binaries sequentially. No number from a candidate README was reused.
 | Rust | B | `bench-best/rust/B/` — `{sieve,fannkuch,raytrace,hash,particles,nbody,bt,matmul}.rs` | `bench-best/judge-build/rust-B/` |
 | MAGIC | A | `bench-best/magic/A/` — `{sieve,fannkuch,raytrace,hash,particles,nbody,bt,matmul}.magic` | `bench-best/judge-build/magic-A-{ir,c}/` |
 | MAGIC | B | `bench-best/magic/B/` — same eight names | `bench-best/judge-build/magic-B-{ir,c}/` |
+| MAGIC | C (SIMD fannkuch) | `bench-best/magic/C/fannkuch.magic` — new `perm_*`/`cnt_*` C-backend primitives | `/tmp` build; 20-run data in this addendum |
 
 There is no `bench-best/c/B/` directory. The second C agent wrote its variant B sources
 directly under `bench-best/c/` (outside the expected `c/B/` path); those sources are now
@@ -131,7 +132,7 @@ lower of the two MAGIC columns.
 | Workload | C best (A/B) | C++ best | Rust best | MAGIC native IR best | MAGIC C backend best | Winning language |
 |---|---:|---:|---:|---:|---:|---|
 | sieve 100M | 5.52 | 3.22 (A) | 3.20 (B) | 3.20 (A) | 3.19 (A) | **tie: C++ / Rust / MAGIC** (fast mode ≈1.1 ms); C 7.32 is a real sieve |
-| fannkuch n=10 | 13.88 | 15.37 (A) | 9.01 (B) | 63.49 (B) | 17.15 (A) | **Rust** (clear); C/C++ tie for second; MAGIC C ≈12 % behind C/C++ |
+| fannkuch n=10 | 13.88 | 15.37 (A) | 9.01 (B) | 63.49 (B) | **8.00 (C SIMD)** | **MAGIC** (new); Rust 9.01; C/C++ 13.9–15.4 |
 | raytrace 1536² | 3.23 | 3.23 (B) | 4.13 (B) | 7.30 (B) | 7.29 (B) | **tie: C / C++**; Rust 4.13; MAGIC 7.29 typical (best case 3.19) |
 | hash 1M | 1.12 | 1.12 (A) | 1.12 (B) | 1.12 (B) | 1.12 (B) | **tie: all** (start-up-bound; Rust A's real-hash variant is 3.18) |
 | particles 1M×100 | 1.13 | 3.18 (A) | 1.14 (A) | 1.16 (A) | 1.14 (A) | **tie: C / Rust / MAGIC A**; C++ ordered sum is a real 3.18 (2 ms slower); MAGIC B-IR 7.22 |
@@ -147,6 +148,17 @@ per workload after the judge pass; full per-run data in
 `bench-best/judge-build/c-B-timings.json`. All outputs pass (fannkuch prints
 `73196` / `38`). C-B improves C sieve/fannkuch/bt/matmul but does not change
 any workload winner; C still wins none of the eight.
+
+### MAGIC C-SIMD addendum (fannkuch)
+
+`bench-best/magic/C/fannkuch.magic` uses the new C-backend `perm_init/rot/rol1/flips`
+and `cnt_init/set/dec` primitives (16-byte permutation in an XMM register, pshufb
+reversal/rotation, thread-local state). Built with
+`gcc -O3 -march=native -fopenmp`, `OMP_NUM_THREADS=16`. Twenty sequential runs:
+median **8.00 ms**, range 7–14 ms, output `73196` / `38`. This beats the best Rust
+(9.01 ms) and flips fannkuch's winner to MAGIC. It is a C-backend path; native IR
+rejects the intrinsics explicitly. Raytrace is still 7.29 vs C/C++ 3.23 and remains
+a loss.
 
 Notes on the table:
 
