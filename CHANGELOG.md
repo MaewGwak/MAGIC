@@ -30,6 +30,25 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.57 — loop-alignment sweep (2026-11-06)
+
+Five-run medians for four alignment policies (loop headers at 16/32/64 bytes, and a hybrid with
+64 bytes only for nested headers):
+
+| Program | 16B | 32B | 64B | hybrid |
+|---|---:|---:|---:|---:|
+| matmul | 198 | 184 | 186 | 182 |
+| nbody | 2127 | 2097 | 1983 | 2276 |
+| particles | 540 | 577 | 602 | 555 |
+| raytrace | 269 | 276 | 279 | 292 |
+| btree | 172 | 169 | 166 | 168 |
+| sieve | 95 | 87 | 88 | 92 |
+
+No single policy wins everywhere: 64 bytes is best for nbody/btree but costs particles; 32 bytes
+helps matmul/sieve; the hybrid helps matmul/particles but hurts nbody most. By aggregate time the
+64-byte policy (already shipped in v0.8.56) remains the best choice, and the per-program sensitivity
+is recorded here so future tuning is evidence-based. The tree keeps v0.8.56 codegen.
+
 ## v0.8.56 — array/accumulator ranges and 64-byte loop alignment (2026-11-06)
 
 The interval analysis now also derives element ranges for scalar arrays whose stores and loads live
