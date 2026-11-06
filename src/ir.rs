@@ -54,6 +54,7 @@ pub enum Instr {
     Jmp(usize),
     Alloc { ptr_var: usize, elem: Ty, len: Value },
     Fill { ptr_var: usize, elem: Ty, len: Value, value: Value },
+    Str { dst: Value, id: usize, s: String },
     BoundsCheck { idx: Value, len: LenRef, line: usize },
     IndexLoad { dst: Value, ptr_var: usize, idx: Value, elem: Ty },
     IndexStore { ptr_var: usize, idx: Value, elem: Ty, src: Value },
@@ -86,6 +87,7 @@ struct Builder {
     vbool: Vec<bool>,
     var_bool: HashMap<String, bool>,
     arrays: HashMap<String, (Ty, LenRef)>,
+    next_str: usize,
     ret: Ty,
 }
 
@@ -100,6 +102,7 @@ impl Builder {
             vbool: Vec::new(),
             var_bool: HashMap::new(),
             arrays: HashMap::new(),
+            next_str: 0,
             ret,
         }
     }
@@ -221,6 +224,17 @@ impl Builder {
                 self.vbool[dst.0 as usize] = *ty == Ty::Bool;
                 Ok(dst)
             }
+            ExprKind::Str(text) => {
+                let dst = self.value();
+                let id = self.next_str;
+                self.next_str += 1;
+                self.push(Instr::Str {
+                    dst,
+                    id,
+                    s: text.clone(),
+                });
+                Ok(dst)
+            }
             ExprKind::ArrayLen(name) => {
                 let (_, len) = *self.arrays.get(name).ok_or_else(|| {
                     format!("line {}: IR: unknown array `{}`", e.line, name)
@@ -233,6 +247,26 @@ impl Builder {
                 Ok(dst)
             }
             ExprKind::Call { name, args } => {
+                let builtin = match name.as_str() {
+                    "file_open" => Some(".Lmf_open"),
+                    "file_close" => Some(".Lmf_close"),
+                    "file_read" => Some(".Lmf_read"),
+                    "file_write" => Some(".Lmf_write"),
+                    _ => None,
+                };
+                if builtin.is_none()
+                    && (name.starts_with("file_")
+                        || name == "print_bytes"
+                        || name == "input_read"
+                        || name == "argc"
+                        || name == "arg"
+                        || name == "env")
+                {
+                    return Err(format!(
+                        "line {}: IR: builtin `{}` is not supported yet",
+                        e.line, name
+                    ));
+                }
                 let mut vals = Vec::new();
                 for a in args {
                     vals.push(self.lower_expr(a)?);
@@ -240,7 +274,7 @@ impl Builder {
                 let dst = self.value();
                 self.push(Instr::Call {
                     dst: Some(dst),
-                    name: name.clone(),
+                    name: builtin.unwrap_or(name.as_str()).to_string(),
                     args: vals,
                 });
                 Ok(dst)
@@ -631,6 +665,7 @@ fn def_kind(ins: &Instr) -> Option<(Value, DefKind)> {
         Instr::Trunc { dst, .. } => Some((*dst, DefKind::Other)),
         Instr::IndexLoad { dst, .. } => Some((*dst, DefKind::Other)),
         Instr::Call { dst: Some(d), .. } => Some((*d, DefKind::Other)),
+        Instr::Str { dst, .. } => Some((*dst, DefKind::Other)),
         _ => None,
     }
 }
@@ -893,6 +928,7 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
         Instr::Br { cond, .. } => uses.push(*cond),
         Instr::Jmp(_) => {}
         Instr::Alloc { len, .. } => uses.push(*len),
+        Instr::Str { dst, .. } => defs.push(*dst),
         Instr::Fill { len, value, .. } => {
             uses.push(*len);
             uses.push(*value);
@@ -927,6 +963,7 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::Alloc { .. }
                 | Instr::Fill { .. }
                 | Instr::Print { .. }
+                | Instr::Str { .. }
                 | Instr::Bin { op: Op::Div | Op::Rem, .. }
         )
     })
@@ -1480,6 +1517,7 @@ fn emit_fast_block(
             Instr::Call { .. }
             | Instr::Alloc { .. }
             | Instr::Fill { .. }
+            | Instr::Str { .. }
             | Instr::Print { .. } => {
                 unreachable!("slow block")
             }
@@ -1832,6 +1870,10 @@ pub fn emit(prog: &IrProgram) -> String {
                             out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *d)));
                         }
                     }
+                    Instr::Str { dst, id, .. } => {
+                        out.push_str(&format!("    lea .Lstr{}(%rip), %rax\n", id));
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
+                    }
                     Instr::Print { v, boolean } => {
                         out.push_str(&ld(*v));
                         if *boolean {
@@ -2008,6 +2050,49 @@ pub fn emit(prog: &IrProgram) -> String {
         out.push_str("    leave\n    ret\n");
         out.push_str(&format!(".size {}, .-{}\n", f.name, f.name));
     }
+    // File builtins: thin wrappers with the same argument order as the AST
+    // native backend. They call libc directly.
+    out.push_str(".p2align 4\n.Lmf_open:\n    jmp fopen@PLT\n");
+    out.push_str(".p2align 4\n.Lmf_close:\n    jmp fclose@PLT\n");
+    out.push_str(".p2align 4\n.Lmf_read:\n    mov %rdi, %rcx\n    mov %rsi, %rdi\n");
+    out.push_str("    mov $1, %esi\n    sub $8, %rsp\n    call fread@PLT\n");
+    out.push_str("    add $8, %rsp\n    ret\n");
+    out.push_str(".p2align 4\n.Lmf_write:\n    mov %rdi, %rcx\n    mov %rsi, %rdi\n");
+    out.push_str("    mov $1, %esi\n    sub $8, %rsp\n    call fwrite@PLT\n");
+    out.push_str("    add $8, %rsp\n    ret\n");
+    // String literals.
+    let mut strs: Vec<(usize, String)> = Vec::new();
+    for f in &prog.funcs {
+        for b in &f.blocks {
+            for i in &b.instrs {
+                if let Instr::Str { id, s, .. } = i {
+                    strs.push((*id, s.clone()));
+                }
+            }
+        }
+    }
+    if !strs.is_empty() {
+        out.push_str(".section .rodata\n");
+        for (id, text) in &strs {
+            out.push_str(&format!(".Lstr{}: .asciz \"{}\"\n", id, asm_escape(text)));
+        }
+    }
     out.push_str(".section .note.GNU-stack,\"\",@progbits\n");
+    out
+}
+
+fn asm_escape(text: &str) -> String {
+    let mut out = String::new();
+    for byte in text.bytes() {
+        match byte {
+            b'\\' => out.push_str("\\\\"),
+            b'"' => out.push_str("\\\""),
+            b'\n' => out.push_str("\\n"),
+            b'\t' => out.push_str("\\t"),
+            b'\r' => out.push_str("\\r"),
+            32..=126 => out.push(byte as char),
+            other => out.push_str(&format!("\\{:03o}", other)),
+        }
+    }
     out
 }

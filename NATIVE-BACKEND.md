@@ -130,7 +130,9 @@ v0.8.21 adds immediate arithmetic/comparison forms and fuses comparison results 
 (`cmp`+`jcc` instead of `setcc`+`movzbq`+`cmp $0`): matmul 131 ms, array sum 58 ms, sieve ~89 ms.
 v0.8.22 implements stack arguments, so functions with more than six parameters (including expanded
 array parameters) lower: btree (180 ms vs C 103) and hashmap (108 ms vs C 39) now run through the IR
-with identical output.
+with identical output. v0.8.23 adds escaped string literals and `file_open`/`file_close`/
+`file_read`/`file_write` wrappers over libc, so sqlscan (41 ms vs C 11) and pageio (564 ms vs C 350)
+also run through the IR with identical output.
 Affine indexes like
 `a[i * n + j]` are proved in v0.8.15 after constant propagation makes `n` and `n * n` literal: the
 maximum `(n-1)*n + (n-1)` is compared with the array length, so matmul's inner checks disappear

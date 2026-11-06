@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.23 — string literals and file builtins in the IR (2026-11-06)
+
+The IR now lowers string literals (emitted as escaped `.asciz` entries in `.rodata`) and the file
+builtins `file_open`, `file_close`, `file_read` and `file_write` as thin wrappers over
+`fopen`/`fclose`/`fread`/`fwrite` with correct argument shuffling and stack alignment. This unlocks
+the I/O benchmarks: `bench-db/sqlscan_magic` prints `1000000 / 39999600000` through the IR backend in
+41 ms (C: 11 ms) and `bench-db/pageio_magic` prints `6367960` in 564 ms (C: 350 ms). sqlscan joins
+the differential corpus; pageio stays out of the concurrent test corpus because it writes a shared
+data file. Other file builtins still return a clear "not supported yet" diagnostic.
+
 ## v0.8.22 — stack arguments in the IR, btree and hashmap run natively (2026-11-06)
 
 Calls may now take more than six arguments: the IR emitter pushes the extra arguments (with the
