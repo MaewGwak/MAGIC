@@ -1,11 +1,10 @@
 # MAGIC
 
-**M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language that
-compiles to C11 and runs anywhere a C compiler does.
+**M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.8** — 168 tests green, eight benchmark workloads, no runtime and no GC.
-The compiler is ~2.5k lines of dependency-free Rust; programs go source → tokens → AST → type
-check → C11 → native binary.
+**Status: v0.8 (0.8.88)** — 168 tests green, eight benchmark workloads, no runtime and no GC.
+The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
+GNU assembler → native binary. A C11 backend remains available for comparison.
 
 ## Why it exists
 
@@ -15,20 +14,20 @@ check → C11 → native binary.
   `file_seek`, `file_size`, `argc`, `arg`, `env`, `input_read`, and `net_listen`/`net_accept`/
   `net_connect`/`net_read`/`net_write`, with the same bounds checking as arrays.
 - **Collections are data plus functions**: `examples/hashmap.magic` is an open-addressing map over two
-  arrays; 1,000,000 inserts and lookups take 38 ms against C's 37 ms with the same checksum.
-- **Native x86-64 backend (default)**: `magicc build app.magic` now emits the optimized typed IR to GNU
-  assembler directly and links with `ld` — no C compiler in the path. It builds `sieve`, `hashmap`, the PostgreSQL wire-protocol server and the
-  2,000-function test in 41 ms, with sockets, file I/O and process arguments wired to libc against the C backend's 96 ms, Goose's 120 ms and
-  rustc's 223 ms. Arrays, structs, floats and sockets are supported by the IR backend as well.
+  arrays; 1,000,000 inserts and lookups take ~39 ms in the default IR build against C's 28 ms with
+  the same checksum.
+- **Native x86-64 backend (default)**: `magicc build app.magic` emits typed IR to GNU assembler and
+  links with `ld` — no C compiler in the path. It builds the 2,000-function test cold in ~25 ms and
+  incrementally in ~10 ms, against gcc 47 ms, rustc 109 ms and Goose 69 ms. Arrays, structs, floats,
+  sockets, files and process arguments are supported by the IR backend.
 - **Flat data is the easy path**: arrays and structs are contiguous and pointers are explicit, so
   pointer-heavy code stays predictable.
-- **Compiles fast**: on a 2,000-function project a cold build is ~94 ms (gcc) or ~98 ms (clang),
-  a one-function rebuild is ~195 ms and a no-op build is ~10 ms — against rustc's ~216 ms cold and
-  Goose's ~121 ms. Dead-function elimination keeps only what `main` can reach, so the generated C is
-  10 KB instead of 170 KB.
+- **Compiles fast**: cold ~25 ms, one-function rebuild ~10 ms, no-op ~6 ms on the 2,000-function
+  test. Dead-function elimination keeps shared-library imports to what `main` reaches; a hello-world
+  native binary is 13 KB and the 2,000-function binary is 22 KB.
 
-MAGIC emits C11 and leaves machine-level code generation to the system C compiler. Benchmark
-results and methodology live in `BENCHMARKS.md`; the harness exits non-zero if any answer is wrong.
+Benchmark methodology and every table live in `BENCHMARKS.md`; `./verify.sh` exits non-zero if any
+answer is wrong.
 
 ## Install (one command)
 
@@ -158,105 +157,34 @@ rejected. Integer overflow is not trapped.
 
 ## Benchmarks
 
-Run time of the compiled programs, wall-clock **milliseconds**, medians of five interleaved runs on
-one Windows machine, all at `-O3` with no `-march=native`. Times move ±5% between runs; `-` means
-there is no port for that language yet. These are run times, not compile times.
+Current Linux evidence (Ryzen AI 7 350, gcc 16.2, rustc 1.99; medians of 3–5 runs, portable flags,
+all checksums compared). These are the **default IR** numbers; "MAGIC best" is the fastest variant
+shipped for that workload and is always named.
 
-| Workload | C | C++ | Rust | Go | Goose | MAGIC |
-|---|---:|---:|---:|---:|---:|---:|
-| sieve 100M | 397 | 403 | 408 | 438 | 423 | **388** |
-| fannkuch n=10 | 163 | 169 | 160 | - | 174 | **143** |
-| matmul 384 | 20 | 20 | 44 | 48 | - | **18** |
-| n-body 10M | **301** | **301** | **219** | 385 | - | 308 |
-| ray tracer 1536² | 42 | 41 | **38** | - | - | 43 |
-| hash table 1M | **33** | 34 | 35 | 37 | - | **33** |
-| particles 1M × 100 | 73 | **68** | 135 | 146 | - | 73 |
-| binary trees | 735 | - | 1346 | - | - | **725** |
+| Workload | C | C++ | Rust | MAGIC default | MAGIC best | Verdict |
+|---|---:|---:|---:|---:|---|---|
+| sieve 100M | 409 | 423 | 414 | **383** | 45 (block-odd) | **win** |
+| fannkuch n=10 | 168 | 168 | 159 | 265 | **70** (`par for`) | **win** |
+| ray tracer 1536² | 42 | 44 | 35 | 120 | **34** (`par for`) | **win** |
+| hash 1M | 28 | 32 | 25 | 39 | 30 (`par for`) | 1.20x |
+| particles 1M × 100 | 65 | 71 | 141 | 147 | 135 (`par for`) | 2.26x |
+| n-body 10M | 310 | 308 | 223 | 873 | 869 | 3.90x |
+| binary trees | 721 | — | 1333 | 3904 | 1512 | 5.42x |
+| matmul 384 | **12** | 15 | 42 | 74 | 74 | 6.17x |
 
-Peak memory, **MB** for the whole process (includes ~4 MB of runtime overhead):
+Peak RSS is 7.2x lower than C on the bit-packed sieve (13.8 vs 99.2 MB) and at parity elsewhere.
+Cold compilation of the 2,000-function source is 25 ms versus 47 ms for gcc, 109 ms for rustc and
+69 ms for Goose; incremental rebuild after one edit is 10 ms.
 
-| Workload | C | C++ | Rust | Go | Goose | MAGIC |
-|---|---:|---:|---:|---:|---:|---:|
-| sieve 100M | 99.5 | 100.0 | 100.1 | 102.6 | 99.7 | **99.5** |
-| fannkuch n=10 | **4.1** | 4.6 | 4.7 | - | 4.3 | 4.6 |
-| matmul 384 | 5.8 | 5.8 | 6.4 | 7.8 | - | **5.8** |
-| n-body 10M | **4.1** | **4.1** | 4.7 | 6.2 | - | 4.7 |
-| ray tracer 1536² | 4.7 | 4.2 | 4.7 | - | - | **4.3** |
-| hash table 1M | **36.1** | 36.2 | 36.7 | 39.5 | - | **36.1** |
-| particles 1M × 100 | **34.7** | **34.7** | 35.2 | 37.8 | - | **34.7** |
-| binary trees | 20.1 | - | 20.7 | - | - | **20.2** |
-
-MAGIC is at, or within 0.6 MB of, the lowest peak memory on every workload (n-body's 4.7 MB is
-0.6 MB over C, and fannkuch's 4.6 MB is 0.5 MB over C).
-
-MAGIC also ships optimized implementations, each a different algorithm with the same answer:
-an odd-only sieve (173 ms, 2.3x), a parallel odd-only sieve (86 ms, **4.6x**), an i-k-j matmul
-(14 ms, 1.4x), closed-form particles (8 ms, **9x**, using a few MB instead of 35 MB), a parallel ray tracer
-(16 ms, **2.6x**), a direct-map hash (10 ms, **3.3x**, and 7.8x less memory), node-count binary
-trees (427 ms vs 745 ms for C — **1.74x** — and 1349 ms for Rust), n-body with AVX2
-(`-march=x86_64_v3`: 189 ms vs 217 ms for Rust and 301 ms for C; needs AVX2), and a buffered
-parallel fannkuch (106 ms vs 162 ms for C — **1.5x** — at ~40 MB). Times are
-medians of five interleaved runs; the harness now times with a precise wall clock, so sub-15 ms
-readings are real rather than timer ticks.
-
-On Linux (Fedora 44, Ryzen AI 7 350, gcc 16.2, clang 22, Go 1.26) the same variants win against
-all five baselines:
-
-| Workload | C | C++ | Rust | Go | Goose | MAGIC optimized | margin |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| sieve 100M | 502 | 497 | 516 | 572 | 537 | 25 | 20x |
-| particles 1M × 100 | 151 | 151 | 157 | 215 | 145 | 4 | 37x |
-| hash 1M | 38 | 37 | 36 | 36 | 35 | 6 | 6x |
-| ray tracer 1536² | 86 | 89 | **77** | - | 90 | 13 | 5.9x |
-| binary trees | 1647 | - | 3077 | - | 1899 | 108 | 15x |
-| matmul 384 | 31 | 27 | 92 | 106 | 87 | 6 | 4.5x |
-| fannkuch | 383 | 392 | 364 | - | 405 | 40 | 9.6x |
-| n-body 10M | 724 | 728 | **523** | 920 | 720 | 450 | 1.16x |
-
-The sieve row uses 2.3 MB instead of 95 MB. The n-body row uses clang with `-march=x86-64-v3` and the matmul row clang with `-march=native`;
-without clang the n-body build is 605 ms (gcc). Goose builds from source with CMake on Linux and
-`./bench-linux.sh` picks it up from `PATH` or `~/tools/goose/build/goose`; its sieve and fannkuch
-programs are the ones shipped here:
+The speed goal is **partially met**: three outright wins and hash inside 1.25x, but matmul, binary
+trees, n-body and particles still trail. The memory win is proven on sieve and is parity elsewhere.
+Full tables, methodology and honest gaps: [`BENCHMARKS.md`](BENCHMARKS.md).
 
 ```bash
-git clone https://github.com/aardappel/goose ~/tools/goose
-cmake -S ~/tools/goose -B ~/tools/goose/build -DCMAKE_BUILD_TYPE=Release
-cmake --build ~/tools/goose/build -j
-```
- `./verify.sh` runs the tests, the doc counts and this matrix;
-`./bench-linux.sh` alone runs 63 cases across C, C++, Rust, Go, Goose and MAGIC.
-
-
-n-body in loop form is the one workload where MAGIC trails; writing the six pairs out gives 254 ms
-with gcc, and `--unroll` with clang/zig gives 205–236 ms. The harness verifies every checksum:
-
-```powershell
-pwsh -File verify.ps1          # tests + doc counts + 53 cases (50 without Zig) + memory bounds
-pwsh -File verify.ps1 -Fast    # tests + doc counts only (a few seconds)
-```
-
-Run the pieces individually:
-
-```powershell
-pwsh -File .\bench-all.ps1 -Rebuild   # 53 cases (50 without Zig): checksums, time, memory
-pwsh -File .\bench-memory.ps1         # --report bound vs measured peak RSS
-pwsh -File check-docs.ps1             # the numbers quoted here still match the repo
-```
-
-Linux / macOS:
-
-```bash
-./verify.sh          # tests + doc counts + the benchmark matrix
-./verify.sh -Fast    # tests + doc counts only
-./bench-linux.sh     # the matrix on its own
-./bench-memory.sh    # --report bound vs measured peak RSS
-```
-
-The compiler also prints the static bound:
-
-```powershell
-magicc check hash_magic.magic --report
-# memory: main <= 33554432 bytes   (exactly the two 2^21 x 8-byte tables)
+./verify.sh                 # tests, docs, native gate, IR differential, speed + memory matrices
+./bench-linux.sh            # speed matrix alone
+./bench-compile/run.sh      # cold/edit/no-op compile comparison
+./bench-memory.sh           # static bound vs measured peak RSS
 ```
 
 ## Layout

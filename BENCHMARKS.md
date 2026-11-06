@@ -1,212 +1,151 @@
-## Head-to-head — same portable flags, one command
+# MAGIC benchmarks — current evidence (Linux, 2026-11-06)
 
-`pwsh -File bench-all.ps1 -Rebuild`. All three languages at `-O3` with **no `-march=native`**
-(an earlier table let Rust use native while C and MAGIC did not — fixed in round 28). One
-representative run; timings move ±5% between runs, so 1–15 ms gaps are ties.
+Machine: AMD Ryzen AI 7 350, 31.1 GB RAM, Linux. Compilers: gcc/g++ 16.2.1, rustc 1.99.1,
+Go and Goose where the harness has a source. MAGIC is `magicc 0.8.87` (compiler code unchanged in the 0.8.88 evidence tag), default **IR** backend
+(`as` + `ld`, no C compiler in the build path). Every number below comes from
+`./verify.sh` / `./bench-linux.sh`; every program's checksum is compared and `verify.sh` fails on
+a mismatch. Timings are medians of 3–5 interleaved runs, portable flags (no `-march=native` for the
+baseline languages or for MAGIC). The machine is shared, so ±5–10% run-to-run noise is normal.
 
-| Workload | C | Rust | MAGIC | Lowest peak memory |
-|---|---:|---:|---:|---|
-| sieve 100M | **414** | 429 | 429 | MAGIC 99.5 MB |
-| fannkuch | 175 | 174 | **158** | MAGIC 4.4 MB |
-| matmul 384 | 31 | 46 | **30** | MAGIC 5.8 MB |
-| n-body 10M steps | **302** | **221** | 317 | MAGIC 4.7 MB |
-| ray tracer 1536² | 47 | **46** | **46** | MAGIC 4.1 MB |
-| hash table 1M | **46** | **46** | 47 | MAGIC 36.1 MB |
-| particles 1M × 100 | **78** | 143–158 | **78** | MAGIC 34.7 MB |
-| binary trees | — | 1371 | **731** | MAGIC 20.2 MB |
+## 1. sieve 100M
 
-MAGIC is first or tied on seven of eight workloads and is never meaningfully slower than C. The one
-loss in loop form is n-body (~300 ms vs Rust ~220): LLVM vectorises the unrolled straight-line code
-but does not unroll the loop nest. Writing the six pairs out closes it — `zig cc` 206–222 ms, gcc
-253 ms. `--unroll` does this automatically for small constant `for` loops: with `zig cc` the
-idiomatic source runs at ~205–236 ms, while gcc regresses (~440 ms), so the flag is opt-in.
-`$CC` or `--cc` may carry arguments (`zig cc`). Memory is lowest or tied-lowest in most workloads.
+C 409 ms, C++ 423, Rust 414, MAGIC default **383** — an outright win. The block-odd variant reaches
+45 ms; peak RSS is 13.8 MB against C's 99.2 MB (7.2x lower) because primes are bit-packed.
 
-Other baselines (same build rules):
+## 2. fannkuch n=10
 
-| Workload | C++ | Go | Goose | MAGIC |
-|---|---:|---:|---:|---:|
-| sieve 100M | 428 | 441 | 458 | **413** |
-| fannkuch | 174 | — | 174 | **157** |
-| matmul 384 | 31 | 61 | — | **31** |
-| n-body 10M | 316 | 392 | — | 317 (unrolled 269; +zig 206) |
-| ray tracer | 47 | — | — | **46** |
-| hash 1M | 47 | 46 | — | 46 |
-| particles 1M × 100 | 78 | 157 | — | **78** |
+C 168 ms, C++ 168, Rust 159, MAGIC default 265, buffered variant 166, `par for` blocks **70** —
+outright win. Checksums 73196 / 38 match.
 
-MAGIC is fastest or tied everywhere except the loop-form n-body (Rust 222, C++/C 316, MAGIC 317),
-and hash, where Go edges it by 1 ms (46 vs 46 on this run) while using more memory (39.7 vs 36.1 MB).
-Writing the n-body pairs out drops MAGIC to 269 ms (gcc) or 206 ms (`zig cc`).
+## 3. ray tracer 1536²
 
-## 7. Hash table — 1M inserts + 1M lookups
+C 42 ms, C++ 44, Rust 35, MAGIC default 120, `par for` **34** — outright win at eight chunks.
 
-| Implementation | Min (ms) | Median (ms) | Peak (MB) |
+## 4. hash table 1M
+
+C 28 ms, C++ 32, Rust 25, MAGIC default 39, `par for` 30 (1.20x of the best baseline, inside
+1.25x). Same checksum 1500001500000; peak RSS 34.2 MB versus C's 34.3 MB.
+
+## 5. particles 1M × 100
+
+C 65 ms, C++ 71, Rust 141, MAGIC default 147, `par for` 135. The SSE2 pair loop is
+memory-bandwidth-bound at ~33 MB per array, so it stays ~2.3x behind C.
+
+## 6. n-body 10M steps
+
+C 310 ms, C++ 308, Rust 223, MAGIC default 873. The leaf-loop unroll helped (966 → 869) but the
+float dynamics still trail; SIMD across the four-body nest is future work.
+
+## 7. binary trees
+
+C 721 ms, Rust 1333, MAGIC default 3904. Dropping constant array-length arguments cut 4.45 s → 3.89 s.
+Recursive call frames and per-node bounds checks remain the gap; the count variant is 1512 ms.
+
+## 8. matmul 384
+
+C **12 ms**, C++ 15, Rust 42, MAGIC 74. GCC vectorises the dot product; MAGIC still emits a scalar
+inner loop, so this is the largest remaining gap (6.2x).
+
+## Speed summary (same workload, same portable flags)
+
+"MAGIC default" is the idiomatic MAGIC source through the default backend. "MAGIC best" is the
+fastest MAGIC variant the harness ships for that workload (parallel or algorithmic variant; it is
+not the same source as the C baseline, and the variant name is given). Ratio = MAGIC / best
+baseline, lower is better.
+
+| Workload | C | C++ | Rust | MAGIC default | MAGIC best (variant) | Ratio | Verdict |
+|---|---:|---:|---:|---:|---|---:|---|
+| sieve 100M | 409 | 423 | 414 | **383** | 45 (block-odd) | 0.94 | **outright win** |
+| fannkuch n=10 | 168 | 168 | 159 | 265 | **70** (`par for`, blocks) | 0.44 | **outright win** |
+| ray tracer 1536² | 42 | 44 | 35 | 120 | **34** (`par for`) | 0.97 | **outright win** |
+| hash 1M | 28 | 32 | 25 | 39 | 30 (`par for`) | 1.20 | within 1.25x |
+| fannkuch buffer variant | 168 | 168 | 159 | 166 | — | 1.04 | within 1.25x |
+| particles 1M × 100 | 65 | 71 | 141 | 147 | 135 (`par for`) | 2.26 | loss |
+| n-body 10M steps | 310 | 308 | 223 | 873 | 869 (loop) | 3.90 | loss |
+| binary trees | 721 | — | 1333 | 3904 | 1512 (count variant) | 5.42 | loss |
+| matmul 384 | **12** | 15 | 42 | 74 | 74 | 6.17 | loss |
+
+What this says:
+
+- **Three outright wins** against the best portable baseline: sieve, fannkuch blocks (`par for`),
+  and the raytracer (`par for`). Hash with `par for` is inside 1.25x.
+- The speed goal is **not yet met for the whole matrix**: matmul (6.2x), binary trees (5.4x),
+  n-body (3.9x) and particles (2.3x) are still materially behind. The missing pieces are a
+  dot-product/loop-interchange vectoriser for matmul, cheaper recursive-call frames/global arrays
+  for binary trees, and wider SIMD for the float dynamics loops.
+
+## Peak RSS (C vs MAGIC, same outputs)
+
+`/usr/bin/time -f %M`, one representative run after warm-up; the loader/libc floor is ~1.6 MB and is
+included in both binaries.
+
+| Workload | C | MAGIC | Ratio |
 |---|---:|---:|---:|
-| C, open addressing | 46 | 46 | 36.1 |
-| Rust, open addressing | 46 | 47 | 36.7 |
-| Rust, `std::HashMap` | 140 | 140 | 72.7 |
-| **MAGIC, open addressing** | **46** | **46** | **36.1** |
+| sieve 100M | 99.2 MB | **13.8 MB** | **7.2x lower** |
+| hash 1M | 34.3 MB | 34.2 MB | parity |
+| particles 1M × 100 | 32.9 MB | 33.0 MB | parity |
+| binary trees | 17.8 MB | 18.1 MB | parity |
+| matmul 384 | 3.53 MB | 3.44 MB | parity |
+| n-body 10M | 1.65 MB | 1.69 MB | parity |
+| ray tracer | 1.68 MB | 1.86 MB | +0.2 MB |
+| fannkuch | 1.74 MB | 1.56 MB | 10% lower |
 
-Identical output (`1500001500000`). MAGIC matches hand-written C, ties Rust's hand-written open
-addressing, and beats `std::HashMap` by 3.0x in time and 2.0x in memory. The fair codegen
-comparison is the Rust open-addressing row; the HashMap row is what an ordinary Rust program would
-write.
+The 5x memory claim is proven for bit-packable workloads (sieve: 7.2x lower). "Lowest on most
+workloads" is **not** established: outside sieve, C and MAGIC are at parity because both use plain
+C arrays. The static bound reported by `magicc check --report` is a true lower bound; `bench-memory.sh`
+fails if peak RSS drops below it.
 
-The whole heap is statically known: `magicc check hash_magic.magic --report` prints
-`main <= 33554432 bytes` — exactly the two 2^21 × 8-byte tables, with nothing hidden in a runtime.
+## Compile time (2,000 functions, 92 KB source)
 
-## 8. Particles — 1M structs × 100 steps
+`./bench-compile/run.sh`, medians of three runs. Cold = remove binary/object/stamp; edit = change one
+reachable function; no-op = nothing changed.
 
-| Implementation | Min (ms) | Median (ms) | Peak (MB) |
+| Compiler | Cold | One reachable edit | No-op |
 |---|---:|---:|---:|
-| C struct array | 75 | 79 | 34.7 |
-| Rust `Vec<P>`, indexed | 142 | 157 | 35.2 |
-| Rust `Vec<P>`, `iter_mut` | 142 | 142 | 35.3 |
-| **MAGIC `[P]`** | **78** | **79** | **34.7** |
+| **MAGIC IR (default)** | **25 ms** | **10 ms** | **6 ms** |
+| MAGIC C backend + gcc | 62 ms | — | — |
+| gcc -O3 (generated C file) | 47 ms | — | — |
+| rustc -O | 109 ms | 110 ms | — |
+| goose build | 69 ms | 64 ms | 69 ms |
 
-Identical output (`500094707846.643`). MAGIC ties C and is ~1.9x faster than both Rust versions.
-The iterator version rules out "Rust users would write it better" for this loop shape — LLVM simply
-schedules this particular update chain worse than GCC.
+MAGIC is fastest both cold and incrementally on this source. The IR backend is also what makes the
+native build possible: after the parser/checker it emits GNU assembler directly and links with `ld`.
 
-A dynamic variant — 500k `[P+]` grown with `reserve` + `push`, 50 steps — gives C 30 ms, Rust
-(`Vec::with_capacity`) 31 ms, MAGIC 31 ms (`vecpart_*` sources). Push overhead is not measurable.
+## Binary size and startup
 
-## Does the printed memory bound hold?
+| Binary | Size |
+|---|---:|
+| MAGIC hello (IR, dynamic libc) | 13,224 B |
+| gcc -O3 hello | 12,520 B |
+| MAGIC 2,000-function program | 22,048 B |
+| gcc 2,000-function program | 13,152 B |
+| Rust 2,000-function program | 4,538,288 B |
+| Goose 2,000-function program | 72,024 B |
 
-`pwsh -File bench-memory.ps1` compares each program's `--report` bound with its measured peak RSS:
+Process startup (50 runs, wall): MAGIC 0.93 ms vs gcc 0.94 ms — the number is dominated by process
+creation. MAGIC binaries are small and need no C compiler at build time, but they **link libc
+dynamically**; they are not fully static ELF yet.
 
-| Program | Reported bound | Peak RSS | Overhead |
-|---|---:|---:|---:|
-| sieve 100M | 95.4 MB | 99.5 MB | 4.1 |
-| hash 1M | 32.0 MB | 36.1 MB | 4.1 |
-| binary trees | 16.0 MB | 20.1 MB | 4.1 |
-| matmul 384 | 1.7 MB | 3.2 MB | 1.5 |
-| fannkuch / n-body / ray tracer | 0 | 4.1–4.6 MB | process baseline |
+## Diagnostics and security evidence
 
-Every reported bound is a true lower bound; the gap is the process itself (C runtime, stack,
-loader). The script exits non-zero if any peak falls below its bound. Struct arrays are counted
-with C-compatible layout — `examples/points.magic` reports 24 bytes for three 8-byte `Point`s.
-
-# MAGIC benchmarks — five runs each
-
-Reproduce: `pwsh -File bench-all.ps1 -Rebuild` rebuilds every workload with the current
-compiler, checks its checksum, and prints timing and memory. It exits non-zero if any answer is
-wrong. Drop `-Rebuild` to measure existing binaries. Set `$env:magic_GATE=1` to also fail on a
-coarse per-workload ceiling (2–3x typical), which catches catastrophic regressions without
-tripping on noise.
-
-Machine: AMD Ryzen AI 7 350, 31.1 GB RAM, Windows 11 (10.0.26200).
-GCC 16.2 (MinGW-W64 UCRT) · rustc 1.99.1 · go · goose 335fddc · magicc 0.1.0.
-All builds at `-O3`; Rust at `-C opt-level=3 -C target-cpu=native`. Peak RSS sampled every 5 ms.
-Every implementation must print the expected checksum; all did.
-
-## 1. Sieve of Eratosthenes, N = 100,000,000 (expected 5761455)
-
-| Language | Min (ms) | Median (ms) | Max (ms) | Peak (MB) |
-|---|---:|---:|---:|---:|
-| C | 666 | 673 | 733 | 99.5 |
-| C++ | **639** | **655** | 685 | 100.0 |
-| Rust | 655 | 662 | 677 | 100.1 |
-| Go | 686 | 743 | 812 | 102.7 |
-| Goose | 718 | 740 | 789 | 99.7 |
-| **MAGIC** | 645 | 739 | 753 | **99.5** |
-
-Memory-bound; all within ~13% of each other and the spread between runs is larger than that.
-MAGIC's best run (645 ms) is the fastest of the six; its median is mid-pack because of machine noise.
-
-## 2. Fannkuch-redux, n = 10 (expected 73196 / 38)
-
-| Language | Min (ms) | Median (ms) | Max (ms) | Peak (MB) |
-|---|---:|---:|---:|---:|
-| **C** | 171 | **172** | 215 | 4.1 |
-| C++ | 172 | 173 | 216 | 4.6 |
-| Rust | 172 | 172 | 266 | 5.3 |
-| Goose | 186 | 187 | 217 | 4.5 |
-| **MAGIC** | **170** | **172** | 215 | **4.1** |
-
-MAGIC ties C and Rust on median and has the lowest memory. Bounds checks are not measurable here.
-
-## 3. Binary trees, depth 4..20 (~33.5M nodes, expected 568328208)
-
-| Implementation | Min (ms) | Median (ms) | Peak (MB) |
-|---|---:|---:|---:|
-| **MAGIC flat pool** | **735** | **753** | **20.2** |
-| Rust flat arena (`-O3 -native`) | 1,394 | 1,402 | 20.8 |
-| Rust `Box<Node>` (idiomatic, 3 runs) | 18,360 | 18,701 | 70.1 |
-
-- **1.86x faster than optimized Rust**, 3% less memory.
-- **25x faster than idiomatic Rust**, 3.5x less memory.
-- This is where the language's default representation pays: flat indices instead of per-node pointers.
-
-## 4. Integer matmul, N = 288 (expected 274517796)
-
-| Language | Min (ms) | Median (ms) | Max (ms) | Peak (MB) |
-|---|---:|---:|---:|---:|
-| C | 14 | 15 | 21 | 5.1 |
-| Rust | 15 | 15 | 21 | 5.6 |
-| **MAGIC** | **14** | **15** | **15** | **5.1** |
-
-Seven interleaved rounds each. Complete parity: the inner loop is a multiply-add, and gcc's
-optimiser hides the bounds checks. MAGIC has the tightest spread (max 15 ms against 21 ms).
-
-## 5. N-body, 4 bodies, 500,000 steps
-
-| Language | Min (ms) | Median (ms) | Peak (MB) | Energy printed |
-|---|---:|---:|---:|---|
-| C | 30 | 31 | 4.6 | 11211.531382040 |
-| Rust | 22 | 30 | 4.8 | 11211.531382040 |
-| **MAGIC** | 30 | 31 | **4.1** | 11211.531382040 |
-
-Same dynamics and **the energy string is byte-identical** across all three (`print_prec(e, 9)`).
-Performance parity; MAGIC uses the least memory because its arrays are plain C arrays, without a
-runtime.
-
-## 6. Ray tracer, 512×512, 5 spheres (real program, FP + sqrt)
-
-| Language | Min (ms) | Median (ms) | Peak (MB) | Output |
-|---|---:|---:|---:|---|
-| C | 14 | 15 | 4.1 | 37319.013 |
-| **MAGIC** | 14 | 15 | 4.1 | 37319.013 |
-
-Seven interleaved runs. Identical output and identical time and memory. A whole little program —
-ray generation, sphere intersection, shading — not a microbenchmark, and MAGIC matches C exactly.
-
-## What the six workloads say
-
-| Axis | Result |
-|---|---|
-| Dense array code (sieve, fannkuch) | parity with C within noise |
-| Compute-bound integer loops (matmul) | parity with C and Rust, tighter spread |
-| Floating-point dynamics (n-body) | parity, lowest memory, identical output |
-| Whole programs (ray tracer) | parity with C on time, memory and output |
-| Pointer-shaped code (binary trees) | 1.86x over optimized Rust, 25x over idiomatic |
-| Memory | lowest or tied-lowest in every workload |
-| Compile speed | one-function rebuild 280 ms vs rustc 324 ms; no-op 30 ms; cold on real programs 164-237 ms vs rustc 204-232 ms |
-
-## Linux (Fedora 44)
-
-`./bench-linux.sh` on the same eight workloads, Ryzen AI 7 350, gcc 16.2, clang 22 and Go 1.26, medians of five runs:
-
-| Workload | C | C++ | Rust | Go | Goose | MAGIC optimized |
-|---|---:|---:|---:|---:|---:|---:|
-| sieve 100M | 502 | 497 | 516 | 572 | 537 | 25 (odd-only blocks, `par for`, 2.3 MB) |
-| particles 1M × 100 | 151 | 151 | 157 | 215 | 145 | 4 (closed form) |
-| hash 1M | 38 | 37 | 36 | 36 | 35 | 6 (direct map) |
-| ray tracer 1536² | 86 | 89 | 77 | - | 90 | 13 (`par for`) |
-| binary trees | 1647 | - | 3077 | - | 1899 | 108 (node count, level order, native) |
-| matmul 384 | 31 | 27 | 92 | 106 | 87 | 6 (i-k-j, clang native) |
-| fannkuch | 383 | 392 | 364 | - | 405 | 40 (90 streams, `par for`) |
-| n-body 10M | 724 | 728 | 523 | 920 | 720 | 450 (unrolled, clang AVX2) |
-
-Clang is optional: without it the n-body build is 605 ms and matmul 18 ms with gcc. All checksums
-match, and `./verify.sh` exits non-zero on any wrong answer.
+- Out-of-bounds index: `line N: index out of bounds` followed by a symbolized stack trace
+  (`inner`, `middle`, `main`, libc, `_start`); division by zero and assertion failures report
+  `file:line` too.
+- 168 Rust tests; 60/60 `.magic` corpus compiles through both C and IR backends; `verify-ir.sh`
+  runs the differential corpus; `tests/fuzz_diff.rs` mutation-fuzzes programs against the C
+  backend; `verify-native.sh` builds the corpus with a PATH containing only `as` and `ld`.
+- Bounds/affine proofs are hardened: direct-`Lt` guards, header dominance, single canonical
+  increment, `after_inc` reachability, instruction-order and i32-range checks. Three adversarial
+  audit rounds found and closed 4 + 2 + 1 miscompiles; every counterexample is a regression test.
+- A range-based pass was prototyped and **rejected** after the audit found four silent
+  out-of-bounds cases; it is not shipped.
 
 ## Honest gaps
 
-- No workload yet that stresses MAGIC's arena at scale (binary trees pre-size their pool).
-- Sieve medians are noisy on this machine; a quiescent machine or more reps is needed before
-  quoting a single number.
-- Cold compile still loses to rustc. That needs a native backend, not more caching.
-- "Fastest language in the world" is not proven by eight workloads on two machines. What is proven: MAGIC is never
-  slower than the best baseline by more than noise, and is materially faster where representation
-  dominates.
+- Within-1.25x applies to sieve, fannkuch (buffer), raytracer and hash (`par for`), not to the full
+  matrix; matmul, binary trees, n-body and particles still lose.
+- Peak memory is lowest clearly on sieve only; the rest is parity with C.
+- Binaries are dynamically linked against libc; a fully static ELF path is future work.
+- No physical 2 GB low-end device or GPU workload is part of this table; the RSS/startup numbers
+  are the current proxy.
+- Compile figures are on a single machine and a synthetic 2,000-function source.

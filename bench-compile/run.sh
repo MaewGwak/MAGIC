@@ -47,26 +47,33 @@ median() { # label runs cmd...
   printf '%-26s %6s ms\n' "$label" "$(printf '%s\n' "${vals[@]}" | sort -n | sed -n '2p')"
 }
 
-cold_magic_gcc() { rm -f big.c big.bin big.flags; "$M" build big.magic --backend c --cc gcc; }
-cold_magic_clang() { rm -f big.c big.bin big.flags; "$M" build big.magic --backend c --cc clang; }
-edit_magic_gcc() { sed -i 's/return x + 0;/return x + 5;/' big.magic; "$M" build big.magic --backend c --cc gcc; }
-edit_magic_clang() { sed -i 's/return x + 5;/return x + 9;/' big.magic; "$M" build big.magic --backend c --cc clang; }
+cold_magic_ir() { rm -f big.bin big.o big.flags big.s; "$M" build big.magic -o big.bin; }
+cold_magic_gcc() { rm -f big_c.bin big.c big.flags; "$M" build big.magic --backend c --cc gcc -o big_c.bin; }
+edit_magic_ir() { sed -i 's/return x + 0;/return x + 5;/' big.magic; "$M" build big.magic -o big.bin; }
+edit_magic_ir2() { sed -i 's/return x + 5;/return x + 9;/' big.magic; "$M" build big.magic -o big.bin; }
+cold_gcc() { gcc -O3 big.c -o big_gcc; }
+edit_gcc() { sed -i 's/return x + 0;/return x + 5;/' big.c; gcc -O3 big.c -o big_gcc; }
 cold_rust() { rm -f big_r; rustc -O big.rs -o big_r; }
 edit_rust() { sed -i 's/x + 0 }/x + 7 }/' big.rs; rustc -O big.rs -o big_r; }
 
 echo "== cold =="
-median "MAGIC gcc" 3 cold_magic_gcc
-median "MAGIC clang" 3 cold_magic_clang
+median "MAGIC IR" 3 cold_magic_ir
+median "MAGIC C (gcc)" 3 cold_magic_gcc
+median "gcc -O3 (C file)" 3 cold_gcc
 median "rustc -O" 3 cold_rust
 if [ -n "$GOOSE" ]; then median "goose build" 3 "$GOOSE" build big.goose -o big_g; fi
 echo "== one reachable edit =="
-median "MAGIC gcc" 3 edit_magic_gcc
-median "MAGIC clang" 3 edit_magic_clang
+median "MAGIC IR" 3 edit_magic_ir
+median "MAGIC IR (second)" 3 edit_magic_ir2
 median "rustc -O (full)" 3 edit_rust
 if [ -n "$GOOSE" ]; then
   edit_goose() { sed -i 's/x + 0 }/x + 4 }/' big.goose; "$GOOSE" build big.goose -o big_g; }
   median "goose build" 3 edit_goose
 fi
 echo "== no-op =="
-median "MAGIC gcc" 3 "$M" build big.magic --backend c --cc gcc
+median "MAGIC IR" 3 "$M" build big.magic -o big.bin
 if [ -n "$GOOSE" ]; then median "goose build" 3 "$GOOSE" build big.goose -o big_g; fi
+echo "== binary size =="
+for f in big.bin big_c.bin big_gcc big_r big_g; do
+  [ -f "$f" ] && printf '%-12s %8s bytes\n' "$f" "$(stat -c%s "$f")"
+done
