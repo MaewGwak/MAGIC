@@ -985,3 +985,30 @@ fn division_by_zero_reports_line_and_trace() {
     let err3 = String::from_utf8_lossy(&out3.stderr);
     assert!(err3.contains("we\"ird\\slash.magic:2: assertion failed"), "stderr: {err3}");
 }
+
+#[test]
+fn local_pop_and_empty_message() {
+    let Some(cc_cmd) = cc() else { return };
+    let dir = std::env::temp_dir().join(format!("magic-pop-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "fn main() {\n    var v: [i32+] = [];\n    v.push(7);\n    var x = pop(v);\n    print(x);\n}\n";
+    let c = run(src, &dir, "pop_c", false, &cc_cmd).expect("C build");
+    let i = run(src, &dir, "pop_i", true, &cc_cmd).expect("IR build");
+    assert_eq!(c.0, i.0);
+    assert_eq!(i.0.trim(), "7");
+
+    let empty = "fn main() {\n    var v: [i32+] = [];\n    var x = pop(v);\n    print(x);\n}\n";
+    let asm = magic::compile_to_asm_ir_with_sources(empty, &[(1, "pop.magic".to_string())])
+        .expect("compile empty pop");
+    let sp = dir.join("pe.s");
+    let op = dir.join("pe.o");
+    let exe = dir.join("pe");
+    std::fs::write(&sp, asm).unwrap();
+    assert!(Command::new("as").arg("--64").arg("-o").arg(&op).arg(&sp).status().unwrap().success());
+    assert!(Command::new(&cc_cmd).arg(&op).arg("-o").arg(&exe).status().unwrap().success());
+    let out = Command::new(&exe).output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("pop.magic:3: pop from empty vec"), "stderr: {err}");
+    assert!(err.contains("main"), "stderr: {err}");
+}

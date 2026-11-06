@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.15 — local pop and vector promotion fix (2026-11-06)
+
+Local `pop(v)` on a local vector is now lowered directly (previously it emitted an external `pop` call
+and failed at link). The shared `lower_vec_pop` also panics through a dedicated `AssertVecPop` with
+the documented `path:line: pop from empty vec` message instead of `assertion failed`. Fixing this
+exposed a promotion bug: vector length/capacity variables were assigned callee-saved registers while
+VecNew/VecPush/VecReserve only updated their stack slots, so pop read stale length and segfaulted;
+they are now excluded from promotion. Regression tests cover `pop` returning 7, the empty-vector
+message, and static builds; 171 tests. All gates pass, parity 60/60.
+
 ## v0.10.14 — assertions carry file:line, paths escaped (2026-11-06)
 
 Assertion panic strings now go through `panic_text` like bounds/division, so `assert(1 == 2)` at

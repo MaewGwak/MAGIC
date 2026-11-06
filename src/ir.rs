@@ -56,6 +56,7 @@ pub enum Instr {
     Br { cond: Value, then_bb: usize, else_bb: usize },
     Jmp(usize),
     Assert { cond: Value, line: usize },
+    AssertVecPop { cond: Value, line: usize },
     Alloc { ptr_var: usize, elem: Ty, esz: u64, len: Value, arena: bool },
     ArenaBegin { dst: Value },
     ArenaEnd { mark: Value },
@@ -795,6 +796,38 @@ impl Builder {
         Ok(())
     }
 
+    fn lower_vec_pop(&mut self, name: &str, line: usize) -> Result<Value, String> {
+        let (elem, pv, lv, _, _) = *self
+            .vecs
+            .get(name)
+            .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", line, name))?;
+        let lenv = self.value();
+        self.push(Instr::LoadVar { dst: lenv, var: lv });
+        self.vty[lenv.0 as usize] = Ty::I32;
+        let zero = self.value();
+        self.push(Instr::Const { dst: zero, v: 0 });
+        self.vty[zero.0 as usize] = Ty::I32;
+        let cond = self.value();
+        self.push(Instr::Bin { dst: cond, op: Op::Gt, l: lenv, r: zero });
+        self.vty[cond.0 as usize] = Ty::Bool;
+        self.vbool[cond.0 as usize] = true;
+        self.narrow[cond.0 as usize] = true;
+        self.push(Instr::AssertVecPop { cond, line });
+        let one = self.value();
+        self.push(Instr::Const { dst: one, v: 1 });
+        self.vty[one.0 as usize] = Ty::I32;
+        let newlen = self.value();
+        self.push(Instr::Bin { dst: newlen, op: Op::Sub, l: lenv, r: one });
+        self.vty[newlen.0 as usize] = Ty::I32;
+        self.push(Instr::StoreVar { var: lv, src: newlen });
+        let dst = self.value();
+        self.push(Instr::IndexLoad { dst, ptr_var: pv, idx: newlen, elem });
+        self.vty[dst.0 as usize] = elem;
+        self.vbool[dst.0 as usize] = elem == Ty::Bool;
+        self.narrow[dst.0 as usize] = matches!(elem, Ty::I32 | Ty::U8 | Ty::Bool);
+        Ok(dst)
+    }
+
     fn lower_expr(&mut self, e: &Expr) -> Result<Value, String> {
         match &e.kind {
             ExprKind::Float(f) => {
@@ -876,35 +909,7 @@ impl Builder {
                 Ok(dst)
             }
             ExprKind::VecParamPop(n) => {
-                let (elem, pv, lv, _, _) = *self
-                    .vecs
-                    .get(n)
-                    .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", e.line, n))?;
-                let lenv = self.value();
-                self.push(Instr::LoadVar { dst: lenv, var: lv });
-                self.vty[lenv.0 as usize] = Ty::I32;
-                let zero = self.value();
-                self.push(Instr::Const { dst: zero, v: 0 });
-                self.vty[zero.0 as usize] = Ty::I32;
-                let cond = self.value();
-                self.push(Instr::Bin { dst: cond, op: Op::Gt, l: lenv, r: zero });
-                self.vty[cond.0 as usize] = Ty::Bool;
-                self.vbool[cond.0 as usize] = true;
-                self.narrow[cond.0 as usize] = true;
-                self.push(Instr::Assert { cond, line: e.line });
-                let one = self.value();
-                self.push(Instr::Const { dst: one, v: 1 });
-                self.vty[one.0 as usize] = Ty::I32;
-                let newlen = self.value();
-                self.push(Instr::Bin { dst: newlen, op: Op::Sub, l: lenv, r: one });
-                self.vty[newlen.0 as usize] = Ty::I32;
-                self.push(Instr::StoreVar { var: lv, src: newlen });
-                let dst = self.value();
-                self.push(Instr::IndexLoad { dst, ptr_var: pv, idx: newlen, elem });
-                self.vty[dst.0 as usize] = elem;
-                self.vbool[dst.0 as usize] = elem == Ty::Bool;
-                self.narrow[dst.0 as usize] = matches!(elem, Ty::I32 | Ty::U8 | Ty::Bool);
-                Ok(dst)
+                self.lower_vec_pop(n, e.line)
             }
             ExprKind::VecParamClear(n) => {
                 let (_, _, lv, _, _) = *self
@@ -1350,6 +1355,14 @@ impl Builder {
                         self.subst_stack.pop();
                         return r;
                     }
+                }
+                if name == "pop" && args.len() == 1 {
+                    if let ExprKind::Var(vn) = &args[0].kind {
+                        if self.vecs.contains_key(vn) {
+                            return self.lower_vec_pop(vn, e.line);
+                        }
+                    }
+                    return Err(format!("line {}: IR: pop() needs a vector variable", e.line));
                 }
                 if (name == "net_read_at" || name == "net_write_at") && args.len() == 4 {
                     let fd = self.lower_expr(&args[0])?;
@@ -3920,7 +3933,7 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
         }
         Instr::Br { cond, .. } => uses.push(*cond),
         Instr::Jmp(_) => {}
-        Instr::Assert { cond, .. } => uses.push(*cond),
+        Instr::Assert { cond, .. } | Instr::AssertVecPop { cond, .. } => uses.push(*cond),
         Instr::Alloc { len, .. } => uses.push(*len),
         Instr::ArenaBegin { dst } => defs.push(*dst),
         Instr::ArenaEnd { mark } => uses.push(*mark),
@@ -4648,6 +4661,17 @@ fn emit_fast_block(
                     line, id.0, panic_text(*line, source_files, "division by zero")
                 ));
                 ra.out.push_str(&format!("    lea .Ldivmsg{}_{}(%rip), %rdi\n    call .Lir_panic\n1:\n", line, id.0));
+                ra.free_dead(ii);
+                continue;
+            }
+            Instr::AssertVecPop { cond, line } => {
+                let c = ra.operand(*cond);
+                ra.out.push_str(&format!("    test {}, {}\n    jne 1f\n", POOL[c].0, POOL[c].0));
+                ra.out.push_str(&format!(
+                    "    .pushsection .rodata\n    .p2align 2\n.Lpopmsg{}_{}: .asciz \"{}\"\n    .popsection\n",
+                    line, c, panic_text(*line, source_files, "pop from empty vec")
+                ));
+                ra.out.push_str(&format!("    lea .Lpopmsg{}_{}(%rip), %rdi\n    call .Lir_panic\n1:\n", line, c));
                 ra.free_dead(ii);
                 continue;
             }
@@ -7041,8 +7065,20 @@ pub fn emit(prog: &IrProgram) -> String {
                 }
             }
         }
+        // Vector length/capacity are updated through dedicated instructions
+        // (VecNew/VecPush/VecReserve) that only write their stack slots, so
+        // promoting them would leave a stale callee-saved register.
+        let mut vec_meta: std::collections::HashSet<usize> = Default::default();
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                if let Instr::VecNew { len_var, cap_var, .. } = ins {
+                    vec_meta.insert(*len_var);
+                    vec_meta.insert(*cap_var);
+                }
+            }
+        }
         let mut ranked: Vec<(usize, u32)> = var_counts.into_iter().collect();
-        ranked.retain(|(v, _)| !addr_taken.contains(v));
+        ranked.retain(|(v, _)| !addr_taken.contains(v) && !vec_meta.contains(v));
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         let chosen: Vec<(usize, &'static str)> = ranked
             .into_iter()
@@ -7735,6 +7771,15 @@ pub fn emit(prog: &IrProgram) -> String {
                             done += 1;
                         }
                         out.push_str(&format!("    incq -{}(%rbp)\n", varoff(*len_var)));
+                    }
+                    Instr::AssertVecPop { cond, line } => {
+                        out.push_str(&ld(*cond));
+                        out.push_str("    test %rax, %rax\n    jne 1f\n");
+                        out.push_str(&format!(
+                            "    .pushsection .rodata\n    .p2align 2\n.Lpopmsg{}_{}: .asciz \"{}\"\n    .popsection\n",
+                            line, cond.0, panic_text(*line, &prog.source_files, "pop from empty vec")
+                        ));
+                        out.push_str(&format!("    lea .Lpopmsg{}_{}(%rip), %rdi\n    call .Lir_panic\n1:\n", line, cond.0));
                     }
                     Instr::Assert { cond, line } => {
                         out.push_str(&ld(*cond));

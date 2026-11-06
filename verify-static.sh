@@ -111,6 +111,39 @@ else
   echo "assertion_trace: build FAIL"; FAIL=1
 fi
 
+cat > "$OUT/pop.magic" <<'EOF'
+fn main() {
+    var v: [i32+] = [];
+    v.push(7);
+    var x = pop(v);
+    print(x);
+}
+EOF
+if "$M" build "$OUT/pop.magic" --static -o "$OUT/pop" >/dev/null 2>&1; then
+  got=$("$OUT/pop" 2>/dev/null | tail -1)
+  if [ "$got" = "7" ]; then echo "local_pop: ok static"; else echo "local_pop: FAIL got=$got"; FAIL=1; fi
+else
+  echo "local_pop: build FAIL"; FAIL=1
+fi
+
+cat > "$OUT/popempty.magic" <<'EOF'
+fn main() {
+    var v: [i32+] = [];
+    var x = pop(v);
+    print(x);
+}
+EOF
+if "$M" build "$OUT/popempty.magic" --static -o "$OUT/popempty" >/dev/null 2>&1; then
+  "$OUT/popempty" >/dev/null 2>"$OUT/pee"; rc=$?
+  if [ "$rc" -ne 0 ] && grep -q ':3: pop from empty vec' "$OUT/pee" && grep -q 'stack trace:' "$OUT/pee"; then
+    echo "empty_pop: ok static"
+  else
+    echo "empty_pop: FAIL rc=$rc"; FAIL=1
+  fi
+else
+  echo "empty_pop: build FAIL"; FAIL=1
+fi
+
 cat > "$OUT/div.magic" <<'EOF'
 fn main() {
     var s = 0;
