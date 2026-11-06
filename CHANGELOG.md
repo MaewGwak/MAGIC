@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.10 — typed IR prototype and `--backend ir` (2026-11-06)
+
+`src/ir.rs` introduces a typed three-address IR and a naive emitter: integer scalars, locals,
+arithmetic, comparisons, casts, `if`/`while`/`for`, `print` (including `true`/`false`), `return` and
+calls with up to six integer arguments. Every IR value gets a stack slot for now; replacing those
+slots with linear-scan allocation is the next step. `magicc build app.magic --backend ir` assembles
+and links exactly like `native` (as + ld, no C compiler). A differential test compiles 10 inline
+programs plus `examples/fib`, `for` and `sum` through both backends and requires identical output;
+arrays, structs, floats and vectors are rejected with a clear message and remain on the AST backend.
+
 ## v0.8.9 — native peephole and shift scaling (2026-11-06)
 
 The native emitter now post-processes its assembly: adjacent duplicate truncations, `mov %rax, %rax`,

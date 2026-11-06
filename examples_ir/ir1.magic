@@ -1,0 +1,23 @@
+fn fib(n: i32) -> i32 {
+    if n < 2 { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+fn add(a: i32, b: i32) -> i32 { return a + b; }
+fn main() {
+    var t = 0;
+    var i = 0;
+    while i < 10 {
+        t = t + fib(i);
+        i = i + 1;
+    }
+    print(t);
+    print(add(20, 22));
+    var x = 100;
+    x = x / 7;
+    print(x);
+    print(x % 3);
+    for j in 0..5 { t = t + j; }
+    print(t);
+    print(7 as i32);
+    print(250 as u8);
+}

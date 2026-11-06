@@ -88,7 +88,22 @@ Four independent reviews (performance, language features, release gates, adversa
 - **Honesty rules**: do not call this "self-hosted" (the compiler is Rust); say "no-C native
   backend". Native tests must not silently pass when `as`/`ld` are missing: the gate script fails.
 
-## Differential harness
+## Typed IR prototype (v0.8.10)
+
+`src/ir.rs` lowers integer programs to three-address code (`Const`, `LoadVar`, `StoreVar`, `Bin`,
+`Un`, `Trunc`, `Call`, `Print`, `Ret`, `Br`, `Jmp`) with basic blocks and a naive emitter in which
+every value owns a stack slot. `--backend ir` builds with `as` + `ld` like the native backend.
+
+Supported: integer scalars, locals, arithmetic/division (guarded), comparisons, casts, `if`,
+`while`, `for`, `print` (with C-compatible `true`/`false` for booleans), `return`, and calls with up
+to six integer arguments, including recursion. Rejected with diagnostics: arrays, structs, floats,
+vectors, `par for`, break/continue, string printing.
+
+Correctness is checked by `tests/ir.rs`: ten inline programs plus `examples/fib`, `for` and `sum`
+must produce byte-identical output through the C and IR backends. The register allocator will
+replace the per-value stack slots; the test and `native_diff` remain the gates.
+
+## Differential harness## Differential harness
 
 `tests/native_diff.rs` builds a 27-program corpus (all examples, the integer/float/struct/vector
 benchmarks and the database components) with both backends, runs them from the repository root and

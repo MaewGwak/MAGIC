@@ -2,6 +2,7 @@
 
 pub mod ast;
 pub mod codegen;
+pub mod ir;
 pub mod lexer;
 pub mod native;
 pub mod parser;
@@ -56,6 +57,17 @@ pub fn compile_to_asm(src: &str) -> Result<String, String> {
     types::lower_calls(&mut program);
     codegen::retain_reachable(&mut program);
     native::emit(&program)
+}
+
+/// Compile to x86-64 assembly through the experimental typed IR.
+pub fn compile_to_asm_ir(src: &str) -> Result<String, String> {
+    let tokens = lexer::Lexer::new(src).tokenize()?;
+    let mut program = parser::Parser::new(tokens).parse_program()?;
+    types::Checker::check(&mut program)?;
+    types::lower_calls(&mut program);
+    codegen::retain_reachable(&mut program);
+    let ir = ir::lower(&program)?;
+    Ok(ir::emit(&ir))
 }
 
 /// Static upper bound on the bytes each function's arrays can occupy.

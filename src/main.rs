@@ -44,7 +44,7 @@ fn run() -> Result<(), String> {
         backend = args[pos + 1].clone();
         args.drain(pos..=pos + 1);
     }
-    if backend != "c" && backend != "native" {
+    if backend != "c" && backend != "native" && backend != "ir" {
         return Err(format!("unknown backend `{}` (use c or native)", backend));
     }
     let mut out_override: Option<PathBuf> = None;
@@ -122,12 +122,25 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "emit" => {
-            print!("{}", c);
+            if backend == "ir" {
+                let asm = magic::compile_to_asm_ir(&source)
+                    .map_err(|e| map_diagnostic(e, &segments, src_path))?;
+                print!("{}", asm);
+            } else {
+                print!("{}", c);
+            }
             Ok(())
         }
         "build" | "run" => {
-            if backend == "native" {
-                return build_native(&src_path, &source, out_override, command == "run", cc_override.as_deref());
+            if backend == "native" || backend == "ir" {
+                return build_native(
+                    &src_path,
+                    &source,
+                    out_override,
+                    command == "run",
+                    cc_override.as_deref(),
+                    backend == "ir",
+                );
             }
             let dir = src_path.parent().unwrap_or_else(|| Path::new("."));
             let exe_path = out_override.clone().unwrap_or_else(|| {
@@ -415,11 +428,16 @@ fn build_native(
     out_override: Option<PathBuf>,
     run: bool,
     cc_override: Option<&str>,
+    use_ir: bool,
 ) -> Result<(), String> {
     if !(cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) {
         return Err("the native backend currently targets Linux x86-64 only; use the C backend".to_string());
     }
-    let asm = magic::compile_to_asm(source)?;
+    let asm = if use_ir {
+        magic::compile_to_asm_ir(source)?
+    } else {
+        magic::compile_to_asm(source)?
+    };
     let exe_path = out_override.unwrap_or_else(|| {
         if cfg!(windows) {
             with_ext(src_path, "exe")
@@ -494,7 +512,11 @@ fn build_native(
     if !status.success() {
         return Err(format!("{} failed while linking {}", ld_cmd, exe_path.display()));
     }
-    println!("\u{1F52E} built {} (native)", exe_path.display());
+    println!(
+        "\u{1F52E} built {} ({})",
+        exe_path.display(),
+        if use_ir { "ir" } else { "native" }
+    );
     if run {
         let status = Command::new(&exe_path)
             .status()
