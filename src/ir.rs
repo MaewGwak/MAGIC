@@ -64,6 +64,9 @@ pub enum Instr {
     VecLen { dst: Value, len_var: usize },
     VecPushScalar { ptr_var: usize, len_var: usize, cap_var: usize, esz: u64, ty: Ty, src: Value },
     VecPushStruct { ptr_var: usize, len_var: usize, cap_var: usize, esz: u64, size: u64, tmp_var: usize, tmp_slots: usize },
+    Argv { dst: Value, argv_var: usize, idx: Value },
+    InputRead { dst: Value, buf: Value, len: Value },
+    PrintBytes { buf: Value, len: Value, stdout: bool },
     Str { dst: Value, id: usize, s: String },
     FBin { dst: Value, op: Op, l: Value, r: Value },
     FNeg { dst: Value, a: Value },
@@ -85,6 +88,8 @@ pub struct Block {
 #[derive(Clone, Debug)]
 pub struct IrFunc {
     pub name: String,
+    pub argc_var: Option<usize>,
+    pub argv_var: Option<usize>,
     pub extra_frame: usize,
     pub nvars: usize,
     pub nvalues: usize,
@@ -164,6 +169,8 @@ struct Builder {
     struct_vars: HashMap<String, (usize, usize, u16)>,
     struct_bytes: i64,
     vecs: HashMap<String, (Ty, usize, usize, usize, u64)>,
+    argc_var: Option<usize>,
+    argv_var: Option<usize>,
     ret: Ty,
 }
 
@@ -186,6 +193,8 @@ impl Builder {
             struct_vars: HashMap::new(),
             struct_bytes: 0,
             vecs: HashMap::new(),
+            argc_var: None,
+            argv_var: None,
             ret,
         }
     }
@@ -565,20 +574,51 @@ impl Builder {
                     "file_tell" => Some(".Lmf_tell"),
                     "file_size" => Some(".Lmf_size"),
                     "file_write_str" => Some(".Lmf_write_str"),
+                    "str_eq" => Some(".Lmf_str_eq"),
+                    "str_byte" => Some(".Lmf_str_byte"),
+                    "str_byte_n" => Some(".Lmf_str_byte_n"),
+                    "str_len" => Some(".Lmf_str_len"),
                     _ => None,
                 };
                 if builtin.is_none()
-                    && (name.starts_with("file_")
-                        || name == "print_bytes"
-                        || name == "input_read"
-                        || name == "argc"
-                        || name == "arg"
-                        || name == "env")
+                    && (name.starts_with("file_") || name == "env")
                 {
                     return Err(format!(
                         "line {}: IR: builtin `{}` is not supported yet",
                         e.line, name
                     ));
+                }
+                if name == "argc" && args.is_empty() {
+                    let av = self.argc_var.ok_or_else(|| {
+                        format!("line {}: IR: argc is only available in main", e.line)
+                    })?;
+                    let dst = self.value();
+                    self.push(Instr::LoadVar { dst, var: av });
+                    self.vty[dst.0 as usize] = Ty::I32;
+                    return Ok(dst);
+                }
+                if name == "arg" && args.len() == 1 {
+                    let av = self.argv_var.ok_or_else(|| {
+                        format!("line {}: IR: arg is only available in main", e.line)
+                    })?;
+                    let idx = self.lower_expr(&args[0])?;
+                    let dst = self.value();
+                    self.push(Instr::Argv { dst, argv_var: av, idx });
+                    self.vty[dst.0 as usize] = Ty::Str;
+                    return Ok(dst);
+                }
+                if (name == "input_read" || name == "print_bytes") && args.len() == 2 {
+                    let buf = self.lower_expr(&args[0])?;
+                    let len = self.lower_expr(&args[1])?;
+                    let dst = self.value();
+                    if name == "input_read" {
+                        self.push(Instr::InputRead { dst, buf, len });
+                    } else {
+                        self.push(Instr::PrintBytes { buf, len, stdout: true });
+                        self.push(Instr::Const { dst, v: 0 });
+                    }
+                    self.vty[dst.0 as usize] = Ty::I64;
+                    return Ok(dst);
                 }
                 if name == "len" && args.len() == 1 {
                     if let ExprKind::Var(vname) = &args[0].kind {
@@ -1008,6 +1048,8 @@ impl Builder {
     fn finish(&mut self) -> IrFunc {
         IrFunc {
             name: String::new(),
+            argc_var: None,
+            argv_var: None,
             extra_frame: self.struct_bytes.max(0) as usize,
             nvars: self.nvars,
             nvalues: self.nvalues,
@@ -1066,6 +1108,15 @@ fn lower_func(f: &Func, sigs: &HashMap<String, Ty>, structs: &[StructDef]) -> Re
             }
         }
     }
+    let (argc_var, argv_var) = if f.name == "main" {
+        let a = b.nvars;
+        b.nvars += 2;
+        (Some(a), Some(a + 1))
+    } else {
+        (None, None)
+    };
+    b.argc_var = argc_var;
+    b.argv_var = argv_var;
     for st in &f.body {
         b.lower_stmt(st)?;
     }
@@ -1075,6 +1126,8 @@ fn lower_func(f: &Func, sigs: &HashMap<String, Ty>, structs: &[StructDef]) -> Re
     let mut out = b.finish();
     out.name = f.name.clone();
     out.nparams = nparams;
+    out.argc_var = argc_var;
+    out.argv_var = argv_var;
     Ok(out)
 }
 
@@ -1251,6 +1304,7 @@ fn def_kind(ins: &Instr) -> Option<(Value, DefKind)> {
             Some((*dst, DefKind::Other))
         }
         Instr::VecLen { dst, .. } => Some((*dst, DefKind::Other)),
+        Instr::Argv { dst, .. } | Instr::InputRead { dst, .. } => Some((*dst, DefKind::Other)),
         Instr::FieldLoad { dst, .. } | Instr::IndexFieldLoad { dst, .. } => {
             Some((*dst, DefKind::Other))
         }
@@ -1545,6 +1599,19 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
             uses.push(*idx);
             defs.push(*dst);
         }
+        Instr::Argv { dst, idx, .. } => {
+            uses.push(*idx);
+            defs.push(*dst);
+        }
+        Instr::InputRead { dst, buf, len } => {
+            uses.push(*buf);
+            uses.push(*len);
+            defs.push(*dst);
+        }
+        Instr::PrintBytes { buf, len, .. } => {
+            uses.push(*buf);
+            uses.push(*len);
+        }
         Instr::VecNew { .. } => {}
         Instr::VecReserve { need, .. } => uses.push(*need),
         Instr::VecLen { dst, .. } => defs.push(*dst),
@@ -1593,6 +1660,9 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::VecLen { .. }
                 | Instr::VecPushScalar { .. }
                 | Instr::VecPushStruct { .. }
+                | Instr::Argv { .. }
+                | Instr::InputRead { .. }
+                | Instr::PrintBytes { .. }
                 | Instr::Bin { op: Op::Div | Op::Rem, .. }
         )
     })
@@ -2312,7 +2382,10 @@ fn emit_fast_block(
             | Instr::VecReserve { .. }
             | Instr::VecLen { .. }
             | Instr::VecPushScalar { .. }
-            | Instr::VecPushStruct { .. } => {
+            | Instr::VecPushStruct { .. }
+            | Instr::Argv { .. }
+            | Instr::InputRead { .. }
+            | Instr::PrintBytes { .. } => {
                 unreachable!("slow block")
             }
         }
@@ -2435,6 +2508,11 @@ pub fn emit(prog: &IrProgram) -> String {
             out.push_str(&format!("    push {}\n", ["%rbx", "%r12", "%r13", "%r14", "%r15"][i]));
         }
         let regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
+        if let (Some(ac), Some(av)) = (f.argc_var, f.argv_var) {
+            out.push_str("    movslq %edi, %rax\n");
+            out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(ac)));
+            out.push_str(&format!("    mov %rsi, -{}(%rbp)\n", varoff(av)));
+        }
         for i in 0..f.nparams {
             let src = if i < 6 {
                 regs[i].to_string()
@@ -2803,6 +2881,33 @@ pub fn emit(prog: &IrProgram) -> String {
                         }
                         out.push_str(&format!("    incq -{}(%rbp)\n", varoff(*len_var)));
                     }
+                    Instr::Argv { dst, argv_var, idx } => {
+                        out.push_str(&ld(*idx));
+                        out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*argv_var)));
+                        out.push_str("    mov (%r10,%rax,8), %rax\n");
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::InputRead { dst, buf, len } => {
+                        out.push_str(&ld(*buf));
+                        out.push_str("    mov %rax, %rdi\n");
+                        out.push_str(&ld(*len));
+                        out.push_str("    mov %rax, %rdx\n    mov $1, %esi\n");
+                        out.push_str("    mov stdin@GOTPCREL(%rip), %rax\n    mov (%rax), %rcx\n");
+                        out.push_str("    call fread@PLT\n");
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::PrintBytes { buf, len, stdout } => {
+                        out.push_str(&ld(*buf));
+                        out.push_str("    mov %rax, %rdi\n");
+                        out.push_str(&ld(*len));
+                        out.push_str("    mov %rax, %rdx\n    mov $1, %esi\n");
+                        if *stdout {
+                            out.push_str("    mov stdout@GOTPCREL(%rip), %rax\n    mov (%rax), %rcx\n");
+                        } else {
+                            out.push_str("    mov stdin@GOTPCREL(%rip), %rax\n    mov (%rax), %rcx\n");
+                        }
+                        out.push_str("    call fwrite@PLT\n");
+                    }
                     Instr::StructInit { var_index, slots, fields } => {
                         let base = -8 * (*var_index + *slots) as i64;
                         for (off, ty, v) in fields {
@@ -3158,6 +3263,19 @@ pub fn emit(prog: &IrProgram) -> String {
         out.push_str(&format!("    call {}@PLT\n", lib));
         out.push_str("    add $8, %rsp\n    pop %r12\n    pop %rbx\n    ret\n");
     }
+    // String helpers with the native backend's NULL-safe semantics.
+    out.push_str(".p2align 4\n.Lmf_str_len:\n    test %rdi, %rdi\n    je 2f\n");
+    out.push_str("    jmp strlen@PLT\n2:\n    xor %eax, %eax\n    ret\n");
+    out.push_str(".p2align 4\n.Lmf_str_byte:\n    test %rdi, %rdi\n    je 2f\n");
+    out.push_str("    movzbq (%rdi,%rsi), %rax\n    ret\n2:\n    xor %eax, %eax\n    ret\n");
+    out.push_str(".p2align 4\n.Lmf_str_byte_n:\n    test %rdi, %rdi\n    je 2f\n");
+    out.push_str("    cmp %rdx, %rsi\n    jae 2f\n    movzbq (%rdi,%rsi), %rax\n    ret\n");
+    out.push_str("2:\n    xor %eax, %eax\n    ret\n");
+    out.push_str(".p2align 4\n.Lmf_str_eq:\n    test %rdi, %rdi\n    jne 1f\n");
+    out.push_str("    test %rsi, %rsi\n    sete %al\n    movzbq %al, %rax\n    ret\n");
+    out.push_str("1:\n    test %rsi, %rsi\n    jne 2f\n    xor %eax, %eax\n    ret\n");
+    out.push_str("2:\n    sub $8, %rsp\n    call strcmp@PLT\n    add $8, %rsp\n");
+    out.push_str("    test %eax, %eax\n    sete %al\n    movzbq %al, %rax\n    ret\n");
     // file_size: save position, seek to end, tell, restore.
     out.push_str(".p2align 4\n.Lmf_size:\n    push %rbx\n    push %r12\n    push %r13\n    sub $8, %rsp\n    mov %rdi, %rbx\n");
     out.push_str("    call ftell@PLT\n    mov %rax, %r13\n");

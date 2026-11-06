@@ -30,6 +30,15 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.29 — argc/argv, stdin/stdout and string builtins in the IR (2026-11-06)
+
+`main` now saves `argc`/`argv`, and the IR lowers `argc`, `arg(i)`, `input_read(buf, len)`
+(fread from stdin) and `print_bytes(buf, len)` (fwrite to stdout). String helpers `str_eq`,
+`str_byte`, `str_byte_n` and `str_len` are emitted as NULL-safe wrappers over libc, mirroring the
+native backend. With these, `bench-db/dbload` (100000), `dbquery` (100000 / 3498635000), `sqldb`
+(100000 / 38498385000) and `dbcli` (empty stdin) all run through `--backend ir` with output identical
+to the C backend. Only the TCP builtins (`net_*`, needed by pgserver) remain unsupported.
+
 ## v0.8.28 — remaining file builtins in the IR (2026-11-06)
 
 `file_seek`, `file_read_at`, `file_write_at`, `file_tell`, `file_size` and `file_write_str` are now
