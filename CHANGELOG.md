@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.54 — interval analysis removes redundant i32 truncations (2026-11-06)
+
+The wrap-correctness fix cost matmul 2.4x because every `i32` operation ended with a `movslq`. A new
+interval-analysis pass proves when a truncation cannot wrap and deletes it: loop induction variables
+with a constant zero start, unit step and a constant (also constant-propagated) upper bound get
+intervals, arithmetic over them uses checked 64-bit interval math, and the substitution rewrites uses
+globally. Matmul recovers from 295 to 183 ms (the remaining gap to the 125 ms pre-fix figure is the
+dot-product's own `s = s + a*b` truncations, which need the operand ranges of array loads); nbody,
+btree, hashmap and sieve are unchanged. The full differential gate and the mutation fuzzer pass.
+
 ## v0.8.53 — real i32 wrap semantics and differential fuzzing (2026-11-06)
 
 A differential fuzzer that mutates integer literals in valid programs (`tests/fuzz_diff.rs`) found

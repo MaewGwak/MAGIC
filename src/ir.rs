@@ -3303,8 +3303,226 @@ fn rewrite_operands(ins: &mut Instr, f: &dyn Fn(Value) -> Value) {
     }
 }
 
+/// Remove `i32` truncations that are provably redundant: if interval
+/// analysis shows the operand already fits in i32, the wrap cannot happen.
+/// Loop induction variables with a constant zero start, unit step and a
+/// constant upper bound contribute intervals; arithmetic over them is exact.
+fn remove_redundant_truncations(prog: &mut IrProgram) {
+    for f in &mut prog.funcs {
+        let n = f.blocks.len();
+        let mut defs: HashMap<Value, (DefKind, usize)> = HashMap::new();
+        for (bi, b) in f.blocks.iter().enumerate() {
+            for ins in &b.instrs {
+                if let Some((v, k)) = def_kind(ins) {
+                    defs.insert(v, (k, bi));
+                }
+            }
+        }
+        let mut var_consts: HashMap<usize, i64> = HashMap::new();
+        let mut vals: HashMap<Value, i64> = HashMap::new();
+        for _ in 0..6 {
+            vals = compute_value_consts(f, &var_consts);
+            let next = compute_var_consts(f, &vals);
+            if next == var_consts {
+                break;
+            }
+            var_consts = next;
+        }
+        // Loop induction-variable ranges [0, bound).
+        let mut var_range: HashMap<usize, (i64, i64)> = HashMap::new();
+        for h in 0..n {
+            let Some(Instr::Br { then_bb, else_bb, .. }) = f.blocks[h].instrs.last() else {
+                continue;
+            };
+            let mut region = std::collections::HashSet::new();
+            let mut stack = vec![*then_bb];
+            let mut reaches = false;
+            while let Some(bb) = stack.pop() {
+                if bb == h {
+                    reaches = true;
+                    continue;
+                }
+                if bb == *else_bb || !region.insert(bb) {
+                    continue;
+                }
+                for succ in block_successors(&f.blocks[bb].instrs) {
+                    if succ < n {
+                        stack.push(succ);
+                    }
+                }
+            }
+            if !reaches {
+                continue;
+            }
+            let mut iv = None;
+            let mut upper = None;
+            for ins in &f.blocks[h].instrs {
+                if let Instr::Bin { op: Op::Lt, l, r, .. } = ins {
+                    if let Some((DefKind::LoadVar(v), hb)) = defs.get(l).copied() {
+                        if hb != h {
+                            continue;
+                        }
+                        let bound = match defs.get(r).copied() {
+                            Some((DefKind::Const(c), rb)) if rb == h => Some(c),
+                            Some((DefKind::LoadVar(w), rb)) if rb == h => var_consts.get(&w).copied(),
+                            _ => None,
+                        };
+                        if let Some(c) = bound {
+                            if c > 0 {
+                                iv = Some(v);
+                                upper = Some(c);
+                            }
+                        }
+                    }
+                }
+            }
+            let (Some(iv), Some(upper)) = (iv, upper) else { continue };
+            // Every store to the index must be `0` or `iv + 1`.
+            let mut ok = true;
+            let mut saw_zero = false;
+            for bb in &region {
+                for ins in &f.blocks[*bb].instrs {
+                    let Instr::StoreVar { var, src } = ins else { continue };
+                    if *var != iv {
+                        continue;
+                    }
+                    if let Some((DefKind::Const(0), _)) = defs.get(src).copied() {
+                        saw_zero = true;
+                        continue;
+                    }
+                    let mut inc = false;
+                    for b2 in &f.blocks {
+                        for i2 in &b2.instrs {
+                            if let Instr::Bin { dst, op: Op::Add, l, r } = i2 {
+                                if dst == src {
+                                    let is_iv = |v: &Value| {
+                                        matches!(defs.get(v), Some((DefKind::LoadVar(x), _)) if *x == iv)
+                                    };
+                                    let one = |v: &Value| {
+                                        matches!(defs.get(v), Some((DefKind::Const(1), _)))
+                                    };
+                                    inc = (is_iv(l) && one(r)) || (is_iv(r) && one(l));
+                                }
+                            }
+                        }
+                    }
+                    if !inc {
+                        ok = false;
+                    }
+                }
+            }
+            if ok && saw_zero {
+                var_range.insert(iv, (0, upper));
+            }
+        }
+        // Interval fixpoint over values.
+        let mut range: HashMap<Value, (i64, i64)> = HashMap::new();
+        for _ in 0..4 {
+            let mut changed = false;
+            for b in &f.blocks {
+                for ins in &b.instrs {
+                    let r = match ins {
+                        Instr::Const { v, .. } => Some((*v, *v)),
+                        Instr::LoadVar { var, .. } => var_range
+                            .get(var)
+                            .copied()
+                            .or_else(|| var_consts.get(var).map(|c| (*c, *c))),
+                        Instr::Bin { op, l, r, .. } => {
+                            match (range.get(l).copied(), range.get(r).copied()) {
+                                (Some((a0, a1)), Some((b0, b1))) => match op {
+                                    Op::Add => a0.checked_add(b0).zip(a1.checked_add(b1)),
+                                    Op::Sub => a0.checked_sub(b1).zip(a1.checked_sub(b0)),
+                                    Op::Mul => {
+                                        let mut lo = i64::MAX;
+                                        let mut hi = i64::MIN;
+                                        let mut good = true;
+                                        for (x, y) in [(a0, b0), (a0, b1), (a1, b0), (a1, b1)] {
+                                            match x.checked_mul(y) {
+                                                Some(p) => {
+                                                    lo = lo.min(p);
+                                                    hi = hi.max(p);
+                                                }
+                                                None => good = false,
+                                            }
+                                        }
+                                        if good {
+                                            Some((lo, hi))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    _ => None,
+                                },
+                                _ => None,
+                            }
+                        }
+                        Instr::Un { neg: true, a, .. } => {
+                            range.get(a).and_then(|(lo, hi)| {
+                                lo.checked_neg().zip(hi.checked_neg()).map(|(x, y)| (y.min(x), y.max(x)))
+                            })
+                        }
+                        _ => None,
+                    };
+                    if let Some((lo, hi)) = r {
+                        if let Some(dst) = dst_of(ins) {
+                            if range.get(&dst) != Some(&(lo, hi)) {
+                                range.insert(dst, (lo, hi));
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        // Substitute truncations whose operand is known to fit in i32.
+        let mut subst: HashMap<Value, Value> = HashMap::new();
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                if let Instr::Trunc { dst, ty: Ty::I32, a } = ins {
+                    if let Some((lo, hi)) = range.get(a) {
+                        if *lo >= i32::MIN as i64 && *hi <= i32::MAX as i64 {
+                            subst.insert(*dst, *a);
+                        }
+                    }
+                }
+            }
+        }
+        if subst.is_empty() {
+            continue;
+        }
+        let resolve = |v: Value, subst: &HashMap<Value, Value>| -> Value {
+            let mut cur = v;
+            for _ in 0..64 {
+                match subst.get(&cur) {
+                    Some(next) => cur = *next,
+                    None => break,
+                }
+            }
+            cur
+        };
+        for b in f.blocks.iter_mut() {
+            let old = std::mem::take(&mut b.instrs);
+            let mut new_instrs = Vec::new();
+            for mut ins in old {
+                if let Instr::Trunc { dst, ty: Ty::I32, .. } = &ins {
+                    if subst.contains_key(dst) {
+                        continue;
+                    }
+                }
+                rewrite_operands(&mut ins, &|v| resolve(v, &subst));
+                new_instrs.push(ins);
+            }
+            b.instrs = new_instrs;
+        }
+    }
+}
+
 pub fn optimize(prog: &mut IrProgram) {
     remove_redundant_bounds(prog);
+    remove_redundant_truncations(prog);
     cse_blocks(prog);
 }
 
