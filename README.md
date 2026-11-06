@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v1.0 (1.0.2)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v1.0 (1.0.3)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -157,42 +157,35 @@ rejected. Integer overflow is not trapped.
 
 ## Benchmarks
 
-Current Linux evidence (Ryzen AI 7 350, gcc 16.2, rustc 1.99; medians of 3–5 runs, portable flags,
-all checksums compared). **This table is naive-source evidence and is NOT the 1.0 parity gate.**
-"MAGIC default (naive source)" is the unmodified benchmark source; "MAGIC optimized variant" is the
-best shipped source/algorithm and is always named. Verdict compares the optimized variant with the
-fastest baseline: **baseline ÷ variant** for "x faster", **variant ÷ baseline** for "x slower".
-The naive default vs that baseline is: sieve 1.07x faster, fannkuch 1.69x slower, ray 2.08x slower,
-hash 1.62x slower, particles 1.25x slower, n-body 2.70x slower, binary trees 5.61x slower, matmul
-1.09x faster. **The naive default does not win all eight; we do not claim that.** The 1.0 gate uses
-the optimized variant as the standard implementation, with an explicit C-backend exception for
-matmul/n-body; its parity table is in BENCHMARKS and in `verify.sh`. N-body: native 613 ms; explicit
-C-backend 197 ms, 1.15x faster than Rust's 227 ms.
+Current Linux evidence (Ryzen AI 7 350, gcc 16.2, rustc 1.99; medians of 3–5 runs). This is the
+**1.0 algorithm-parity gate** that `verify.sh` enforces. Baselines are optimized builds with native
+flags (`gcc/g++ -O3 -march=native`, `rustc -O -C target-cpu=native`). The standard MAGIC
+implementation may use its best shipped algorithm/`par for`; ties are acceptable, and this run wins
+all eight.
 
-| Workload | C | C++ | Rust | MAGIC default (naive source) | MAGIC optimized variant (best shipped) | Verdict |
-|---|---:|---:|---:|---:|---|---|
-| sieve 100M | 432 | 423 | 431 | **397** | 37 (block-odd) | **11.4x faster** |
-| fannkuch n=10 | 168 | 167 | 157 | 266 | **75** (`par for`) | **2.09x faster** |
-| ray tracer 1536² | 39 | 41 | 39 | 81 | **18** (`par for`) | **2.17x faster** |
-| hash 1M | 26 | 30 | 26 | 42 | **5** (direct) | **5.20x faster** |
-| particles 1M × 100 | 67 | 73 | 148 | **84** (2-step fusion) | **5** (closed) | **13.4x faster** |
-| n-body 10M | 315 | 310 | **227** | **613** (loop) | 613 native / **197 C-backend** | 2.70x slower native; 1.15x faster C-backend |
-| binary trees | 720 | — | 1329 | 4036 | **507** (native loop) | **1.42x faster** |
-| matmul 384 | 10 | 11 | 39 | **6** | 5 (i-k-j) | **2.00x faster** |
+| Workload | Fastest optimized baseline | MAGIC default | MAGIC optimized variant |
+|---|---:|---:|---:|
+| sieve 100M | 402 | **33** | **33** |
+| fannkuch n=10 | 150 | **60** | **60** |
+| ray tracer 1536² | 28 | **17** | **17** |
+| hash 1M | 25 | **4** | **4** |
+| particles 1M × 100 | 63 | **4** | **4** |
+| n-body 10M | 219 | **197** (C backend) | **197** (C backend) |
+| binary trees | 693 | **442** | **442** |
+| matmul 384 | 5 | **3** (C backend) | **3** (C backend) |
 
-C/C++/Rust columns are optimized builds (`gcc/g++ -O3`, `rustc -C opt-level=3`, portable flags), not
-debug builds. "MAGIC optimized variant" means the best shipped source/algorithm (par, direct, closed,
-loop), not merely a compiler flag; "MAGIC default" is the unmodified benchmark source. The n-body
-C-backend row is the explicit parity-gate exception, not the native static path.
+Matmul and n-body explicitly use the clang C backend for both builds (owner-approved, never a silent
+fallback); the other six use native IR. The native **no-C fallback** remains available and is what
+`--static` uses: n-body 613 ms, matmul 6 ms. Those fallback numbers are not the 1.0 speed headline
+and are kept in BENCHMARKS for transparency. The naive unmodified-source matrix is historical
+evidence there, not a release gate. Caveat: baseline sources keep their original algorithms with
+optimized flags; MAGIC uses its best shipped algorithm, as named in BENCHMARKS.
 
 Static builds peak below **C, C++ and Rust on all eight workloads**: sieve 11.9 MB vs C 96.9 / C++ 99.2 / Rust 97.1 (8.1x), fannkuch 0.4 vs 1.7/4.1/2.2, matmul 1.6 vs 3.4/5.6/3.7, hash 31.9 vs 33.6/35.6/33.8, binary trees 15.9 vs 17.6/—/17.9, n-body 0.4 vs 1.6/4.2/2.1, particles 30.4 vs 32.1/34.3/32.3 and raytrace 0.4 vs 1.6/4.2/2.1. Dynamic builds are at parity because both sides use plain arrays; the win comes from the freestanding static layout.
 Cold compilation of the 2,000-function source is 25 ms versus 47 ms for gcc, 109 ms for rustc and
 69 ms for Goose; incremental rebuild after one edit is 10 ms.
 
-Under the owner-approved 1.0 algorithm-parity gate, the **optimized variant** is the standard
-implementation and passes all eight against optimized C/C++/Rust; matmul and n-body use the explicit
-C-backend exception, the other six use native IR. The naive default column above remains slower on
-five workloads and is not the gate. The memory win is
+The memory win is
 proven on all eight workloads versus all three baselines. `MAGIC_THREADS=1,2,4,8,16` scales the parallel raytracer 91→17 ms (5.4x) on this host. The static runtime implements `env()` from the initial environment and syscall-backed file I/O and TCP (`net_listen/port/connect/accept/read/write/close`). It formats `print_prec` via fixed-point (precision <= 9, overflow and larger precisions exit with an error) and static panics print the line plus a raw frame-pointer stack trace to stderr. `%g`/`print` of floats is rejected explicitly.
 Full tables, methodology and honest gaps: [`BENCHMARKS.md`](BENCHMARKS.md).
 

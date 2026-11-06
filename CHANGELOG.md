@@ -1,3 +1,10 @@
+## v1.0.3 — parity gate is the primary benchmark table (2026-11-07)
+
+README no longer headlines native n-body 613 ms. The primary table is the 1.0 algorithm-parity gate:
+n-body 197 ms and matmul 3 ms use the explicit clang C backend for both default and optimized builds;
+the other six use native IR. Native no-C fallback numbers (n-body 613, matmul 6) are kept only as
+transparency for `--static`. Ties are acceptable; this run wins all eight. No code change.
+
 ## v1.0.2 — remove stale strict-gate section (2026-11-07)
 
 Removed the superseded "optimized-baseline gate (target, not yet met)" block, which was still
