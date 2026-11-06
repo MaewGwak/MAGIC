@@ -142,7 +142,9 @@ C 155 ms). v0.8.26 adds vectors: `[T+]`, `reserve`, `push`, `len` and runtime-le
 `examples/vec` prints 10/285 and vecpart prints 125024147186.169 through the IR in 344 ms
 (AST ~260 ms, C 34 ms). v0.8.27 moves float arithmetic and struct-field accesses into the
 register-allocated blocks, taking nbody to 3.17 s, particles to 0.83 s, raytrace to 413 ms and
-vecpart to 251 ms.
+vecpart to 251 ms. v0.8.28 adds the remaining file builtins (`file_seek`, `file_read_at`,
+`file_write_at`, `file_tell`, `file_size`, `file_write_str`), matching the native backend's
+read-into-buffer-fragment semantics, so bufpool runs through the IR too (187 ms vs C 128 ms).
 Affine indexes like
 `a[i * n + j]` are proved in v0.8.15 after constant propagation makes `n` and `n * n` literal: the
 maximum `(n-1)*n + (n-1)` is compared with the array length, so matmul's inner checks disappear

@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.28 — remaining file builtins in the IR (2026-11-06)
+
+`file_seek`, `file_read_at`, `file_write_at`, `file_tell`, `file_size` and `file_write_str` are now
+lowered. The native backend's `file_read_at(fd, buf, off, len)` semantics are unusual — it reads
+`len` bytes into `buf + off` at the current file position, with file positioning done by a separate
+`file_seek` — so the IR wrapper mirrors that exactly instead of seeking itself. `bench-db/bufpool` now
+runs through the IR with identical output (24997 / 175003 / 25510321) in 187 ms against C's 128 ms,
+completing the five database benchmarks on the IR backend (btree, hashmap, sqlscan, pageio, bufpool).
+`argc`/`arg`/`input_read`/`print_bytes` still produce a clear "not supported yet" diagnostic.
+
 ## v0.8.27 — float and struct-field operations in the register-allocated IR path (2026-11-06)
 
 Float arithmetic, comparisons, casts, `sqrt`, negative, and struct field loads/stores (including
