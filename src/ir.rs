@@ -3324,20 +3324,33 @@ pub fn emit(prog: &IrProgram) -> String {
         // Variables used most often get a callee-saved register for the whole
         // function; the emitter never touches these registers elsewhere.
         let mut var_counts: HashMap<usize, u32> = HashMap::new();
-        for b in &f.blocks {
+        // Approximate loop depth per block from backward edges, so variables
+        // used in inner loops outrank equally-used outer ones.
+        let mut depth = vec![0u32; f.blocks.len()];
+        for (bi, b) in f.blocks.iter().enumerate() {
+            for succ in block_successors(&b.instrs) {
+                if succ <= bi && succ < f.blocks.len() {
+                    for d in depth.iter_mut().take(bi + 1).skip(succ) {
+                        *d += 1;
+                    }
+                }
+            }
+        }
+        for (bi, b) in f.blocks.iter().enumerate() {
+            let w = 1 + depth[bi] * depth[bi];
             for ins in &b.instrs {
                 match ins {
                     Instr::LoadVar { var, .. } => {
-                        *var_counts.entry(*var).or_insert(0) += 1;
+                        *var_counts.entry(*var).or_insert(0) += w;
                     }
                     Instr::StoreVar { var, .. } => {
-                        *var_counts.entry(*var).or_insert(0) += 1;
+                        *var_counts.entry(*var).or_insert(0) += w;
                     }
                     Instr::Alloc { ptr_var, .. }
                     | Instr::Fill { ptr_var, .. }
                     | Instr::IndexLoad { ptr_var, .. }
                     | Instr::IndexStore { ptr_var, .. } => {
-                        *var_counts.entry(*ptr_var).or_insert(0) += 3;
+                        *var_counts.entry(*ptr_var).or_insert(0) += 3 * w;
                     }
                     _ => {}
                 }

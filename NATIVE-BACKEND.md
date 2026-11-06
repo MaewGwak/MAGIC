@@ -197,7 +197,8 @@ functions at IR call sites, taking sqlscan to 34 ms and bufpool to 173 ms. v0.8.
 IR allocation (NULL checks plus overflow-guarded vector growth) and adds an OOM differential case.
 v0.8.47 gives `arena` blocks real region semantics: each array is a lazily-zeroed anonymous `mmap`,
 freed at block end. Two 32 MB regions peak at 32.9 MB in the IR versus 32.8 MB for C and 64.2 MB for
-the AST backend; untouched regions stay at the runtime floor.
+the AST backend; untouched regions stay at the runtime floor. v0.8.49 weights variable promotion by
+loop depth, taking particles to 539 ms and raytrace to 250 ms.
 
 ## IR vs AST vs C (v0.8.31 medians)## IR vs AST vs C (v0.8.31 medians)
 

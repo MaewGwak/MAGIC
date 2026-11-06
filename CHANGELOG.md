@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.49 — loop-depth-weighted variable promotion in the IR (2026-11-06)
+
+Variables are now ranked for the five callee-saved registers by their use count weighted with the
+approximate loop depth of the block (`1 + depth²`, depth from backward edges). Inner-loop counters,
+accumulators and array pointers therefore outrank equally-used outer variables; for example matmul's
+`k`/`s` now live in registers. Medians: particles 593 → 539 ms, raytrace 267 → 250 ms, nbody ~2.07 →
+2.01 s; matmul, vecpart and sieve are unchanged and btree moves within noise (179→184 ms).
+
 ## v0.8.48 — layout experiments rejected, 1.0 roadmap recorded (2026-11-06)
 
 Two code-layout changes were prototyped and measured: conditional-branch fallthrough for adjacent
