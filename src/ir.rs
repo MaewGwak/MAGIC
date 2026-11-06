@@ -37,6 +37,8 @@ pub enum Op {
     Ge,
     And,
     Or,
+    Shr,
+    Shl,
 }
 
 #[derive(Clone, Debug)]
@@ -2683,6 +2685,34 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
             if !reaches {
                 continue;
             }
+            // The "true" edge is the only edge on which the header condition
+            // holds. If the false/exit edge can reach a region block without
+            // re-entering the header (short-circuit conditions such as
+            // `while i < n || spin < m`), the body is reachable with the
+            // condition false and the fact is invalid.
+            let mut bad_else = false;
+            let mut seen_else: std::collections::HashSet<usize> = Default::default();
+            let mut stack_else = vec![exit];
+            while let Some(bb) = stack_else.pop() {
+                if bb == h {
+                    continue;
+                }
+                if region.contains(&bb) {
+                    bad_else = true;
+                    break;
+                }
+                if !seen_else.insert(bb) {
+                    continue;
+                }
+                for succ in block_successors(&f.blocks[bb].instrs) {
+                    if succ < n {
+                        stack_else.push(succ);
+                    }
+                }
+            }
+            if bad_else {
+                continue;
+            }
             // Head layout: LoadVar iv; ...; Bin Lt(l=iv', r=end) -> cond.
             let mut iv: Option<usize> = None;
             let mut bound: Option<Bound> = None;
@@ -3646,7 +3676,7 @@ fn emit_fast_block(
                 let commutative = matches!(op, Op::Add | Op::Mul | Op::And | Op::Or);
                 let imm_r = ra.consts.get(r).copied().filter(|c| *c >= i32::MIN as i64 && *c <= i32::MAX as i64);
                 let imm_l = ra.consts.get(l).copied().filter(|c| *c >= i32::MIN as i64 && *c <= i32::MAX as i64);
-                if !matches!(op, Op::Div | Op::Rem) {
+                if !matches!(op, Op::Div | Op::Rem | Op::Shr | Op::Shl) {
                     let is_cmp_op = matches!(
                         op,
                         Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge
@@ -3785,6 +3815,20 @@ fn emit_fast_block(
                     (None, Some(i)) => ra.dst_at(*dst, i),
                     (None, None) => ra.dst_excluding(*dst, &[a, b]),
                 };
+                if matches!(op, Op::Shr | Op::Shl) {
+                    if d != a {
+                        ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
+                    }
+                    ra.out.push_str(&format!("    mov {}, %rcx\n", POOL[b].0));
+                    if matches!(op, Op::Shr) {
+                        ra.out.push_str(&format!("    sar %cl, {}\n", POOL[d].0));
+                    } else {
+                        ra.out.push_str(&format!("    shl %cl, {}\n", POOL[d].0));
+                    }
+                    ra.def_store(*dst, d);
+                    ra.free_dead(ii);
+                    continue;
+                }
                 if matches!(op, Op::Div | Op::Rem) {
                     ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
                     ra.out.push_str(&format!("    mov {}, %rcx\n", POOL[b].0));
@@ -4570,7 +4614,10 @@ fn collect_loops(
         }
         let mut iv_c: Option<(usize, i64)> = None;
         for ins in &f.blocks[h].instrs {
-            if let Instr::Bin { op: Op::Lt, l, r, .. } = ins {
+            if let Instr::Bin { op, l, r, .. } = ins {
+                if !matches!(op, Op::Lt | Op::Le) {
+                    continue;
+                }
                 if let Some((DefKind::LoadVar(v), hb)) = defs.get(l).copied() {
                     if hb != h {
                         continue;
@@ -4581,8 +4628,17 @@ fn collect_loops(
                         _ => None,
                     };
                     if let Some(c) = bound {
-                        if c > 0 {
-                            iv_c = Some((v, c));
+                        // Exclusive upper bound of the induction variable's
+                        // value: `i < c` leaves c, `i <= c` leaves c + 1.
+                        let upper = if matches!(op, Op::Le) {
+                            c.checked_add(1)
+                        } else {
+                            Some(c)
+                        };
+                        if let Some(upper) = upper {
+                            if upper > 0 {
+                                iv_c = Some((v, upper));
+                            }
                         }
                     }
                 }
@@ -4628,6 +4684,7 @@ fn value_ranges(
                                     }
                                     if good { Some((lo, hi)) } else { None }
                                 }
+                                Op::Shr | Op::Shl => None,
                                 Op::Div | Op::Rem => {
                                     if b0 == b1 && b0 > 0 {
                                         if *op == Op::Div && a0 >= 0 {
@@ -5095,6 +5152,99 @@ fn compress_i32_variable_traffic(prog: &mut IrProgram) {
     }
 }
 
+/// Replace signed `/` and `%` by a positive power-of-two constant with the
+/// classic sign-correction + shift sequence, avoiding a hardware division
+/// (hash and tree probes use `x % (1 << k)` inside their hottest loops).
+fn strength_reduce_pow2(prog: &mut IrProgram) {
+    for f in &mut prog.funcs {
+        let mut var_consts: HashMap<usize, i64> = HashMap::new();
+        let mut vals: HashMap<Value, i64> = HashMap::new();
+        for _ in 0..6 {
+            vals = compute_value_consts(f, &var_consts);
+            let next = compute_var_consts(f, &vals);
+            if next == var_consts {
+                break;
+            }
+            var_consts = next;
+        }
+        let mut defs: HashMap<Value, DefKind> = HashMap::new();
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                if let Some((v, k)) = def_kind(ins) {
+                    defs.insert(v, k);
+                }
+            }
+        }
+        let new_value = |f: &mut IrFunc| {
+            let v = Value(f.nvalues as u32);
+            f.nvalues += 1;
+            f.vty.push(Ty::I64);
+            v
+        };
+        let mut blocks = std::mem::take(&mut f.blocks);
+        for b in blocks.iter_mut() {
+            let old = std::mem::take(&mut b.instrs);
+            let mut out = Vec::with_capacity(old.len() + 6);
+            for ins in old {
+                let (dst, op, l, r) = match &ins {
+                    Instr::Bin { dst, op, l, r } => (*dst, *op, *l, *r),
+                    _ => {
+                        out.push(ins);
+                        continue;
+                    }
+                };
+                if !matches!(op, Op::Div | Op::Rem)
+                    || matches!(f.vty.get(dst.0 as usize), Some(Ty::F64))
+                    || matches!(f.vty.get(l.0 as usize), Some(Ty::F64))
+                {
+                    out.push(ins);
+                    continue;
+                }
+                let mut div = None;
+                if let Some(c) = vals.get(&r) {
+                    div = Some(*c);
+                } else if let Some(DefKind::LoadVar(var)) = defs.get(&r) {
+                    if let Some(c) = var_consts.get(var) {
+                        div = Some(*c);
+                    }
+                }
+                let Some(d) = div else {
+                    out.push(ins);
+                    continue;
+                };
+                if d <= 0 || d.count_ones() != 1 || d > (1i64 << 62) {
+                    out.push(ins);
+                    continue;
+                }
+                let k = d.trailing_zeros() as i64;
+                let c63 = new_value(f);
+                out.push(Instr::Const { dst: c63, v: 63 });
+                let sign = new_value(f);
+                out.push(Instr::Bin { dst: sign, op: Op::Shr, l, r: c63 });
+                let mask = new_value(f);
+                out.push(Instr::Const { dst: mask, v: d - 1 });
+                let adj = new_value(f);
+                out.push(Instr::Bin { dst: adj, op: Op::And, l: sign, r: mask });
+                let sum = new_value(f);
+                out.push(Instr::Bin { dst: sum, op: Op::Add, l, r: adj });
+                let ck = new_value(f);
+                out.push(Instr::Const { dst: ck, v: k });
+                if matches!(op, Op::Div) {
+                    out.push(Instr::Bin { dst, op: Op::Shr, l: sum, r: ck });
+                } else {
+                    let q = new_value(f);
+                    out.push(Instr::Bin { dst: q, op: Op::Shr, l: sum, r: ck });
+                    let qd = new_value(f);
+                    out.push(Instr::Bin { dst: qd, op: Op::Shl, l: q, r: ck });
+                    out.push(Instr::Bin { dst, op: Op::Sub, l, r: qd });
+                }
+            }
+            b.instrs = out;
+        }
+        f.blocks = blocks;
+    }
+}
+
 fn resolve_constant_lengths(prog: &mut IrProgram) {
     for f in &mut prog.funcs {
         let mut var_consts: HashMap<usize, i64> = HashMap::new();
@@ -5271,6 +5421,7 @@ fn narrow_index_chains(prog: &mut IrProgram) {
 
 pub fn optimize(prog: &mut IrProgram) {
     remove_redundant_bounds(prog);
+    strength_reduce_pow2(prog);
     resolve_constant_lengths(prog);
     remove_redundant_truncations(prog);
     narrow_index_chains(prog);
@@ -5729,6 +5880,13 @@ pub fn emit(prog: &IrProgram) -> String {
                                 out.push_str("    cqo\n    idiv %rcx\n");
                                 if *op == Op::Rem {
                                     out.push_str("    mov %rdx, %rax\n");
+                                }
+                            }
+                            Op::Shr | Op::Shl => {
+                                if matches!(op, Op::Shr) {
+                                    out.push_str("    sar %cl, %rax\n");
+                                } else {
+                                    out.push_str("    shl %cl, %rax\n");
                                 }
                             }
                             Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {

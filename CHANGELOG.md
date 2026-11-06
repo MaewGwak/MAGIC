@@ -30,6 +30,22 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.78 — power-of-two division, a closed short-circuit bounds hole (2026-11-06)
+
+`/` and `%` by a positive power-of-two constant are now lowered to the sign-correction + shift
+sequence (`sar`/`shl`) instead of a hardware `idiv`; hash probes no longer contain a division
+instruction. A range-based bounds pass was prototyped and **rejected after audit**: Vera Ds. Flint
+found four silent out-of-bounds repros (seeds from one loop reused globally, seed overwrite, nested
+loop re-entry, and short-circuit guards), so the pass was removed rather than shipped with holes.
+
+The audit also exposed a pre-existing hole in the hardened loop pass: with a short-circuit guard
+(`while i < 10 || spin < 100`) the false edge can reach the body without re-entering the header, so
+the `i < 10` fact was wrongly applied there. The pass now rejects a loop when the header's exit edge
+can reach any region block without passing the header. `u16` went from a silent OOB heap write
+(`malloc(): corrupted top size`, no panic line) to `line 1: index out of bounds`, exit 1, matching
+C. New differential cases cover non-canonical steps (`i += 5`), negative initial values and `<=`
+bounds. All gates pass, 168 tests, repo parity 60/60.
+
 ## v0.8.77 — four-byte i32 variables (2026-11-06)
 
 Named i32 variables are now stored as four bytes (`movl`) and loaded with a sign-extending

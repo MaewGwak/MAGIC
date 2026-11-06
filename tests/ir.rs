@@ -232,6 +232,40 @@ fn main() {
 "#,
         ),
         (
+            "range_seed_requires_canonical_step",
+            r#"
+fn main() {
+    var a: [i32] = [0; 4];
+    var i = 0;
+    while i < 10 { i = i + 5; a[i] = 1; }
+    print(a[0]);
+}
+"#,
+        ),
+        (
+            "range_seed_rejects_negative_init",
+            r#"
+fn main() {
+    var a: [i32] = [0; 4];
+    var i = -3;
+    while i < 10 { a[i] = 1; i = i + 1; }
+    print(a[0]);
+}
+"#,
+        ),
+        (
+            "range_le_loop",
+            r#"
+fn main() {
+    var a: [i32] = [0; 16];
+    var i = 0;
+    var t = 0;
+    while i <= 15 { a[i] = i * 2; t = t + a[i]; i = i + 1; }
+    print(t);
+}
+"#,
+        ),
+        (
             "i32_variable_traffic",
             r#"
 fn main() {
