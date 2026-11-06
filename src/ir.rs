@@ -105,6 +105,7 @@ pub struct IrFunc {
     pub nvalues: usize,
     pub nparams: usize,
     pub blocks: Vec<Block>,
+    pub narrow_index: std::collections::HashSet<Value>,
 }
 
 pub struct IrProgram {
@@ -1390,6 +1391,7 @@ impl Builder {
             nvalues: self.nvalues,
             nparams: 0,
             blocks: std::mem::take(&mut self.blocks),
+            narrow_index: std::collections::HashSet::new(),
         }
     }
 }
@@ -2288,6 +2290,14 @@ const POOL: [(&str, &str, &str); 11] = [
     ("%r15", "%r15d", "%r15b"),
 ];
 
+fn load_index_reg(out: &mut String, f: &IrFunc, idx: Value, a: usize) {
+    if f.vty.get(idx.0 as usize) == Some(&Ty::I32) {
+        out.push_str(&format!("    movslq {}, %rax\n", POOL[a].1));
+    } else {
+        out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+    }
+}
+
 struct RegAlloc<'a> {
     out: &'a mut String,
     f: &'a IrFunc,
@@ -2656,6 +2666,35 @@ fn emit_fast_block(
                 }
             }
             Instr::Bin { dst, op, l, r } => {
+                if f.narrow_index.contains(dst)
+                    && matches!(op, Op::Add | Op::Sub | Op::Mul | Op::And | Op::Or)
+                {
+                    let a = ra.operand(*l);
+                    let b = ra.operand_excluding(*r, &[a]);
+                    let d = match ra.dead_reg(*l, ii) {
+                        Some(i) => ra.dst_at(*dst, i),
+                        None => ra.dst_excluding(*dst, &[a, b]),
+                    };
+                    if d != a {
+                        ra.out.push_str(&format!("    movl {}, {}\n", POOL[a].1, POOL[d].1));
+                    }
+                    let (mn, rev) = match op {
+                        Op::Add => ("addl", false),
+                        Op::Sub => ("subl", false),
+                        Op::Mul => ("imull", false),
+                        Op::And => ("andl", false),
+                        Op::Or => ("orl", false),
+                        _ => unreachable!(),
+                    };
+                    if rev {
+                        ra.out.push_str(&format!("    {} {}, {}\n", mn, POOL[d].1, POOL[b].1));
+                    } else {
+                        ra.out.push_str(&format!("    {} {}, {}\n", mn, POOL[b].1, POOL[d].1));
+                    }
+                    ra.def_store(*dst, d);
+                    ra.free_dead(ii);
+                    continue;
+                }
                 if ra.deferred.contains_key(dst) {
                     // Emitted together with the branch that consumes it.
                     continue;
@@ -2897,7 +2936,7 @@ fn emit_fast_block(
             }
             Instr::BoundsCheck { idx, len, line } => {
                 let a = ra.operand(*idx);
-                ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                load_index_reg(&mut ra.out, f, *idx, a);
                 match len {
                     LenRef::Const(n) => {
                         ra.out.push_str(&format!("    cmp ${}, %rax\n    jb 1f\n", n));
@@ -2917,7 +2956,7 @@ fn emit_fast_block(
             Instr::IndexLoad { dst, ptr_var, idx, elem } => {
                 if ra.is_float(*dst) {
                     let a = ra.operand(*idx);
-                    ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                    load_index_reg(&mut ra.out, f, *idx, a);
                     if let Some(reg) = var_regs.get(ptr_var) {
                         ra.out.push_str(&format!("    mov {}, %r10\n", reg));
                     } else {
@@ -2930,7 +2969,7 @@ fn emit_fast_block(
                     continue;
                 }
                 let a = ra.operand(*idx);
-                ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                load_index_reg(&mut ra.out, f, *idx, a);
                 if let Some(reg) = var_regs.get(ptr_var) {
                     ra.out.push_str(&format!("    mov {}, %r10\n", reg));
                 } else {
@@ -2955,7 +2994,7 @@ fn emit_fast_block(
                 if ra.is_float(*src) {
                     let x = ra.xoperand(*src);
                     let a = ra.operand(*idx);
-                    ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                    load_index_reg(&mut ra.out, f, *idx, a);
                     if let Some(reg) = var_regs.get(ptr_var) {
                         ra.out.push_str(&format!("    mov {}, %r10\n", reg));
                     } else {
@@ -2968,7 +3007,7 @@ fn emit_fast_block(
                 let s = ra.operand(*src);
                 ra.out.push_str(&format!("    mov {}, %rcx\n", POOL[s].0));
                 let a = ra.operand(*idx);
-                ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                load_index_reg(&mut ra.out, f, *idx, a);
                 if let Some(reg) = var_regs.get(ptr_var) {
                     ra.out.push_str(&format!("    mov {}, %r10\n", reg));
                 } else {
@@ -3025,7 +3064,7 @@ fn emit_fast_block(
             }
             Instr::IndexFieldLoad { dst, ptr_var, idx, size, off, ty, len, line } => {
                 let i = ra.operand(*idx);
-                ra.out.push_str(&format!("    mov {}, %rax\n", POOL[i].0));
+                load_index_reg(&mut ra.out, f, *idx, i);
                 match len {
                     LenRef::Const(n) => ra.out.push_str(&format!("    mov ${}, %rcx\n", n)),
                     LenRef::Var(v) => {
@@ -3087,7 +3126,7 @@ fn emit_fast_block(
                     (Some(s), i)
                 };
                 let _ = sreg;
-                ra.out.push_str(&format!("    mov {}, %rax\n", POOL[i].0));
+                load_index_reg(&mut ra.out, f, *idx, i);
                 match len {
                     LenRef::Const(n) => ra.out.push_str(&format!("    mov ${}, %r10\n", n)),
                     LenRef::Var(v) => {
@@ -4045,10 +4084,152 @@ fn resolve_constant_lengths(prog: &mut IrProgram) {
     }
 }
 
+/// Mark i32 arithmetic that feeds only array indices and emit it with 32-bit
+/// operations, removing the intermediate sign-extension instructions.
+fn narrow_index_chains(prog: &mut IrProgram) {
+    for f in &mut prog.funcs {
+        let mut defs: HashMap<Value, usize> = HashMap::new();
+        for (bi, b) in f.blocks.iter().enumerate() {
+            for ins in &b.instrs {
+                if let Some(d) = dst_of(ins) {
+                    defs.insert(d, bi);
+                }
+            }
+        }
+        // value -> uses: (block, consumer dst, is_fast_index)
+        let mut uses: HashMap<Value, Vec<(usize, Option<Value>, bool)>> = HashMap::new();
+        for (bi, b) in f.blocks.iter().enumerate() {
+            let fast = !slow_block(&b.instrs);
+            for ins in &b.instrs {
+                let mut u = Vec::new();
+                let mut dv = Vec::new();
+                instr_uses_defs(ins, &mut u, &mut dv);
+                let idx_slot = match ins {
+                    Instr::BoundsCheck { idx, .. }
+                    | Instr::IndexLoad { idx, .. }
+                    | Instr::IndexStore { idx, .. }
+                    | Instr::IndexFieldLoad { idx, .. }
+                    | Instr::IndexFieldStore { idx, .. } => Some(*idx),
+                    _ => None,
+                };
+                let consumer = dst_of(ins);
+                for v in u {
+                    let is_idx = Some(v) == idx_slot && fast;
+                    uses.entry(v).or_default().push((bi, consumer, is_idx));
+                }
+            }
+        }
+        let mut marked: std::collections::HashSet<Value> = Default::default();
+        let mut subst: HashMap<Value, Value> = HashMap::new();
+        let mut stack: Vec<Value> = Vec::new();
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                if let Instr::BoundsCheck { idx, .. }
+                | Instr::IndexLoad { idx, .. }
+                | Instr::IndexStore { idx, .. }
+                | Instr::IndexFieldLoad { idx, .. }
+                | Instr::IndexFieldStore { idx, .. } = ins
+                {
+                    if f.vty.get(idx.0 as usize) == Some(&Ty::I32) {
+                        stack.push(*idx);
+                    }
+                }
+            }
+        }
+        while let Some(v) = stack.pop() {
+            if marked.contains(&v) {
+                continue;
+            }
+            let Some(&bi) = defs.get(&v) else { continue };
+            if slow_block(&f.blocks[bi].instrs) {
+                continue;
+            }
+            let ok = uses.get(&v).map_or(false, |list| {
+                list.iter().all(|(ub, cons, is_idx)| {
+                    if *is_idx {
+                        return true;
+                    }
+                    match cons {
+                        Some(c) => marked.contains(c),
+                        None => false,
+                    }
+                })
+            });
+            if !ok {
+                continue;
+            }
+            let def = f.blocks[bi]
+                .instrs
+                .iter()
+                .find(|i| dst_of(i) == Some(v))
+                .cloned();
+            match def {
+                Some(Instr::Trunc { ty: Ty::I32, a, .. }) => {
+                    if f.vty.get(a.0 as usize) != Some(&Ty::I32) {
+                        continue;
+                    }
+                    marked.insert(v);
+                    subst.insert(v, a);
+                    stack.push(a);
+                }
+                Some(Instr::Bin { op, l, r, .. })
+                    if matches!(op, Op::Add | Op::Sub | Op::Mul | Op::And | Op::Or)
+                        && f.vty.get(v.0 as usize) == Some(&Ty::I32) =>
+                {
+                    marked.insert(v);
+                    stack.push(l);
+                    stack.push(r);
+                }
+                Some(Instr::Un { neg: true, a, .. })
+                    if f.vty.get(v.0 as usize) == Some(&Ty::I32) =>
+                {
+                    marked.insert(v);
+                    stack.push(a);
+                }
+                _ => {}
+            }
+        }
+        if marked.is_empty() {
+            continue;
+        }
+        f.narrow_index = marked.iter().copied().collect();
+        if subst.is_empty() {
+            continue;
+        }
+        // The substitution graph is acyclic: a Trunc destination is allocated
+        // after its operand, so following the chain strictly decreases the id.
+        let resolve = |v: Value, subst: &HashMap<Value, Value>| -> Value {
+            let mut cur = v;
+            loop {
+                match subst.get(&cur) {
+                    Some(n) => cur = *n,
+                    None => break,
+                }
+            }
+            cur
+        };
+        for b in f.blocks.iter_mut() {
+            let old = std::mem::take(&mut b.instrs);
+            let mut out = Vec::new();
+            for mut ins in old {
+                if let Instr::Trunc { dst, ty: Ty::I32, .. } = &ins {
+                    if subst.contains_key(dst) {
+                        continue;
+                    }
+                }
+                rewrite_operands(&mut ins, &|v| resolve(v, &subst));
+                out.push(ins);
+            }
+            b.instrs = out;
+        }
+    }
+}
+
 pub fn optimize(prog: &mut IrProgram) {
     remove_redundant_bounds(prog);
     resolve_constant_lengths(prog);
     remove_redundant_truncations(prog);
+    narrow_index_chains(prog);
     cse_blocks(prog);
 }
 

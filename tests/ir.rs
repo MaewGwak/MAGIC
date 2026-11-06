@@ -66,6 +66,77 @@ fn ir_matches_c_on_small_integer_programs() {
     std::fs::create_dir_all(&dir).unwrap();
     let cases: &[(&str, &str)] = &[
         (
+            "deep_cast_index_chain",
+            r#"
+fn main() {
+    var src: [i32] = [0; 1]; src[0] = 5;
+    var x: i32 = src[0];
+    var a: [i32] = [0; 16]; a[5] = 42;
+    if 1 < 2 { a[x as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32 as i32] = 7; }
+    print(a[5]);
+}
+"#,
+        ),
+        (
+            "cast_i64_to_i32_index_wraps",
+            r#"
+fn main() {
+    var a: [i32] = [0; 16];
+    if 1 < 2 { a[(4294967301) as i32] = 7; }
+    print(a[5]);
+}
+"#,
+        ),
+        (
+            "inlined_index_and_compare",
+            r#"
+fn f(x: i32) -> i32 { return (x + 100) + ((x < 5) as i32); }
+fn main() {
+    var a: [i32] = [0; 128]; var i: i32 = 0;
+    while i < 128 { a[i] = i; i = i + 1; }
+    var n: i32 = -1; var r: i32 = 0; var k: i32 = 0;
+    while k < 1 { r = a[f(n * 2)]; k = k + 1; }
+    print(r);
+}
+"#,
+        ),
+        (
+            "inlined_index_and_float_cast",
+            r#"
+fn g(x: i32) -> i32 { return (x + 100) + (((x as f64) * 0.5) as i32); }
+fn main() {
+    var a: [i32] = [0; 128]; var i: i32 = 0;
+    while i < 128 { a[i] = i; i = i + 1; }
+    var n: i32 = -1;
+    print(a[g(n * 2)]);
+}
+"#,
+        ),
+        (
+            "i64_index_not_narrowed",
+            r#"
+fn main() {
+    var a: [i32] = [0; 4];
+    var y: i64 = 4294967296;
+    var i = 0;
+    while i < 1 { a[y + 2] = 7; i = i + 1; }
+    print(a[2]);
+}
+"#,
+        ),
+        (
+            "i32_index_overflow_wraps",
+            r#"
+fn main() {
+    var a: [i32] = [0; 4];
+    var i: i32 = 2147483647;
+    i = i + 2;
+    a[i] = 7;
+    print(a[0]);
+}
+"#,
+        ),
+        (
             "vec_param_read",
             r#"
 fn sum(v: [i32+]) -> i32 {

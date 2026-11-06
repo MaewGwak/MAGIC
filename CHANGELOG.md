@@ -30,6 +30,28 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.65 — narrowed i32 index chains (2026-11-06)
+
+i32 arithmetic that feeds only array indices is now emitted with 32-bit instructions
+(`addl/subl/imull/andl/orl`) and the redundant `movslq` wrap checks in the chain are removed; index
+use sites sign-extend once. A subagent measured the change against a read-only build of v0.8.64:
+matmul 186 → 166 ms (-10.8%), nbody -6.2%, particles/btree/hashmap/sieve unchanged within noise, and
+C-vs-IR stdout was identical on every benchmark.
+
+The same subagent's adversarial pass found three real soundness bugs before release. (1) Untyped
+`i64` chains were narrowed, so `a[y + 2]` with `y: i64 = 4294967296` wrapped into a valid index instead
+of trapping. (2) A `Trunc I32` was substituted even when its operand was `i64` (e.g. `a[(4294967301)
+as i32]`), dropping the wrap and turning a bounds trap into an out-of-bounds store. (3) The marking
+rule accepted any consumer in the same block, so the IR inliner could mix an index chain with a
+comparison or float cast (`f(n * 2)` using `x + 100` and `x < 5`) and compare the zero-extended low
+half. The pass now requires the operand of a substituted `Trunc` to be `i32`, allows a use only when
+its consumer is already marked (no same-block shortcut), and refuses non-`i32` roots. A re-audit then found a medium defect in the substitution resolver: chains were followed for at most
+64 hops, so an index with 65+ nested `as i32` casts could reference a removed `Trunc` and read an
+unwritten slot (C printed 7, IR printed 42; 70 casts segfaulted). The chain is now resolved to a
+fixpoint (substitution strictly decreases value ids, so it is acyclic). Six differential regressions
+cover the i64 index, an overflowing i32 index, an i64-to-i32 cast index, the two inliner mixed-use
+cases, and a 70-cast index chain; C and IR agree on stdout and exit for all of them.
+
 ## v0.8.64 — growable-array parameters in the IR (2026-11-06)
 
 Vector parameters now work in the IR with the same reference semantics as the C backend: a vector
