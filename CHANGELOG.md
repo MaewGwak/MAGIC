@@ -30,6 +30,31 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.37 — peak-memory audit across the three backends (2026-11-06)
+
+Measured maximum RSS (`/usr/bin/time -f %M`) for every supported benchmark:
+
+| Program | IR | AST native | C |
+|---|---:|---:|---:|
+| sieve | 2808 KB | 2952 KB | 2852 KB |
+| matmul | 3360 KB | 3492 KB | 3316 KB |
+| particles | 33252 KB | 32884 KB | 32792 KB |
+| vecpart | 17272 KB | 17372 KB | 17144 KB |
+| raytrace | 1688 KB | 1688 KB | 1688 KB |
+| nbody | 1696 KB | 1688 KB | 1708 KB |
+| btree | 6476 KB | 6216 KB | 6260 KB |
+| hashmap | 34180 KB | 34328 KB | 34400 KB |
+| sqlscan | 5484 KB | 5156 KB | 4984 KB |
+| bufpool | 1784 KB | 1904 KB | 1772 KB |
+
+The three backends are within noise of each other on every program: these workloads are dominated by
+their payload (struct arrays, hash tables, the 8 MB scanner buffer), and all backends bit-pack
+`[bool]` and zero-fill with calloc. The repository therefore cannot currently claim 5x lower peak
+memory than the C backend on this matrix — that earlier figure compared bit-packed sieve against a
+byte-array C variant. Reaching a structural 5x advantage needs runtime-level changes (arena/region
+policies, compressed containers), not codegen tweaks; this audit is the reference needed before the
+1.0 memory claim is made.
+
 ## v0.8.36 — native `file_pread_at` fixed (2026-11-06)
 
 The AST native backend's 5-argument `file_pread_at`/`file_pread` assembled its arguments wrongly: it

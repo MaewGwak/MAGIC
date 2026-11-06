@@ -161,7 +161,27 @@ benchmarks and the database components) with both backends, runs them from the r
 requires identical stdout and exit status, with per-program timeouts. It is the gate every native
 optimisation must pass; a mismatch fails the test with the program names. Current runtime: ~25 s.
 
-## IR vs AST vs C (v0.8.31 medians)
+## Peak-memory audit (v0.8.37)
+
+| Program | IR | AST native | C |
+|---|---:|---:|---:|
+| sieve | 2808 KB | 2952 KB | 2852 KB |
+| matmul | 3360 KB | 3492 KB | 3316 KB |
+| particles | 33252 KB | 32884 KB | 32792 KB |
+| vecpart | 17272 KB | 17372 KB | 17144 KB |
+| raytrace | 1688 KB | 1688 KB | 1688 KB |
+| nbody | 1696 KB | 1688 KB | 1708 KB |
+| btree | 6476 KB | 6216 KB | 6260 KB |
+| hashmap | 34180 KB | 34328 KB | 34400 KB |
+| sqlscan | 5484 KB | 5156 KB | 4984 KB |
+| bufpool | 1784 KB | 1904 KB | 1772 KB |
+
+All three backends are within noise: these programs are payload-dominated and every backend already
+bit-packs booleans and zero-fills allocations. A structural 5x memory advantage over the best C
+baseline is not available from codegen alone; it requires runtime memory policies (arena/region
+allocation, compressed containers). This audit gates the 1.0 memory claim.
+
+## IR vs AST vs C (v0.8.31 medians)## IR vs AST vs C (v0.8.31 medians)
 
 | Program | IR | AST native | C |
 |---|---:|---:|---:|
