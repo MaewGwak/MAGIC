@@ -30,6 +30,11 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.100 — refresh saxpy numbers (2026-11-06)
+
+Matmul i-k-j with the eight-wide saxpy measures 9–11 ms across runs (C 12 ms); the docs now quote
+10 ms instead of the earlier best-case 8 ms. No code change. All gates pass.
+
 ## v0.8.99 — eight-wide saxpy (2026-11-06)
 
 The SSE2 saxpy loop processes two four-lane groups per iteration, halving the loop-control overhead;
