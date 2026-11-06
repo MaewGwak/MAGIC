@@ -1,7 +1,7 @@
 # MAGIC benchmarks — current evidence (Linux, 2026-11-06)
 
 Machine: AMD Ryzen AI 7 350, 31.1 GB RAM, Linux. Compilers: gcc/g++ 16.2.1, rustc 1.99.1,
-Go and Goose where the harness has a source. MAGIC is `magicc 0.9.1` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
+Go and Goose where the harness has a source. MAGIC is `magicc 0.9.2` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
 (`as` + `ld`, no C compiler in the build path). Every number below comes from
 `./verify.sh` / `./bench-linux.sh`; every program's checksum is compared and `verify.sh` fails on
 a mismatch. Timings are medians of 3–5 interleaved runs, portable flags (no `-march=native` for the

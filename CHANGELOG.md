@@ -30,6 +30,15 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.9.2 — pair matcher accepts shared multiplier constants (2026-11-06)
+
+The AoS pair matcher required the multiplier `Const` to sit inside every window; a duplicated body
+that reuses the constant defined once (manual two-particle unroll, CSE'd code) failed to fuse the
+second body. The matcher now accepts the constant either inside the 15-instruction window or defined
+earlier (14-instruction window). A manually unrolled particles variant fuses both bodies and runs
+~143 ms versus ~147 ms; the win is small because the loop is bandwidth-bound. No default benchmark
+moved. All gates pass, 168 tests, parity 60/60.
+
 ## v0.9.1 — per-body par thread caps (2026-11-06)
 
 `par for` bodies that call user functions or write struct fields run with at most 8 pthreads; leaf

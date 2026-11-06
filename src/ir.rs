@@ -6282,6 +6282,10 @@ fn vectorize_aos_pairs(prog: &mut IrProgram) {
         }
         for b in f.blocks.iter_mut() {
             let old = std::mem::take(&mut b.instrs);
+            if std::env::var("MAGIC_DEBUG_AOS").is_ok() {
+                let n = old.iter().filter(|x| matches!(x, Instr::IndexFieldLoad { .. })).count();
+                if n >= 8 { for x in &old { eprintln!("{:?}", x); } eprintln!("---"); }
+            }
             let mut out = Vec::with_capacity(old.len());
             let mut i = 0usize;
             while i < old.len() {
@@ -6367,33 +6371,41 @@ fn try_aos_window(
     if p6 != p0 || idx4 != idx0 || size4 != size0 || off4 != off0 + 16 || len4 != len0 {
         return None;
     }
-    let k = match &ins[at + 9] {
-        Instr::Const { v, .. } => *v,
-        _ => return None,
+    let (fk, mpos, wlen) = if let Instr::Const { dst, .. } = &ins[at + 9] {
+        match &ins[at + 10] {
+            Instr::FBin { op: Op::Mul, l, r, .. } if *l == a4 => {
+                let _ = dst;
+                (*r, 10usize, 15usize)
+            }
+            _ => return None,
+        }
+    } else {
+        match &ins[at + 9] {
+            Instr::FBin { op: Op::Mul, l, r, .. } if *l == a4 => (*r, 9usize, 14usize),
+            _ => return None,
+        }
     };
-    let (r2, fa, fk) = match &ins[at + 10] {
+    let (r2, fa2, fk2a) = match &ins[at + mpos] {
         Instr::FBin { dst, op: Op::Mul, l, r } => (*dst, *l, *r),
         _ => return None,
     };
-    if fa != a4 {
-        return None;
-    }
-    let (p7, s2, so2, stlen2, sl2) = store(&ins[at + 11])?;
+    let _ = (fa2, fk2a);
+    let (p7, s2, so2, stlen2, sl2) = store(&ins[at + mpos + 1])?;
     if p7 != p0 || s2 != r2 || so2 != off0 + 16 || stlen2 != len0 {
         return None;
     }
-    let (a5, p8, idx5, size5, off5, len5, line5) = load(&ins[at + 12])?;
+    let (a5, p8, idx5, size5, off5, len5, line5) = load(&ins[at + mpos + 2])?;
     if p8 != p0 || idx5 != idx0 || size5 != size0 || off5 != off0 + 24 || len5 != len0 {
         return None;
     }
-    let (r3, fb, fk2) = match &ins[at + 13] {
+    let (r3, fb, fk2) = match &ins[at + mpos + 3] {
         Instr::FBin { dst, op: Op::Mul, l, r } => (*dst, *l, *r),
         _ => return None,
     };
     if fb != a5 || fk2 != fk {
         return None;
     }
-    let (p9, s3, so3, stlen3, sl3) = store(&ins[at + 14])?;
+    let (p9, s3, so3, stlen3, sl3) = store(&ins[at + mpos + 4])?;
     if p9 != p0 || s3 != r3 || so3 != off0 + 24 || stlen3 != len0 {
         return None;
     }
@@ -6417,7 +6429,7 @@ fn try_aos_window(
             .unwrap_or(0),
     };
     let _ = (r2, r3);
-    Some((15, fused))
+    Some((wlen, fused))
 
 }
 
