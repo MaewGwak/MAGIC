@@ -16,6 +16,12 @@ if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ]; then
 else
   echo "native gate skipped (Linux x86-64 only)"
 fi
+echo "== IR differential gate =="
+if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ]; then
+  ./verify-ir.sh || fail=1
+else
+  echo "IR gate skipped (Linux x86-64 only)"
+fi
 if [ "${1:-}" != "-Fast" ]; then
   echo "== bench-linux =="
   ./bench-linux.sh || fail=1

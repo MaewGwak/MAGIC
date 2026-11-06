@@ -279,6 +279,11 @@ impl Builder {
             ExprKind::Int(v) => {
                 let dst = self.value();
                 self.push(Instr::Const { dst, v: *v });
+                self.vty[dst.0 as usize] = if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
+                    Ty::I32
+                } else {
+                    Ty::I64
+                };
                 Ok(dst)
             }
             ExprKind::Bool(b) => {
@@ -407,6 +412,19 @@ impl Builder {
                     Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::And | Op::Or
                 ) {
                     self.vbool[dst.0 as usize] = true;
+                    self.vty[dst.0 as usize] = Ty::Bool;
+                    return Ok(dst);
+                }
+                let ta = self.vty[a.0 as usize];
+                let tb = self.vty[b.0 as usize];
+                let rt = if ta == Ty::I64 || tb == Ty::I64 {
+                    Ty::I64
+                } else {
+                    Ty::I32
+                };
+                self.vty[dst.0 as usize] = rt;
+                if rt == Ty::I32 {
+                    return self.truncate_value(dst, Ty::I32);
                 }
                 Ok(dst)
             }
@@ -425,6 +443,13 @@ impl Builder {
                 });
                 if *op == UnOp::Not {
                     self.vbool[dst.0 as usize] = true;
+                    self.vty[dst.0 as usize] = Ty::Bool;
+                    return Ok(dst);
+                }
+                let ta = self.vty[a.0 as usize];
+                self.vty[dst.0 as usize] = ta;
+                if ta == Ty::I32 {
+                    return self.truncate_value(dst, Ty::I32);
                 }
                 Ok(dst)
             }
@@ -744,6 +769,21 @@ impl Builder {
         }
     }
 
+    fn truncate_value(&mut self, v: Value, ty: Ty) -> Result<Value, String> {
+        let from = self.vty[v.0 as usize];
+        if from == Ty::F64 || ty == Ty::F64 || ty == Ty::I64 || ty == Ty::Str {
+            return Ok(v);
+        }
+        if from == ty {
+            return Ok(v);
+        }
+        let dst = self.value();
+        self.push(Instr::Trunc { dst, ty, a: v });
+        self.vty[dst.0 as usize] = ty;
+        self.vbool[dst.0 as usize] = ty == Ty::Bool;
+        Ok(dst)
+    }
+
     fn lower_stmt(&mut self, s: &Stmt) -> Result<(), String> {
         match &s.kind {
             StmtKind::VecLet { name, elem } => {
@@ -842,10 +882,12 @@ impl Builder {
                 }
                 let v = self.lower_expr(init)?;
                 let is_bool = self.vbool[v.0 as usize];
+                let ty = self.vty[v.0 as usize];
                 let var = self.var(name);
+                let v = self.truncate_value(v, ty)?;
                 self.push(Instr::StoreVar { var, src: v });
                 self.var_bool.insert(name.clone(), is_bool);
-                self.var_ty.insert(name.clone(), self.vty[v.0 as usize]);
+                self.var_ty.insert(name.clone(), ty);
             }
             StmtKind::Assign { name, value } => {
                 let v = self.lower_expr(value)?;
@@ -854,9 +896,11 @@ impl Builder {
                     .vars
                     .get(name)
                     .ok_or_else(|| format!("line {}: IR: unknown variable `{}`", s.line, name))?;
+                let ty = self.vty[v.0 as usize];
+                let v = self.truncate_value(v, ty)?;
                 self.push(Instr::StoreVar { var, src: v });
                 self.var_bool.insert(name.clone(), is_bool);
-                self.var_ty.insert(name.clone(), self.vty[v.0 as usize]);
+                self.var_ty.insert(name.clone(), ty);
             }
             StmtKind::ArrayLet { name, elem, value, count } => {
                 let lenv = self.lower_expr(count)?;
@@ -1016,7 +1060,10 @@ impl Builder {
             }
             StmtKind::Return(e) => {
                 let v = match e {
-                    Some(e) => Some(self.lower_expr(e)?),
+                    Some(e) => {
+                        let val = self.lower_expr(e)?;
+                        Some(self.truncate_value(val, self.ret)?)
+                    }
                     None => None,
                 };
                 self.push(Instr::Ret(v));
@@ -2353,11 +2400,14 @@ fn emit_fast_block(
                             Some(i) => ra.dst_at(*dst, i),
                             None => ra.dst_excluding(*dst, &[a]),
                         };
-                        if d != a {
-                            ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
+                        if d == a {
+                            // constant - register: negate then add
+                            ra.out.push_str(&format!("    neg {}\n", POOL[d].0));
+                            ra.out.push_str(&format!("    add ${}, {}\n", imm, POOL[d].0));
+                        } else {
+                            ra.out.push_str(&format!("    mov ${}, {}\n", imm, POOL[d].0));
+                            ra.out.push_str(&format!("    sub {}, {}\n", POOL[a].0, POOL[d].0));
                         }
-                        ra.out.push_str(&format!("    mov ${}, %rax\n", imm));
-                        ra.out.push_str(&format!("    sub %rax, {}\n", POOL[d].0));
                         ra.def_store(*dst, d);
                         ra.free_dead(ii);
                         continue;

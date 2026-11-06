@@ -191,7 +191,9 @@ bounds proofs: induction variables must be provably non-negative on every path (
 affine arithmetic is overflow-checked; `negative_idx` and `huge_affine` are differential tests.
 v0.8.43 vectorises non-zero fills with SSE2 (`pshufd`/`punpcklqdq` + `movups`), taking a 20M-element
 fill from 35 to 32 ms and the array sum from 58 to 54 ms. v0.8.44 inlines single-return scalar
-functions at IR call sites, taking sqlscan to 34 ms and bufpool to 173 ms.
+functions at IR call sites, taking sqlscan to 34 ms and bufpool to 173 ms. v0.8.45 adds the
+`verify-ir.sh` differential gate over 36 programs and fixes the two miscompiles it found: missing
+`i32` wrap/truncation semantics and inverted `constant - register` immediates.
 
 ## IR vs AST vs C (v0.8.31 medians)## IR vs AST vs C (v0.8.31 medians)
 

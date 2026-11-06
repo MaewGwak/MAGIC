@@ -30,6 +30,22 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.45 — IR semantics fixes caught by a new differential gate (2026-11-06)
+
+`verify-ir.sh` builds every deterministic example, benchmark and database program with the C and IR
+backends, runs both and requires identical stdout and exit status; it is now part of `verify.sh`.
+It immediately caught two real IR miscompiles:
+
+* `i32` arithmetic was performed in 64 bits without wrapping. Literals now carry a width, arithmetic
+  results are truncated to `i32` (with sign extension), and assignments, returns, casts and array
+  stores preserve C's 32-bit wrap semantics.
+* `constant - register` was compiled as `register - constant` when the left operand was an immediate.
+  This broke every `20 - d`-style expression and made `bench-bt/bt_magic` print 44826549 instead of
+  568328208.
+
+Both are fixed: the full gate (36 programs, including binary-trees, nbody, particles, raytrace,
+vecpart and all database programs) passes. Performance is unchanged within noise.
+
 ## v0.8.44 — trivial-function inlining in the IR (2026-11-06)
 
 Functions whose body is a single `return` over scalar parameters (arithmetic, comparisons, casts,
