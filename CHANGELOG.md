@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.94 — saxpy stays off; lexical-scoping blocker identified (2026-11-06)
+
+Second-round guard fixes (flow-sensitive constant initialisation, shadow-aware constant
+collection, 64-bit index bases) exposed a deeper IR limitation: the builder stores variables in a
+flat name map with no block scopes, so a shadowing declaration reuses the outer slot. That makes
+both constant propagation and a safe saxpy guard impossible without a scoped environment. The idiom
+remains disabled; matmul i-k-j is scalar (~80 ms). The next work item is proper lexical scoping in
+the IR builder (push/pop name maps per block), which also fixes pre-existing shadowing semantics.
+All gates pass.
+
 ## v0.8.93 — saxpy disabled after second audit (2026-11-06)
 
 A second audit found three live miscompiles in the guarded version: `var_init_const` was

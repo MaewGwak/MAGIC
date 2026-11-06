@@ -211,6 +211,7 @@ struct Builder {
     ast_consts: HashMap<String, i64>,
     subst_consts: Vec<HashMap<String, i64>>,
     local_arrays: std::collections::HashSet<String>,
+    seen_lets: std::collections::HashSet<String>,
     var_init_const: HashMap<usize, i64>,
     extra: Vec<IrFunc>,
 }
@@ -573,6 +574,7 @@ impl Builder {
             ast_consts: HashMap::new(),
             subst_consts: Vec::new(),
             local_arrays: Default::default(),
+            seen_lets: Default::default(),
             var_init_const: HashMap::new(),
             extra: Vec::new(),
             ret,
@@ -1854,22 +1856,10 @@ impl Builder {
         let cbase = self.lower_expr(cidx)?;
         let bbase = self.lower_expr(bidx)?;
         self.subst_stack.pop();
-        let i32v = |b: &mut Builder, v: Value| -> Option<Value> {
-            match b.vty[v.0 as usize] {
-                Ty::I32 => Some(v),
-                Ty::I64 => {
-                    let dst = b.value();
-                    b.push(Instr::Trunc { dst, ty: Ty::I32, a: v });
-                    b.vty[dst.0 as usize] = Ty::I32;
-                    Some(dst)
-                }
-                _ => None,
-            }
-        };
-        let Some(cbase) = i32v(self, cbase) else { return Ok(false) };
-        let Some(bbase) = i32v(self, bbase) else { return Ok(false) };
         let avv = self.lower_expr(av)?;
-        let Some(avv) = i32v(self, avv) else { return Ok(false) };
+        if self.vty[avv.0 as usize] != Ty::I32 {
+            return Ok(false);
+        }
         let count = self.value();
         self.push(Instr::Const { dst: count, v: c });
         self.vty[count.0 as usize] = Ty::I32;
@@ -2345,9 +2335,9 @@ impl Builder {
                 self.cur = end_bb;
             }
             StmtKind::While { cond, body } => {
-                // Disabled (v0.8.93): the second audit found flow-insensitive
-                // j-init tracking, name-shadowed constants and i64 index
-                // truncation. The scalar loop is authoritative until rewritten.
+                // Blocked on lexical scoping: the IR builder reuses a variable
+                // slot for a shadowing declaration, so a guarded saxpy cannot
+                // distinguish sibling re-declarations from real shadowing yet.
                 let head = self.new_block();
                 let body_bb = self.new_block();
                 let end_bb = self.new_block();
@@ -2458,11 +2448,27 @@ impl Builder {
             }
         }
         if let StmtKind::Let { name, init, .. } = &s.kind {
-            if let Some(c) = self.const_eval(init) {
-                if let Some(v) = self.vars.get(name).copied() {
-                    self.var_init_const.insert(v, c);
+            if self.seen_lets.contains(name) {
+                // A shadowing declaration must not change the outer constant.
+                self.ast_consts.remove(name);
+            } else {
+                self.seen_lets.insert(name.clone());
+                if let Some(c) = self.const_eval(init) {
+                    self.ast_consts.insert(name.clone(), c);
+                }
+                if let Some(c) = self.const_eval(init) {
+                    if let Some(v) = self.vars.get(name).copied() {
+                        self.var_init_const.insert(v, c);
+                    }
                 }
             }
+        }
+        if matches!(
+            s.kind,
+            StmtKind::If { .. } | StmtKind::While { .. } | StmtKind::For { .. } | StmtKind::Arena { .. }
+        ) {
+            // Constants do not survive a merge or a loop.
+            self.var_init_const.clear();
         }
         if let StmtKind::Assign { name, value } = &s.kind {
             if let Some(v) = self.vars.get(name).copied() {
@@ -6773,8 +6779,16 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str("2:\n    not %rsi\n    lock and %rsi, (%r10,%r11,8)\n3:\n");
                     }
                     Instr::SaxpyI32 { c_ptr, c_len, b_ptr, b_len, c_idx, b_idx, count, av, start, limit, line } => {
-                        out.push_str(&format!("    movslq -{}(%rbp), %r10\n", voff(f, *c_idx)));
-                        out.push_str(&format!("    movslq -{}(%rbp), %r11\n", voff(f, *b_idx)));
+                        if f.vty.get(c_idx.0 as usize) == Some(&Ty::I32) {
+                            out.push_str(&format!("    movslq -{}(%rbp), %r10\n", voff(f, *c_idx)));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r10\n", voff(f, *c_idx)));
+                        }
+                        if f.vty.get(b_idx.0 as usize) == Some(&Ty::I32) {
+                            out.push_str(&format!("    movslq -{}(%rbp), %r11\n", voff(f, *b_idx)));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r11\n", voff(f, *b_idx)));
+                        }
                         out.push_str(&format!("    movslq -{}(%rbp), %rcx\n", voff(f, *count)));
                         out.push_str(&format!("    movslq -{}(%rbp), %rdi\n", voff(f, *start)));
                         out.push_str(&format!("    movslq -{}(%rbp), %rsi\n", voff(f, *limit)));
