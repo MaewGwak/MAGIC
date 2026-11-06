@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.93 — saxpy disabled after second audit (2026-11-06)
+
+A second audit found three live miscompiles in the guarded version: `var_init_const` was
+flow-insensitive (an assignment in one branch was assumed to hold on every path), `ast_consts` was a
+flat name map without shadowing scope (`let n` inside a branch changed a later loop bound), and the
+i32 coercion truncated i64 index bases instead of rejecting them. The idiom is disabled again; the
+scalar loop is authoritative. Matmul i-k-j returns to ~77 ms and the v0.8.92 win is retracted. All
+gates pass; the rewrite needs a scoped constant environment, path-sensitive start tracking and
+i32-only index bases.
+
 ## v0.8.92 — guarded saxpy is back (2026-11-06)
 
 The saxpy idiom is re-enabled under strict guards that close the six audit findings: only local
