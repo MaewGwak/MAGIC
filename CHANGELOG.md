@@ -30,6 +30,13 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.98 — restore saxpy after the mutable-init fix (2026-11-06)
+
+The v0.8.97 mutable-initialiser fix also skipped recording `j=0` for mutable loop variables, which
+silently disabled the saxpy recogniser (matmul i-k-j regressed to 80 ms). Constant initial values are
+now recorded for every declaration while mutable names stay out of the immutable-constant map;
+matmul i-k-j is 11 ms again. All gates pass, 168 tests, parity 60/60.
+
 ## v0.8.97 — scoping/constant regressions closed (2026-11-06)
 
 Two regressions from the scoping work, found by a third audit: mutable `var` initialisers were

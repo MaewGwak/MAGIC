@@ -2495,20 +2495,21 @@ impl Builder {
             }
         }
         if let StmtKind::Let { name, init, mutable, .. } = &s.kind {
-            if *mutable {
-                self.ast_consts.remove(name);
-            } else if self.seen_lets.contains(name) {
-                // A shadowing declaration must not change the outer constant.
-                self.ast_consts.remove(name);
-            } else {
-                self.seen_lets.insert(name.clone());
-                if let Some(c) = self.const_eval(init) {
-                    self.ast_consts.insert(name.clone(), c);
-                }
-                if let Some(c) = self.const_eval(init) {
-                    if let Some(v) = self.vars.get(name).copied() {
-                        self.var_init_const.insert(v, c);
+            if !*mutable {
+                if self.seen_lets.contains(name) {
+                    self.ast_consts.remove(name);
+                } else {
+                    self.seen_lets.insert(name.clone());
+                    if let Some(c) = self.const_eval(init) {
+                        self.ast_consts.insert(name.clone(), c);
                     }
+                }
+            } else {
+                self.ast_consts.remove(name);
+            }
+            if let Some(c) = self.const_eval(init) {
+                if let Some(v) = self.vars.get(name).copied() {
+                    self.var_init_const.insert(v, c);
                 }
             }
         }
