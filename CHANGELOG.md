@@ -30,6 +30,18 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.86 — unroll small constant leaf loops (2026-11-06)
+
+`for i in a..b` is fully unrolled while lowering when both bounds are compile-time constants, the trip
+count is at most eight, the body is small and it contains no `break`/`continue`, no shadowing of the
+loop variable and no nested loop. The unrolled copies substitute the loop variable through
+`subst_stack` and `subst_consts`, so nested constant loops inside an unrolled body still evaluate
+their own bounds. This is a leaf-loop unroll: loops containing another loop stay rolled, because the
+fully expanded n-body nest was slower (990 ms) than the leaf-only form. n-body's loop variant drops
+966 → 869 ms in the gate log; matmul, particles, hash, fannkuch and bt are unchanged. A differential
+case covers unrolled constant indexes together with a `break` loop that must stay rolled. All gates
+pass, 168 tests, repo parity 60/60.
+
 ## v0.8.85 — drop constant array-length arguments (2026-11-06)
 
 The constant array lengths found in v0.8.84 are now removed from the ABI as well. Each function

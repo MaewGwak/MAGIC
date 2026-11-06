@@ -206,6 +206,9 @@ struct Builder {
     par_body: bool,
     byte_bool: std::collections::HashSet<String>,
     load_cache: HashMap<usize, (Value, usize)>,
+    suppress_unroll: u32,
+    ast_consts: HashMap<String, i64>,
+    subst_consts: Vec<HashMap<String, i64>>,
     extra: Vec<IrFunc>,
 }
 
@@ -374,6 +377,46 @@ fn par_writes_scalar(st: &Stmt, name: &str) -> bool {
     }
 }
 
+fn stmt_has_break(st: &Stmt) -> bool {
+    match &st.kind {
+        StmtKind::Break => true,
+        StmtKind::If { then, els, .. } => {
+            then.iter().any(stmt_has_break) || els.iter().any(stmt_has_break)
+        }
+        StmtKind::Arena { body } => body.iter().any(stmt_has_break),
+        StmtKind::While { .. } | StmtKind::For { .. } => false,
+        _ => false,
+    }
+}
+
+fn stmt_has_loop(st: &Stmt) -> bool {
+    match &st.kind {
+        StmtKind::While { .. } | StmtKind::For { .. } => true,
+        StmtKind::If { then, els, .. } => {
+            then.iter().any(stmt_has_loop) || els.iter().any(stmt_has_loop)
+        }
+        StmtKind::Arena { body } => body.iter().any(stmt_has_loop),
+        _ => false,
+    }
+}
+
+fn stmt_declares_name(st: &Stmt, name: &str) -> bool {
+    match &st.kind {
+        StmtKind::Let { name: n, .. } | StmtKind::ArrayLet { name: n, .. } => n == name,
+        StmtKind::If { then, els, .. } => {
+            then.iter().any(|s| stmt_declares_name(s, name))
+                || els.iter().any(|s| stmt_declares_name(s, name))
+        }
+        StmtKind::While { body, .. } | StmtKind::Arena { body } => {
+            body.iter().any(|s| stmt_declares_name(s, name))
+        }
+        StmtKind::For { var: fvar, body, .. } => {
+            fvar == name || body.iter().any(|s| stmt_declares_name(s, name))
+        }
+        _ => false,
+    }
+}
+
 fn stmt_has_continue(st: &Stmt) -> bool {
     match &st.kind {
         StmtKind::Continue => true,
@@ -419,6 +462,9 @@ impl Builder {
             par_body: false,
             byte_bool: Default::default(),
             load_cache: HashMap::new(),
+            suppress_unroll: 0,
+            ast_consts: HashMap::new(),
+            subst_consts: Vec::new(),
             extra: Vec::new(),
             ret,
         }
@@ -441,6 +487,53 @@ impl Builder {
         self.nvars += 1;
         self.vars.insert(name.to_string(), i);
         i
+    }
+
+    fn const_eval(&self, e: &Expr) -> Option<i64> {
+        match &e.kind {
+            ExprKind::Int(k) => Some(*k),
+            ExprKind::Bool(b) => Some(if *b { 1 } else { 0 }),
+            ExprKind::Var(n) => self
+                .subst_consts
+                .iter()
+                .rev()
+                .find_map(|m| m.get(n).copied())
+                .or_else(|| self.ast_consts.get(n).copied()),
+            ExprKind::Un { op: UnOp::Neg, e } => self.const_eval(e)?.checked_neg(),
+            ExprKind::Un { op: UnOp::Not, e } => {
+                Some(if self.const_eval(e)? == 0 { 1 } else { 0 })
+            }
+            ExprKind::Cast { e, ty } => {
+                let v = self.const_eval(e)?;
+                match ty {
+                    Ty::I32 => Some((v as i32) as i64),
+                    Ty::I64 => Some(v),
+                    Ty::U8 => Some(v & 0xff),
+                    Ty::Bool => Some(if v == 0 { 0 } else { 1 }),
+                    _ => None,
+                }
+            }
+            ExprKind::Bin { op, l, r } => {
+                let a = self.const_eval(l)?;
+                let b = self.const_eval(r)?;
+                match op {
+                    BinOp::Add => a.checked_add(b),
+                    BinOp::Sub => a.checked_sub(b),
+                    BinOp::Mul => a.checked_mul(b),
+                    BinOp::Div => a.checked_div(b),
+                    BinOp::Rem => a.checked_rem(b),
+                    BinOp::Eq => Some(if a == b { 1 } else { 0 }),
+                    BinOp::Ne => Some(if a != b { 1 } else { 0 }),
+                    BinOp::Lt => Some(if a < b { 1 } else { 0 }),
+                    BinOp::Le => Some(if a <= b { 1 } else { 0 }),
+                    BinOp::Gt => Some(if a > b { 1 } else { 0 }),
+                    BinOp::Ge => Some(if a >= b { 1 } else { 0 }),
+                    BinOp::And => Some(a & b),
+                    BinOp::Or => Some(a | b),
+                }
+            }
+            _ => None,
+        }
     }
 
     fn push(&mut self, i: Instr) {
@@ -1607,7 +1700,12 @@ impl Builder {
                 self.push(Instr::Assert { cond: c, line: s.line });
                 return Ok(());
             }
-            StmtKind::Let { name, ty: declared, init, .. } => {
+            StmtKind::Let { name, ty: declared, mutable, init } => {
+                if !*mutable {
+                    if let Some(c) = self.const_eval(init) {
+                        self.ast_consts.insert(name.clone(), c);
+                    }
+                }
                 if let ExprKind::StructLit { name: sname, fields } = &init.kind {
                     let id = self
                         .struct_defs
@@ -2033,6 +2131,40 @@ impl Builder {
             StmtKind::For { var, start, end, body, par } => {
                 if *par {
                     return self.lower_par_for(var, start, end, body, s.line);
+                }
+                // Fully unroll constant, small ranges. This removes the loop
+                // machinery and, more importantly, turns every index into a
+                // constant so the bounds prover can drop its checks (n-body's
+                // four-body nests are the motivating case).
+                if self.suppress_unroll == 0 {
+                if let (Some(a), Some(b)) = (self.const_eval(start), self.const_eval(end)) {
+                    let n = b.saturating_sub(a);
+                    if (0..=8).contains(&n)
+                        && body.len() <= 64
+                        && !body.iter().any(|st| {
+                            stmt_has_break(st) || stmt_has_continue(st) || stmt_declares_name(st, var) || stmt_has_loop(st)
+                        })
+                    {
+                        self.suppress_unroll += 1;
+                        for k in a..b {
+                            let cv = self.value();
+                            self.push(Instr::Const { dst: cv, v: k });
+                            let mut sm = HashMap::new();
+                            sm.insert(var.clone(), cv);
+                            self.subst_stack.push(sm);
+                            let mut cm = HashMap::new();
+                            cm.insert(var.clone(), k);
+                            self.subst_consts.push(cm);
+                            for st in body {
+                                self.lower_stmt(st)?;
+                            }
+                            self.subst_consts.pop();
+                            self.subst_stack.pop();
+                        }
+                        self.suppress_unroll -= 1;
+                        return Ok(());
+                    }
+                }
                 }
                 let sv = self.lower_expr(start)?;
                 let idx = self.var(var);

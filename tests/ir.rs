@@ -387,6 +387,19 @@ fn main() {
 "#,
         ),
         (
+            "const_small_loop_unroll",
+            r#"
+fn main() {
+    var a: [i32] = [0; 8];
+    for i in 0..4 { a[i] = i * 2; }
+    var t = 0;
+    for i in 0..4 { t = t + a[i]; }
+    for i in 0..8 { if i == 3 { break; } a[i] = a[i] + i; }
+    print(t); print(a[0]); print(a[3]); print(a[7]);
+}
+"#,
+        ),
+        (
             "const_array_len_params",
             r#"
 fn sum(a: [i32], n: i32) -> i32 {
