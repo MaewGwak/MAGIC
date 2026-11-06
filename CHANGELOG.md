@@ -30,6 +30,13 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.9.6 — refreshed matrix evidence (2026-11-06)
+
+A full `bench-linux.sh` run on v0.9.5 is recorded in BENCHMARKS: sieve 385 (C 431), matmul 9 (C 12),
+fannkuch blocks 69 (C 167), raytrace par 20 (C 37), hash par 30 (C 30); n-body loop 772 (Rust 224),
+particles 148 (C 72), binary trees 3892 (C 720). No code change. Docs match the repository, all
+gates were green on the same tree.
+
 ## v0.9.5 — next-use spill victims (2026-11-06)
 
 The fast allocator spilled an arbitrary live value (first hash-map key) when the register file was

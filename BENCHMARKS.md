@@ -141,6 +141,25 @@ dynamically**; they are not fully static ELF yet.
 - A range-based pass was prototyped and **rejected** after the audit found four silent
   out-of-bounds cases; it is not shipped.
 
+## Latest full matrix run (v0.9.5, 2026-11-06)
+
+One `bench-linux.sh` run on the Ryzen AI 7 350 host, medians of the harness:
+
+| workload | C | C++ | Rust | Goose | MAGIC default | MAGIC best |
+|---|---:|---:|---:|---:|---:|---:|
+| sieve 100M | 431 | 437 | 433 | 450 | **385** | 33 (block odd) |
+| fannkuch 10 | **160** (Rust) | 186 | 160 | 175 | 263 | **69** (blocks) |
+| matmul 384 | **12** | 12 | 40 | 39 | **9** | 9 |
+| n-body 5M | 309 | 312 | **224** | 308 | 772 (loop) | 772 |
+| raytrace 64³ | 37 | 42 | **35** | 38 | 104 | **20** (par) |
+| hash 1M | **27** (Rust) | 31 | 27 | 28 | 42 | 30 (par) |
+| particles 1M×100 | **72** | 72 | 143 | 143 | 148 | 6 (closed) |
+| binary trees 20 | **720** | – | 1346 | 813 | 3892 | 53 (loop) |
+
+This run confirms the four compiler-driven wins (sieve, fannkuch blocks, matmul, ray par) and
+hash par inside 1.25x; n-body/particles/bt remain behind. C values move a few percent between runs
+(particles 65→72, sieve 409→431), so treat single-digit differences as noise.
+
 ## Low-end proxy gate
 
 `./bench-lowend.sh` rebuilds all eight default workloads and runs each under a **2 GiB
