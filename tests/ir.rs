@@ -387,6 +387,22 @@ fn main() {
 "#,
         ),
         (
+            "par_for_struct_fields",
+            r#"
+struct P { x: f64, y: f64 }
+fn main() {
+    var ps: [P] = [P { x: 0.0, y: 0.0 }; 1000];
+    par for i in 0..1000 {
+        ps[i].x = i as f64;
+        ps[i].y = ps[i].x * 2.0;
+    }
+    var t = 0.0;
+    for i in 0..1000 { t = t + ps[i].x + ps[i].y; }
+    print_prec(t, 1);
+}
+"#,
+        ),
+        (
             "par_for_int_and_scalar",
             r#"
 fn main() {

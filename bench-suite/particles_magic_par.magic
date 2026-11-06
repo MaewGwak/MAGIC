@@ -1,0 +1,31 @@
+// 1M particles in a struct array, 100 integration steps.
+struct P { x: f64, y: f64, vx: f64, vy: f64 }
+
+fn main() {
+    let n = 1000000;
+    let steps = 100;
+
+    var ps: [P] = [P { x: 0.0, y: 0.0, vx: 0.0, vy: 0.0 }; n];
+
+    for i in 0..n {
+        ps[i].x = i as f64;
+        ps[i].y = i as f64 * 0.5;
+        ps[i].vx = 1.0;
+        ps[i].vy = 0.25;
+    }
+
+    for s in 0..steps {
+        par for i in 0..n {
+            ps[i].x = ps[i].x + ps[i].vx;
+            ps[i].y = ps[i].y + ps[i].vy;
+            ps[i].vx = ps[i].vx * 0.999;
+            ps[i].vy = ps[i].vy * 0.999;
+        }
+    }
+
+    var total = 0.0;
+    for i in 0..n {
+        total = total + ps[i].x;
+    }
+    print_prec(total, 3);
+}

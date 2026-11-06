@@ -30,6 +30,21 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.80 — struct arrays in `par for`, and three outright wins (2026-11-06)
+
+`par for` bodies can now read and write struct-array fields (`ps[i].x = ...`): the collector accepts
+`IndexField`/`IndexFieldAssign`, the child builder gets the struct definitions, and captured struct
+arrays keep their element layout. A particles variant using `par for` over the integration loop is
+included in the benchmark suite (`particles MAGIC par`) and runs 265 → 137 ms (C is 70 ms; eight
+chunks are memory-bandwidth-bound), with the same checksum.
+
+Current outright wins against the portable C/C++/Rust baselines in the gate log: **sieve** 377 ms vs
+C 431, **raytrace par** 24 ms vs C 37, **fannkuch blocks** 66 ms vs C 165 / Rust 159. Hash par is
+31 ms vs C 29 (1.07x, within 1.25x). The default (single-thread) matrix still trails: particles
+265 ms, matmul 76 ms, bt 4.4 s; SIMD for AoS float pairs and stronger tree/hash inlining are the next
+levers. The 16-thread experiment remains rejected (fannkuch blocks segfaults); the audited cap is 8.
+All gates pass, 168 tests, repo parity 60/60.
+
 ## v0.8.79 — branch-fast signed division by powers of two (2026-11-06)
 
 `/` and `%` by a positive power-of-two constant now become `FastDivPow2`, a small instruction with a

@@ -161,6 +161,7 @@ if [ -n "$GO" ]; then build_go particles_go.go p_go; median "$OUT/p_go" 50009470
 if [ -n "$GOOSE" ]; then build_goose particles_goose.goose p_goose; median "$OUT/p_goose" 500094707846.643 'particles Goose'; fi
 median "$OUT/p_m" 500094707846.643 'particles MAGIC'
 median "$OUT/p_x" 500094707846.643 'particles MAGIC closed'
+build_magic particles_magic_par.magic p_p; median "$OUT/p_p" 500094707846.643 'particles MAGIC par'
 
 echo "== binary trees"
 cd "$ROOT/bench-bt" || exit 2

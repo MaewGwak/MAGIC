@@ -267,8 +267,13 @@ fn par_collect_expr(
             }
             Ok(())
         }
-        ExprKind::Field { .. } | ExprKind::FieldPath { .. } | ExprKind::IndexField { .. }
-        | ExprKind::IndexFieldPath { .. } => {
+        ExprKind::IndexField { name, index, .. } => {
+            if !declared.contains(name) {
+                reads.insert(name.clone());
+            }
+            par_collect_expr(index, reads, declared)
+        }
+        ExprKind::Field { .. } | ExprKind::FieldPath { .. } | ExprKind::IndexFieldPath { .. } => {
             Err("par for body cannot use struct fields yet".to_string())
         }
         ExprKind::StructLit { .. } => Err("par for body cannot build structs yet".to_string()),
@@ -327,6 +332,13 @@ fn par_collect_stmt(
             Ok(())
         }
         StmtKind::IndexAssign { name, index, value } => {
+            if !declared.contains(name) {
+                reads.insert(name.clone());
+            }
+            par_collect_expr(index, reads, declared)?;
+            par_collect_expr(value, reads, declared)
+        }
+        StmtKind::IndexFieldAssign { name, index, value, .. } => {
             if !declared.contains(name) {
                 reads.insert(name.clone());
             }
