@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.87 — vectorise checked struct-array pairs (2026-11-06)
+
+`Aos2Step` now carries the length reference and panic line, so the pair vectoriser also fires on
+struct arrays and vectors whose bounds are not statically proven (runtime length). One bounds check
+guards the pair and all eight field accesses share the same index and length; the fused instruction
+carries the first non-zero source line so an out-of-range access still reports file:line. A
+differential case pushes two elements, indexes five, and requires the panic. Vecpart drops 85 → 45 ms
+(C ~17–26 ms, so still ~2x, but 1.9x faster than before); particles is unchanged at 147 ms and keeps
+its checksum. All gates pass, 168 tests, repo parity 60/60.
+
 ## v0.8.86 — unroll small constant leaf loops (2026-11-06)
 
 `for i in a..b` is fully unrolled while lowering when both bounds are compile-time constants, the trip

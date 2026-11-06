@@ -414,6 +414,24 @@ fn main() {
 "#,
         ),
         (
+            "aos_pair_checked_oob",
+            r#"
+struct P { x: f64, y: f64, vx: f64, vy: f64 }
+fn main() {
+    var ps: [P+] = [];
+    reserve(ps, 2);
+    ps.push(P { x: 0.0, y: 0.0, vx: 1.0, vy: 0.25 });
+    ps.push(P { x: 1.0, y: 0.5, vx: 1.0, vy: 0.25 });
+    var i = 5;
+    ps[i].x = ps[i].x + ps[i].vx;
+    ps[i].y = ps[i].y + ps[i].vy;
+    ps[i].vx = ps[i].vx * 0.5;
+    ps[i].vy = ps[i].vy * 0.5;
+    print_prec(ps[0].x, 3);
+}
+"#,
+        ),
+        (
             "aos_pair_simd",
             r#"
 struct P { x: f64, y: f64, vx: f64, vy: f64 }

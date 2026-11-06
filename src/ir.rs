@@ -16,7 +16,7 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Value(pub u32);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LenRef {
     Const(i64),
     Var(usize),
@@ -68,7 +68,7 @@ pub enum Instr {
     FuncAddr { dst: Value, name: String },
     IndexStoreBoolAtomic { ptr_var: usize, idx: Value, src: Value },
     FastDivPow2 { dst: Value, a: Value, k: u32, d: i64, rem: bool },
-    Aos2Step { dst: Value, tmp: Value, ptr_var: usize, idx: Value, size: u64, off: u64, k: Value },
+    Aos2Step { dst: Value, tmp: Value, ptr_var: usize, idx: Value, size: u64, off: u64, k: Value, len: LenRef, line: usize },
     StoreVec { src_ptr_var: usize, ptr_var: usize, len_var: usize, cap_var: usize },
     LoadPtr { dst_var: usize, src_var: usize },
     StorePtr { dst_ptr_var: usize, src_var: usize },
@@ -3858,8 +3858,24 @@ fn emit_fast_block(
                 ra.free_dead(ii);
                 continue;
             }
-            Instr::Aos2Step { dst, tmp, ptr_var, idx, size, off, k } => {
+            Instr::Aos2Step { dst, tmp, ptr_var, idx, size, off, k, len, line } => {
                 let i = ra.operand(*idx);
+                if *line != 0 {
+                    load_index_reg(&mut ra.out, f, *idx, i);
+                    match len {
+                        LenRef::Const(n) => ra.out.push_str(&format!("    mov ${}, %rcx\n", n)),
+                        LenRef::Var(v) => {
+                            if let Some(reg) = var_regs.get(v) {
+                                ra.out.push_str(&format!("    mov {}, %rcx\n", reg));
+                            } else {
+                                ra.out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                            }
+                        }
+                    }
+                    ra.out.push_str("    cmp %rcx, %rax\n    jb 1f\n");
+                    ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                    ra.out.push_str("    call .Lir_panic\n1:\n");
+                }
                 let (base, temp_ptr) = match var_regs.get(ptr_var).copied() {
                     Some(reg) => (reg.to_string(), None),
                     None => {
@@ -5516,25 +5532,25 @@ fn try_aos_window(
     if at + 15 > ins.len() {
         return None;
     }
-    let load = |x: &Instr| -> Option<(Value, usize, Value, u64, u64, usize, usize)> {
+    let load = |x: &Instr| -> Option<(Value, usize, Value, u64, u64, LenRef, usize)> {
         match x {
-            Instr::IndexFieldLoad { dst, ptr_var, idx, size, off, ty: Ty::F64, line, .. } => {
-                Some((*dst, *ptr_var, *idx, *size, *off, 0, *line))
+            Instr::IndexFieldLoad { dst, ptr_var, idx, size, off, ty: Ty::F64, len, line } => {
+                Some((*dst, *ptr_var, *idx, *size, *off, *len, *line))
             }
             _ => None,
         }
     };
-    let store = |x: &Instr| -> Option<(usize, Value, u64, usize)> {
+    let store = |x: &Instr| -> Option<(usize, Value, u64, LenRef, usize)> {
         match x {
-            Instr::IndexFieldStore { ptr_var, off, ty: Ty::F64, src, line, .. } => {
-                Some((*ptr_var, *src, *off, *line))
+            Instr::IndexFieldStore { ptr_var, off, ty: Ty::F64, src, len, line, .. } => {
+                Some((*ptr_var, *src, *off, *len, *line))
             }
             _ => None,
         }
     };
-    let (a0, p0, idx0, size0, off0, _, line0) = load(&ins[at])?;
-    let (a1, p1, idx1, size1, off1, _, line1) = load(&ins[at + 1])?;
-    if p0 != p1 || idx0 != idx1 || size0 != size1 || off1 != off0 + 16 {
+    let (a0, p0, idx0, size0, off0, len0, line0) = load(&ins[at])?;
+    let (a1, p1, idx1, size1, off1, len1, line1) = load(&ins[at + 1])?;
+    if p0 != p1 || idx0 != idx1 || size0 != size1 || off1 != off0 + 16 || len0 != len1 {
         return None;
     }
     let (r0, l0, r0b) = match &ins[at + 2] {
@@ -5544,13 +5560,13 @@ fn try_aos_window(
     if l0 != a0 || r0b != a1 {
         return None;
     }
-    let (p2, s0, so0, sl0) = store(&ins[at + 3])?;
-    if p2 != p0 || s0 != r0 || so0 != off0 || sl0 != 0 {
+    let (p2, s0, so0, stlen0, sl0) = store(&ins[at + 3])?;
+    if p2 != p0 || s0 != r0 || so0 != off0 || stlen0 != len0 {
         return None;
     }
-    let (a2, p3, idx2, size2, off2, _, line2) = load(&ins[at + 4])?;
-    let (a3, p4, idx3, size3, off3, _, line3) = load(&ins[at + 5])?;
-    if p3 != p0 || p4 != p0 || idx2 != idx0 || idx3 != idx0 || size2 != size0 || size3 != size0 {
+    let (a2, p3, idx2, size2, off2, len2, line2) = load(&ins[at + 4])?;
+    let (a3, p4, idx3, size3, off3, len3, line3) = load(&ins[at + 5])?;
+    if p3 != p0 || p4 != p0 || idx2 != idx0 || idx3 != idx0 || size2 != size0 || size3 != size0 || len2 != len0 || len3 != len0 {
         return None;
     }
     if off2 != off0 + 8 || off3 != off0 + 24 {
@@ -5563,12 +5579,12 @@ fn try_aos_window(
     if l1 != a2 || r1b != a3 {
         return None;
     }
-    let (p5, s1, so1, sl1) = store(&ins[at + 7])?;
-    if p5 != p0 || s1 != r1 || so1 != off0 + 8 || sl1 != 0 {
+    let (p5, s1, so1, stlen1, sl1) = store(&ins[at + 7])?;
+    if p5 != p0 || s1 != r1 || so1 != off0 + 8 || stlen1 != len0 {
         return None;
     }
-    let (a4, p6, idx4, size4, off4, _, line4) = load(&ins[at + 8])?;
-    if p6 != p0 || idx4 != idx0 || size4 != size0 || off4 != off0 + 16 {
+    let (a4, p6, idx4, size4, off4, len4, line4) = load(&ins[at + 8])?;
+    if p6 != p0 || idx4 != idx0 || size4 != size0 || off4 != off0 + 16 || len4 != len0 {
         return None;
     }
     let k = match &ins[at + 9] {
@@ -5582,12 +5598,12 @@ fn try_aos_window(
     if fa != a4 {
         return None;
     }
-    let (p7, s2, so2, sl2) = store(&ins[at + 11])?;
-    if p7 != p0 || s2 != r2 || so2 != off0 + 16 || sl2 != 0 {
+    let (p7, s2, so2, stlen2, sl2) = store(&ins[at + 11])?;
+    if p7 != p0 || s2 != r2 || so2 != off0 + 16 || stlen2 != len0 {
         return None;
     }
-    let (a5, p8, idx5, size5, off5, _, line5) = load(&ins[at + 12])?;
-    if p8 != p0 || idx5 != idx0 || size5 != size0 || off5 != off0 + 24 {
+    let (a5, p8, idx5, size5, off5, len5, line5) = load(&ins[at + 12])?;
+    if p8 != p0 || idx5 != idx0 || size5 != size0 || off5 != off0 + 24 || len5 != len0 {
         return None;
     }
     let (r3, fb, fk2) = match &ins[at + 13] {
@@ -5597,11 +5613,8 @@ fn try_aos_window(
     if fb != a5 || fk2 != fk {
         return None;
     }
-    let (p9, s3, so3, sl3) = store(&ins[at + 14])?;
-    if p9 != p0 || s3 != r3 || so3 != off0 + 24 || sl3 != 0 {
-        return None;
-    }
-    if [line0, line1, line2, line3, line4, line5].iter().any(|l| *l != 0) {
+    let (p9, s3, so3, stlen3, sl3) = store(&ins[at + 14])?;
+    if p9 != p0 || s3 != r3 || so3 != off0 + 24 || stlen3 != len0 {
         return None;
     }
     for v in [a0, a1, r0, a2, a3, r1, a4, r2, a5, r3] {
@@ -5617,6 +5630,11 @@ fn try_aos_window(
         size: size0,
         off: off0,
         k: fk,
+        len: len0,
+        line: [line0, line1, line2, line3, line4, line5]
+            .into_iter()
+            .find(|l| *l != 0)
+            .unwrap_or(0),
     };
     let _ = (r2, r3);
     Some((15, fused))
@@ -5986,6 +6004,7 @@ pub fn emit(prog: &IrProgram) -> String {
                     Instr::BoundsCheck { line, .. } => Some(*line),
                     Instr::IndexFieldLoad { line, .. } => Some(*line),
                     Instr::IndexFieldStore { line, .. } => Some(*line),
+                    Instr::Aos2Step { line, .. } => Some(*line),
                     _ => None,
                 };
                 if let Some(line) = line {
@@ -6330,9 +6349,24 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str("    lock or %rsi, (%r10,%r11,8)\n    jmp 3f\n");
                         out.push_str("2:\n    not %rsi\n    lock and %rsi, (%r10,%r11,8)\n3:\n");
                     }
-                    Instr::Aos2Step { ptr_var, idx, size, off, k, .. } => {
+                    Instr::Aos2Step { ptr_var, idx, size, off, k, len, line, .. } => {
                         out.push_str(&ld(*idx));
                         out.push_str("    mov %rax, %r11\n");
+                        if *line != 0 {
+                            match len {
+                                LenRef::Const(n) => out.push_str(&format!("    mov ${}, %rcx\n", n)),
+                                LenRef::Var(v) => {
+                                    if let Some(reg) = var_regs.get(v) {
+                                        out.push_str(&format!("    mov {}, %rcx\n", reg));
+                                    } else {
+                                        out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                                    }
+                                }
+                            }
+                            out.push_str("    cmp %rcx, %r11\n    jb 1f\n");
+                            out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                            out.push_str("    call .Lir_panic\n1:\n");
+                        }
                         if let Some(reg) = var_regs.get(ptr_var) {
                             out.push_str(&format!("    mov {}, %r10\n", reg));
                         } else {
