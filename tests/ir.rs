@@ -968,4 +968,20 @@ fn division_by_zero_reports_line_and_trace() {
     let out2 = Command::new(&exe2).output().unwrap();
     let err2 = String::from_utf8_lossy(&out2.stderr);
     assert!(err2.contains("demo.magic:3: division by zero"), "stderr: {err2}");
+
+    // Assertion panics carry the mapped path, and paths with quote/backslash
+    // bytes survive the assembler string.
+    let asrc = "fn main() {\n    assert(1 == 2);\n}\n";
+    let weird = "we\"ird\\slash.magic";
+    let asm3 = magic::compile_to_asm_ir_with_sources(asrc, &[(1, weird.to_string())])
+        .expect("compile assert");
+    let sp3 = dir.join("assert.s");
+    let op3 = dir.join("assert.o");
+    let exe3 = dir.join("assert");
+    std::fs::write(&sp3, asm3).unwrap();
+    assert!(Command::new("as").arg("--64").arg("-o").arg(&op3).arg(&sp3).status().unwrap().success());
+    assert!(Command::new(&cc_cmd).arg(&op3).arg("-o").arg(&exe3).status().unwrap().success());
+    let out3 = Command::new(&exe3).output().unwrap();
+    let err3 = String::from_utf8_lossy(&out3.stderr);
+    assert!(err3.contains("we\"ird\\slash.magic:2: assertion failed"), "stderr: {err3}");
 }

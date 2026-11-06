@@ -809,6 +809,22 @@ fn display_path(path: &Path) -> String {
     s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
 }
 
+fn c_escape_path(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'\\' => out.push_str("\\\\"),
+            b'"' => out.push_str("\\\""),
+            b'\n' => out.push_str("\\n"),
+            b'\t' => out.push_str("\\t"),
+            b'\r' => out.push_str("\\r"),
+            32..=126 => out.push(b as char),
+            other => out.push_str(&format!("\\{:03o}", other)),
+        }
+    }
+    out
+}
+
 fn remap_c_panics(c: &str, files: &[(usize, String)]) -> String {
     const TAILS: [&str; 7] = [
         "index out of bounds",
@@ -831,7 +847,7 @@ fn remap_c_panics(c: &str, files: &[(usize, String)]) -> String {
             if let Some(msg) = tail.strip_prefix(": ") {
                 if TAILS.iter().any(|t| msg.starts_with(t)) {
                     if let Some((start, path)) = files.iter().rev().find(|(s, _)| *s <= line) {
-                        out.push_str(&format!("{}:{}", path, line - start + 1));
+                        out.push_str(&format!("{}:{}", c_escape_path(path), line - start + 1));
                         rest = tail;
                         continue;
                     }

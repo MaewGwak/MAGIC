@@ -95,6 +95,22 @@ else
   echo "env: build FAIL"; FAIL=1
 fi
 
+cat > "$OUT/assert.magic" <<'EOF'
+fn main() {
+    assert(1 == 2);
+}
+EOF
+if "$M" build "$OUT/assert.magic" --static -o "$OUT/assert" >/dev/null 2>&1; then
+  "$OUT/assert" >/dev/null 2>"$OUT/ae"; rc=$?
+  if [ "$rc" -ne 0 ] && grep -q ':2: assertion failed' "$OUT/ae" && grep -q 'stack trace:' "$OUT/ae"; then
+    echo "assertion_trace: ok static"
+  else
+    echo "assertion_trace: FAIL rc=$rc"; FAIL=1
+  fi
+else
+  echo "assertion_trace: build FAIL"; FAIL=1
+fi
+
 cat > "$OUT/div.magic" <<'EOF'
 fn main() {
     var s = 0;

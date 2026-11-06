@@ -127,11 +127,12 @@ pub struct IrProgram {
 }
 
 fn panic_text(line: usize, files: &[(usize, String)], what: &str) -> String {
-    if let Some((start, path)) = files.iter().rev().find(|(s, _)| *s <= line) {
+    let text = if let Some((start, path)) = files.iter().rev().find(|(s, _)| *s <= line) {
         format!("{}:{}: {}", path, line - start + 1, what)
     } else {
         format!("line {}: {}", line, what)
-    }
+    };
+    asm_escape(&text)
 }
 
 fn struct_layout(defs: &[StructDef], id: u16) -> (u64, Vec<u64>) {
@@ -6974,8 +6975,9 @@ pub fn emit(prog: &IrProgram) -> String {
     }
     for line in &assert_lines {
         out.push_str(&format!(
-            ".Lamsg{}: .asciz \"line {}: assertion failed\"\n",
-            line, line
+            ".Lamsg{}: .asciz \"{}\"\n",
+            line,
+            panic_text(*line, &prog.source_files, "assertion failed")
         ));
     }
     out.push_str(".text\n");

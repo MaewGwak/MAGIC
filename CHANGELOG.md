@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.14 — assertions carry file:line, paths escaped (2026-11-06)
+
+Assertion panic strings now go through `panic_text` like bounds/division, so `assert(1 == 2)` at
+line 2 prints `path:2: assertion failed` (default IR, static, and imported files). Canonical source
+paths are escaped before being baked into `.asciz` and remapped C strings, so a directory named
+`we"ird.magic` assembles and reports its literal name, and `back\slash.magic` no longer loses the
+backslash. Regression tests compile with a synthetic `we"ird\slash.magic` segment and require the
+assertion text; the static gate checks `:2: assertion failed` plus a trace. All gates pass, 170
+tests, parity 60/60.
+
 ## v0.10.13 — C backend diagnostics parity (2026-11-06)
 
 The C backend now remaps `line N:` panic strings through the loader segments before compilation,
