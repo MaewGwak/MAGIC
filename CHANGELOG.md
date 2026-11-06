@@ -30,6 +30,15 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.9.7 — freestanding static binaries (2026-11-06)
+
+New `--static` mode for the IR backend: the generated assembly is sectionised, a syscall-only runtime
+is assembled from `runtime/static_runtime.s`, and `ld -static -nostdlib --gc-sections` produces a
+5 KB ELF with no interpreter and no libc. Integer/bool programs work (sieve, matmul, hash, fannkuch,
+binary trees all checksum-correct); float printing is rejected explicitly, and file/net/par features
+fail with a clear missing-runtime-symbol error. `verify-static.sh` joins the gates. All gates pass,
+168 tests, parity 60/60, low-end green.
+
 ## v0.9.6 — refreshed matrix evidence (2026-11-06)
 
 A full `bench-linux.sh` run on v0.9.5 is recorded in BENCHMARKS: sieve 385 (C 431), matmul 9 (C 12),

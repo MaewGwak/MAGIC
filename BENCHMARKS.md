@@ -141,6 +141,17 @@ dynamically**; they are not fully static ELF yet.
 - A range-based pass was prototyped and **rejected** after the audit found four silent
   out-of-bounds cases; it is not shipped.
 
+## Freestanding static binaries (`--static`)
+
+`magicc build prog.magic --static` emits assembly, sectionises each runtime helper, and links with
+`ld -static -nostdlib --gc-sections -e _start` against a small syscall-only runtime (`runtime/
+static_runtime.s`: mmap-based calloc, memset/memcpy, `%lld`/`%d`/`%s` printf, exit, simple panic).
+No C compiler and no libc are involved. The five integer/bool workloads build to 5.0–5.3 KB ELFs
+with **no PT_INTERP**, and their checksums match: sieve 5761455, matmul 326316140, hash
+1500001500000, fannkuch 38, binary trees 568328208. Float printing, file/net/par and other libc
+features are rejected at build time (missing runtime symbol or an explicit float-print error), never
+silently miscompiled. `verify-static.sh` is part of `verify.sh`.
+
 ## Latest full matrix run (v0.9.5, 2026-11-06)
 
 One `bench-linux.sh` run on the Ryzen AI 7 350 host, medians of the harness:

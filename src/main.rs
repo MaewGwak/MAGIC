@@ -36,6 +36,8 @@ fn run() -> Result<(), String> {
         cc_override = Some(args[pos + 1].clone());
         args.drain(pos..=pos + 1);
     }
+    let static_link = args.iter().any(|a| a == "--static");
+    args.retain(|a| a != "--static");
     let mut backend = "ir".to_string();
     if let Some(pos) = args.iter().position(|a| a == "--backend") {
         if pos + 1 >= args.len() {
@@ -46,6 +48,9 @@ fn run() -> Result<(), String> {
     }
     if backend != "c" && backend != "native" && backend != "ir" {
         return Err(format!("unknown backend `{}` (use c, native or ir)", backend));
+    }
+    if static_link && backend != "ir" {
+        return Err("--static requires the ir backend".to_string());
     }
     if backend != "c" {
         if unroll {
@@ -91,7 +96,8 @@ fn run() -> Result<(), String> {
              \x20 --report  print the static memory bound\n\
              \x20 --dev     compile at -O0 for fast iteration (C backend only)\n\
              \x20 --cc      C compiler command, may carry arguments (e.g. \"zig cc\")\n\
-             \x20 --unroll  unroll small constant for-loops (C backend only)\n\
+             \x20 --unroll  unroll small constant for-loops (C backend only)\n\n\
+             \x20 --static  freestanding static ELF for integer/bool programs (ir backend)\n\
              \x20 -o        output executable path (default: <file>.exe)",
             env!("CARGO_PKG_VERSION")
         );
@@ -164,6 +170,25 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "build" | "run" => {
+            if static_link {
+                let asm = magic::compile_to_asm_ir(&source)
+                    .map_err(|e| map_diagnostic(e, &segments, src_path))?;
+                if asm.lines().any(|l| l.contains("lea .Lfmt_g(") || l.contains("lea .Lfmt_pf(")) {
+                    return Err("--static does not support float printing".to_string());
+                }
+                let exe_path = out_override.clone().unwrap_or_else(|| with_ext(src_path, "bin"));
+                build_static_ir(&asm, &exe_path)?;
+                println!("\u{1F52E} built {} (static ir)", exe_path.display());
+                if command == "run" {
+                    let status = Command::new(&exe_path)
+                        .status()
+                        .map_err(|e| format!("failed to run {}: {}", exe_path.display(), e))?;
+                    if !status.success() {
+                        return Err("program exited with a non-zero status".to_string());
+                    }
+                }
+                return Ok(());
+            }
             if backend == "native" || backend == "ir" {
                 return build_native(
                     &src_path,
@@ -463,6 +488,100 @@ fn compiler_hash() -> String {
         .ok()
         .map(|p| fnv_file(&p))
         .unwrap_or_default()
+}
+
+fn sectionize_static(asm: &str) -> String {
+    let asm = asm.replace(".Lir_panic:", ".Lir_panic_emitted:");
+    let asm = asm.replace("call .Lir_panic\n", "call .Lir_panic_static\n");
+    let mut out = String::new();
+    let mut sec = 0usize;
+    let mut prev = String::new();
+    let mut in_cfi = false;
+    for ln in asm.lines() {
+        let st = ln.trim();
+        let mut entry = false;
+        if st == ".cfi_startproc" {
+            entry = true;
+            in_cfi = true;
+        }
+        if st == ".cfi_endproc" {
+            in_cfi = false;
+        }
+        if !in_cfi
+            && prev.starts_with(".p2align")
+            && st.ends_with(':')
+            && st.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_' || c == '.')
+        {
+            entry = true;
+        }
+        if entry {
+            out.push_str(&format!(".section .text.magic_{},\"ax\",@progbits\n", sec));
+            sec += 1;
+        }
+        out.push_str(ln);
+        out.push('\n');
+        if !st.is_empty() {
+            prev = st.to_string();
+        }
+    }
+    out
+}
+
+fn build_static_ir(asm: &str, exe: &Path) -> Result<(), String> {
+    let dir = std::env::temp_dir().join(format!(
+        "magic-static-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {}", dir.display(), e))?;
+    let prog_s = dir.join("prog.s");
+    let rt_s = dir.join("runtime.s");
+    let prog_o = dir.join("prog.o");
+    let rt_o = dir.join("runtime.o");
+    std::fs::write(&prog_s, sectionize_static(asm)).map_err(|e| e.to_string())?;
+    std::fs::write(&rt_s, include_str!("../runtime/static_runtime.s")).map_err(|e| e.to_string())?;
+    let as_cmd = env::var("AS").unwrap_or_else(|_| "as".to_string());
+    let ld_cmd = env::var("LD").unwrap_or_else(|_| "ld".to_string());
+    for (src, obj) in [(&prog_s, &prog_o), (&rt_s, &rt_o)] {
+        let st = Command::new(&as_cmd)
+            .args(["--64", src.to_str().unwrap_or(""), "-o", obj.to_str().unwrap_or("")])
+            .status()
+            .map_err(|e| format!("failed to run {}: {}", as_cmd, e))?;
+        if !st.success() {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(format!("assembler failed for {}", src.display()));
+        }
+    }
+    let st = Command::new(&ld_cmd)
+        .args([
+            "-static",
+            "-nostdlib",
+            "--gc-sections",
+            "-e",
+            "_start",
+            prog_o.to_str().unwrap_or(""),
+            rt_o.to_str().unwrap_or(""),
+            "-o",
+            exe.to_str().unwrap_or(""),
+        ])
+        .output()
+        .map_err(|e| format!("failed to run {}: {}", ld_cmd, e))?;
+    let _ = std::fs::remove_dir_all(&dir);
+    if !st.status.success() {
+        let msg = String::from_utf8_lossy(&st.stderr);
+        if let Some(sym) = msg.split("undefined reference to `").nth(1) {
+            let sym = sym.split('\'').next().unwrap_or(sym);
+            return Err(format!(
+                "--static does not support this program (missing freestanding runtime symbol `{}`)",
+                sym
+            ));
+        }
+        return Err(format!("static link failed: {}", msg.trim()));
+    }
+    Ok(())
 }
 
 fn build_native(
