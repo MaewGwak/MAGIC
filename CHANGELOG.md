@@ -30,6 +30,19 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.91 — roll back the saxpy idiom after audit (2026-11-06)
+
+The `SaxpyI32` idiom shipped in v0.8.90 was disabled after an adversarial audit produced six
+verified miscompiles: (1) `scalarize_const_arrays` did not see `SaxpyI32` pointers and freed the
+arrays, (2) constant array-length argument removal did not rewrite `c_len`/`b_len`, (3) `limit`,
+`av` and index remainders were hoisted although the source re-evaluates them, (4) the emitter
+truncated i64 `j`/`limit`/`count` with `movslq`, (5) shifted aliasing between `c` and `b` was
+ignored, and (6) the bounds checks ran even for zero-trip loops. The lowerer now uses the scalar
+loop; the instruction, emitter and tests stay for a guarded rewrite (no reads of removed arrays,
+length rewriting, purity/invariance checks, i64 handling, alias rejection, zero-trip checks).
+Matmul i-k-j returns to ~77 ms, so the matrix is back to three outright wins; the v0.8.90 speed
+claims are retracted. All gates pass, 168 tests, repo parity 60/60.
+
 ## v0.8.90 — SSE2 saxpy at the IR idiom level (2026-11-06)
 
 The lowerer recognises the canonical contiguous update

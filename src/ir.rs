@@ -2322,9 +2322,9 @@ impl Builder {
                 self.cur = end_bb;
             }
             StmtKind::While { cond, body } => {
-                if self.try_lower_saxpy(cond, body, s.line)? {
-                    return Ok(());
-                }
+                // Disabled after adversarial audit found aliasing, hoisting,
+                // i64-truncation and length-argument defects. Kept for the
+                // follow-up rewrite; the scalar loop is used instead.
                 let head = self.new_block();
                 let body_bb = self.new_block();
                 let end_bb = self.new_block();
@@ -6158,7 +6158,13 @@ fn replace_len_refs(f: &mut IrFunc, var: usize, c: i64) {
             let len = match ins {
                 Instr::BoundsCheck { len, .. }
                 | Instr::IndexFieldLoad { len, .. }
-                | Instr::IndexFieldStore { len, .. } => len,
+                | Instr::IndexFieldStore { len, .. }
+                | Instr::SaxpyI32 {
+                    c_len: len,
+                    b_len: _,
+                    ..
+                } => len,
+                Instr::SaxpyI32 { b_len: len, .. } => len,
                 _ => continue,
             };
             if matches!(*len, LenRef::Var(v) if v == var) {
