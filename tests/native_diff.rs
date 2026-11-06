@@ -156,6 +156,7 @@ fn native_matches_c_on_the_benchmark_corpus() {
         let full = root.join(path);
         let src = std::fs::read_to_string(&full).expect("read source");
         let stem = path.replace(['/', '.'], "_");
+        eprintln!("native_diff: {path}");
         let c_exe = build(&src, &cc_cmd, &dir, &format!("{stem}_c"), false);
         let n_exe = build(&src, &cc_cmd, &dir, &format!("{stem}_n"), true);
         let (Some(c_exe), Some(n_exe)) = (c_exe, n_exe) else {

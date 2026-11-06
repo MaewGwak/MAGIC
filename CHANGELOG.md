@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.9 — native peephole and shift scaling (2026-11-06)
+
+The native emitter now post-processes its assembly: adjacent duplicate truncations, `mov %rax, %rax`,
+`push`/`pop` pairs of the same register, `mov %rax,%rcx` + `mov %rcx,%rax` swaps, `movslq` after an
+in-range i32 constant, and `jmp L` directly followed by `L:` are removed. Struct/element strides that
+are powers of two use `shl` instead of `imul`. Medians: sqlscan 39 → 37 ms, btree 170 → 168 ms,
+bufpool 180 → 175 ms, pageio 658 → 656 ms; the 27-program differential harness and all gates pass.
+
 ## v0.8.8 — calloc fast path and native strength reduction (2026-11-06)
 
 - Zero-initialised arrays (`[0; n]`, `[false; n]`, `[0.0; n]`) now use `calloc` on both backends

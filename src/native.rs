@@ -620,7 +620,7 @@ impl Emitter {
                 self.expr(index)?;
                 self.bounds_check("%rax", name, e.line)?;
                 self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
-                self.line(&format!("    imul ${}, %rax, %rax", size));
+                self.scale_rax(size);
                 if fty == Ty::F64 {
                     self.line(&format!("    movsd {}(%r10,%rax), %xmm0", foff));
                 } else {
@@ -665,7 +665,7 @@ impl Emitter {
                 self.expr(index)?;
                 self.bounds_check("%rax", name, e.line)?;
                 self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
-                self.line(&format!("    imul ${}, %rax, %rax", size));
+                self.scale_rax(size);
                 if fty == Ty::F64 {
                     self.line(&format!("    movsd {}(%r10,%rax), %xmm0", poff));
                 } else {
@@ -780,6 +780,14 @@ impl Emitter {
         self.call(".Lmagic_panic");
         self.line(&format!("{}:", ok));
         Ok(())
+    }
+
+    fn scale_rax(&mut self, size: i64) {
+        if size > 1 && (size & (size - 1)) == 0 {
+            self.line(&format!("    shl ${}, %rax", size.trailing_zeros()));
+        } else if size > 1 {
+            self.line(&format!("    imul ${}, %rax, %rax", size));
+        }
     }
 
     fn array_load(&mut self, name: &str, idx_reg: &str, elem: Ty, line: usize) -> Result<(), String> {
@@ -1320,7 +1328,7 @@ impl Emitter {
                 self.expr(index)?;
                 self.bounds_check("%rax", name, e.line)?;
                 self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
-                self.line(&format!("    imul ${}, %rax, %rax", size));
+                self.scale_rax(size);
                 match fty {
                     Ty::I32 => self.line(&format!("    movslq {}(%r10,%rax), %rax", foff)),
                     Ty::U8 | Ty::Bool => self.line(&format!("    movzbq {}(%r10,%rax), %rax", foff)),
@@ -1377,7 +1385,7 @@ impl Emitter {
                 self.expr(index)?;
                 self.bounds_check("%rax", name, e.line)?;
                 self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
-                self.line(&format!("    imul ${}, %rax, %rax", size));
+                self.scale_rax(size);
                 match fty {
                     Ty::I32 => self.line(&format!("    movslq {}(%r10,%rax), %rax", poff)),
                     Ty::U8 | Ty::Bool => self.line(&format!("    movzbq {}(%r10,%rax), %rax", poff)),
@@ -2435,7 +2443,7 @@ impl Emitter {
                     self.pop("%rcx");
                 }
                 self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
-                self.line(&format!("    imul ${}, %rax, %rax", size));
+                self.scale_rax(size);
                 match fty {
                     Ty::U8 | Ty::Bool => self.line(&format!("    movb %cl, {}(%r10,%rax)", foff)),
                     Ty::I32 => self.line(&format!("    movl %ecx, {}(%r10,%rax)", foff)),
@@ -2469,7 +2477,7 @@ impl Emitter {
                     self.pop("%rcx");
                 }
                 self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
-                self.line(&format!("    imul ${}, %rax, %rax", size));
+                self.scale_rax(size);
                 match fty {
                     Ty::U8 | Ty::Bool => self.line(&format!("    movb %cl, {}(%r10,%rax)", poff)),
                     Ty::I32 => self.line(&format!("    movl %ecx, {}(%r10,%rax)", poff)),
@@ -3074,5 +3082,56 @@ pub fn emit(prog: &Program) -> Result<String, String> {
         e.line(&format!("{}: .quad {}", label, bits));
     }
     e.line(".section .note.GNU-stack,\"\",@progbits");
-    Ok(e.out)
+    Ok(peephole(e.out))
+}
+
+/// Remove instructions that are exact duplicates of the previous line (our
+/// truncations are idempotent) and `jmp L` immediately followed by `L:`.
+fn peephole(asm: String) -> String {
+    let redundant = [
+        "    movslq %eax, %rax",
+        "    movzbq %al, %rax",
+        "    mov %rax, %rax",
+    ];
+    let mut out: Vec<String> = Vec::new();
+    for line in asm.lines() {
+        if let Some(prev) = out.last().cloned() {
+            if redundant.contains(&line) && prev == line {
+                continue;
+            }
+            // push/pop of the same register in adjacent lines cancel out.
+            if let Some(reg) = line.strip_prefix("    pop ") {
+                if prev == format!("    push {}", reg) {
+                    out.pop();
+                    continue;
+                }
+            }
+            // mov %rax,%rcx followed by mov %rcx,%rax does nothing.
+            if line == "    mov %rcx, %rax" && prev == "    mov %rax, %rcx" {
+                out.pop();
+                continue;
+            }
+            // Sign-extending an i32 constant is a no-op.
+            if line == "    movslq %eax, %rax" {
+                if let Some(imm) = prev.strip_prefix("    mov $") {
+                    if let Some(num) = imm.strip_suffix(", %rax") {
+                        if num.parse::<i32>().is_ok() {
+                            continue;
+                        }
+                    }
+                }
+            }
+            let trimmed = line.trim();
+            if trimmed.ends_with(':') && prev.trim_start().starts_with("jmp ") {
+                let target = prev.trim().trim_start_matches("jmp ");
+                if trimmed.trim_end_matches(':') == target {
+                    out.pop();
+                }
+            }
+        }
+        out.push(line.to_string());
+    }
+    let mut result = out.join("\n");
+    result.push('\n');
+    result
 }
