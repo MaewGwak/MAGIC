@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.9.1 — per-body par thread caps (2026-11-06)
+
+`par for` bodies that call user functions or write struct fields run with at most 8 pthreads; leaf
+array bodies use up to 16 (still min with CPUs and iteration count). Raytrace par drops 34 → 22 ms
+while fannkuch blocks stays at 8 threads and keeps its checksum; particles par is unchanged (~135 ms
+at 8 threads, 16 was slower). The cap is passed as the fifth argument to the runtime. All gates
+pass, 168 tests, parity 60/60.
+
 ## v0.9.0 — matmul interchange reaches the saxpy path (2026-11-06)
 
 The lowerer recognises the canonical i-j-k square matrix multiply (three `while` loops over the same

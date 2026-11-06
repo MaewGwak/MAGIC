@@ -465,6 +465,63 @@ fn expr_mentions(e: &Expr, name: &str) -> bool {
     }
 }
 
+fn expr_user_call(e: &Expr, sigs: &HashMap<String, Ty>) -> bool {
+    match &e.kind {
+        ExprKind::Call { name, args } => {
+            sigs.contains_key(name) || args.iter().any(|a| expr_user_call(a, sigs))
+        }
+        ExprKind::Bin { l, r, .. } => expr_user_call(l, sigs) || expr_user_call(r, sigs),
+        ExprKind::Un { e, .. } | ExprKind::Cast { e, .. } => expr_user_call(e, sigs),
+        ExprKind::Index { index, .. } | ExprKind::IndexField { index, .. } => {
+            expr_user_call(index, sigs)
+        }
+        ExprKind::IndexFieldPath { index, .. } => expr_user_call(index, sigs),
+        ExprKind::StructLit { fields, .. } => {
+            fields.iter().any(|(_, v)| expr_user_call(v, sigs))
+        }
+        _ => false,
+    }
+}
+
+fn stmts_user_call(stmts: &[Stmt], sigs: &HashMap<String, Ty>) -> bool {
+    stmts.iter().any(|st| match &st.kind {
+        StmtKind::Let { init, .. } | StmtKind::Assign { value: init, .. } => expr_user_call(init, sigs),
+        StmtKind::If { cond, then, els } => {
+            expr_user_call(cond, sigs) || stmts_user_call(then, sigs) || stmts_user_call(els, sigs)
+        }
+        StmtKind::While { cond, body } => expr_user_call(cond, sigs) || stmts_user_call(body, sigs),
+        StmtKind::For { start, end, body, .. } => {
+            expr_user_call(start, sigs) || expr_user_call(end, sigs) || stmts_user_call(body, sigs)
+        }
+        StmtKind::Print { value, .. } => expr_user_call(value, sigs),
+        StmtKind::IndexAssign { index, value, .. } => {
+            expr_user_call(index, sigs) || expr_user_call(value, sigs)
+        }
+        StmtKind::IndexFieldAssign { index, value, .. } => {
+            expr_user_call(index, sigs) || expr_user_call(value, sigs)
+        }
+        StmtKind::FieldAssign { value, .. } | StmtKind::FieldPathAssign { value, .. } => {
+            expr_user_call(value, sigs)
+        }
+        StmtKind::ArrayLet { value, count, .. } => {
+            expr_user_call(value, sigs) || expr_user_call(count, sigs)
+        }
+        StmtKind::Expr(e) => expr_user_call(e, sigs),
+        StmtKind::Assert { cond } => expr_user_call(cond, sigs),
+        StmtKind::Return(Some(e)) => expr_user_call(e, sigs),
+        _ => false,
+    })
+}
+
+fn stmts_struct_write(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|st| match &st.kind {
+        StmtKind::IndexFieldAssign { .. } | StmtKind::FieldAssign { .. } | StmtKind::FieldPathAssign { .. } => true,
+        StmtKind::If { then, els, .. } => stmts_struct_write(then) || stmts_struct_write(els),
+        StmtKind::While { body, .. } | StmtKind::For { body, .. } | StmtKind::Arena { body } => stmts_struct_write(body),
+        _ => false,
+    })
+}
+
 fn expr_pure(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Var(_)
@@ -1801,10 +1858,14 @@ impl Builder {
         let ctxaddr = self.value();
         self.push(Instr::AddrVar { dst: ctxaddr, var_index: ctx_base, slots: total_slots });
         self.vty[ctxaddr.0 as usize] = Ty::I64;
+        let cap = if stmts_user_call(body, &self.sigs) || stmts_struct_write(body) { 8 } else { 16 };
+        let capv = self.value();
+        self.push(Instr::Const { dst: capv, v: cap });
+        self.vty[capv.0 as usize] = Ty::I64;
         self.push(Instr::Call {
             dst: None,
             name: ".Lpar_for".to_string(),
-            args: vec![fnaddr, ctxaddr, sv, ev],
+            args: vec![fnaddr, ctxaddr, sv, ev, capv],
         });
         Ok(())
     }
@@ -8000,11 +8061,11 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str("    sub $8, %rsp\n    call *%r11\n    add $8, %rsp\n    ret\n");
     out.push_str(".p2align 4\n.Lpar_for:\n");
     out.push_str("    push %rbp\n    mov %rsp, %rbp\n    push %rbx\n    push %r12\n");
-    out.push_str("    push %r13\n    push %r14\n    push %r15\n    sub $664, %rsp\n");
-    out.push_str("    mov %rdi, %r12\n    mov %rsi, %r13\n    mov %rdx, %r14\n    mov %rcx, %r15\n");
+    out.push_str("    push %r13\n    push %r14\n    push %r15\n    sub $680, %rsp\n");
+    out.push_str("    mov %rdi, %r12\n    mov %rsi, %r13\n    mov %rdx, %r14\n    mov %rcx, %r15\n    mov %r8, 664(%rsp)\n");
     out.push_str("    sub %rdx, %rcx\n    jle .Lpar_done\n    mov %rcx, 640(%rsp)\n");
     out.push_str("    mov $84, %edi\n    call sysconf@PLT\n    cmp $1, %rax\n    jge 0f\n    mov $4, %rax\n0:\n");
-    out.push_str("    cmp $8, %rax\n    jle 0f\n    mov $8, %rax\n0:\n");
+    out.push_str("    mov 664(%rsp), %r9\n    cmp %r9, %rax\n    jle 0f\n    mov %r9, %rax\n0:\n");
     out.push_str("    mov 640(%rsp), %rdx\n    cmp %rdx, %rax\n    jle 1f\n    mov %rdx, %rax\n1:\n");
     out.push_str("    mov %rax, %rdx\n");
     out.push_str("1:\n    mov %rdx, 648(%rsp)\n    lea -1(%rdx), %rax\n");
@@ -8027,7 +8088,7 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str("    cmp 648(%rsp), %rbx\n    jge .Lpar_done\n");
     out.push_str("    mov 512(%rsp,%rbx,8), %rdi\n    test %rdi, %rdi\n    je 4f\n    xor %esi, %esi\n    call pthread_join@PLT\n4:\n");
     out.push_str("    inc %rbx\n    jmp .Lpar_join\n.Lpar_done:\n");
-    out.push_str("    add $664, %rsp\n    pop %r15\n    pop %r14\n    pop %r13\n    pop %r12\n");
+    out.push_str("    add $680, %rsp\n    pop %r15\n    pop %r14\n    pop %r13\n    pop %r12\n");
     out.push_str("    pop %rbx\n    leave\n    ret\n");
     // Network helpers mirroring the native backend's inline sequences.
     out.push_str(".p2align 4\n.Lmf_flush:\n    xor %edi, %edi\n    jmp fflush@PLT\n");

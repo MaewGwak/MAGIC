@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.9 (0.9.0)** — 168 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.9 (0.9.1)** — 168 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -165,7 +165,7 @@ shipped for that workload and is always named.
 |---|---:|---:|---:|---:|---|---|
 | sieve 100M | 409 | 423 | 414 | **383** | 45 (block-odd) | **win** |
 | fannkuch n=10 | 168 | 168 | 159 | 265 | **70** (`par for`) | **win** |
-| ray tracer 1536² | 42 | 44 | 35 | 120 | **34** (`par for`) | **win** |
+| ray tracer 1536² | 42 | 44 | 35 | 120 | **22** (`par for`) | **win** |
 | hash 1M | 28 | 32 | 25 | 39 | 30 (`par for`) | 1.20x |
 | particles 1M × 100 | 65 | 71 | 141 | 147 | 135 (`par for`) | 2.26x |
 | n-body 10M | 310 | 308 | 223 | 873 | 869 | 3.90x |

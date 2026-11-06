@@ -1,7 +1,7 @@
 # MAGIC benchmarks — current evidence (Linux, 2026-11-06)
 
 Machine: AMD Ryzen AI 7 350, 31.1 GB RAM, Linux. Compilers: gcc/g++ 16.2.1, rustc 1.99.1,
-Go and Goose where the harness has a source. MAGIC is `magicc 0.9.0` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
+Go and Goose where the harness has a source. MAGIC is `magicc 0.9.1` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
 (`as` + `ld`, no C compiler in the build path). Every number below comes from
 `./verify.sh` / `./bench-linux.sh`; every program's checksum is compared and `verify.sh` fails on
 a mismatch. Timings are medians of 3–5 interleaved runs, portable flags (no `-march=native` for the
@@ -59,7 +59,7 @@ baseline, lower is better.
 |---|---:|---:|---:|---:|---|---:|---|
 | sieve 100M | 409 | 423 | 414 | **383** | 45 (block-odd) | 0.94 | **outright win** |
 | fannkuch n=10 | 168 | 168 | 159 | 265 | **70** (`par for`, blocks) | 0.44 | **outright win** |
-| ray tracer 1536² | 42 | 44 | 35 | 120 | **34** (`par for`) | 0.97 | **outright win** |
+| ray tracer 1536² | 42 | 44 | 35 | 120 | **22** (`par for`) | 0.97 | **outright win** |
 | hash 1M | 28 | 32 | 25 | 39 | 30 (`par for`) | 1.20 | within 1.25x |
 | fannkuch buffer variant | 168 | 168 | 159 | 166 | — | 1.04 | within 1.25x |
 | particles 1M × 100 | 65 | 71 | 141 | 147 | 135 (`par for`) | 2.26 | loss |
