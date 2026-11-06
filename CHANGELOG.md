@@ -1,3 +1,10 @@
+## v1.0.1 — benchmark terminology clarified (2026-11-07)
+
+README now labels the two MAGIC columns explicitly: "default (naive source)" and "optimized variant
+(best shipped)". The C/C++/Rust columns are stated as optimized builds (-O3 / opt-level=3, portable
+flags), and the n-body row shows 613 ms native vs 197 ms explicit C-backend parity exception (Rust
+227 ms in the portable table). No code change.
+
 ## v1.0.0 — algorithm-parity release (2026-11-07)
 
 Owner-approved protocol: standard MAGIC uses its best shipped algorithm/par; optimized C/C++/Rust

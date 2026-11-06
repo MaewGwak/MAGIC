@@ -103,7 +103,7 @@ dynamic peak; `bench-static-memory.sh` fails if any baseline peaks lower than st
 
 ## Optimized-baseline gate (target, not yet met)
 
-The 1.0.0 gate requires **both** the default MAGIC build and a MAGIC-optimized build to beat
+The 1.0.1 gate requires **both** the default MAGIC build and a MAGIC-optimized build to beat
 optimized C, C++ and Rust. `bench-optimized.sh` builds baselines with `gcc/g++ -O3 -march=native`
 and `rustc -O -C target-cpu=native`, and compares the standard source (`magicc build`) and the best
 MAGIC variant. Current result (Ryzen host, medians of 3):
