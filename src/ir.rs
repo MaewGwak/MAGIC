@@ -2670,7 +2670,7 @@ fn emit_fast_block(
                 ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
                 match len {
                     LenRef::Const(n) => {
-                        ra.out.push_str(&format!("    mov ${}, %rcx\n", n));
+                        ra.out.push_str(&format!("    cmp ${}, %rax\n    jb 1f\n", n));
                     }
                     LenRef::Var(v) => {
                         if let Some(reg) = var_regs.get(v) {
@@ -2678,9 +2678,9 @@ fn emit_fast_block(
                         } else {
                             ra.out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
                         }
+                        ra.out.push_str("    cmp %rcx, %rax\n    jb 1f\n");
                     }
                 }
-                ra.out.push_str("    cmp %rcx, %rax\n    jb 1f\n");
                 ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
                 ra.out.push_str("    call .Lir_panic\n1:\n");
             }
@@ -3776,8 +3776,42 @@ fn remove_redundant_truncations(prog: &mut IrProgram) {
     }
 }
 
+fn resolve_constant_lengths(prog: &mut IrProgram) {
+    for f in &mut prog.funcs {
+        let mut var_consts: HashMap<usize, i64> = HashMap::new();
+        let mut vals: HashMap<Value, i64> = HashMap::new();
+        for _ in 0..6 {
+            vals = compute_value_consts(f, &var_consts);
+            let next = compute_var_consts(f, &vals);
+            if next == var_consts {
+                break;
+            }
+            var_consts = next;
+        }
+        if var_consts.is_empty() {
+            continue;
+        }
+        for b in f.blocks.iter_mut() {
+            for ins in b.instrs.iter_mut() {
+                let len = match ins {
+                    Instr::BoundsCheck { len, .. }
+                    | Instr::IndexFieldLoad { len, .. }
+                    | Instr::IndexFieldStore { len, .. } => len,
+                    _ => continue,
+                };
+                if let LenRef::Var(v) = len {
+                    if let Some(c) = var_consts.get(v) {
+                        *len = LenRef::Const(*c);
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn optimize(prog: &mut IrProgram) {
     remove_redundant_bounds(prog);
+    resolve_constant_lengths(prog);
     remove_redundant_truncations(prog);
     cse_blocks(prog);
 }

@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.61 — constant array lengths as bounds immediates (2026-11-06)
+
+Constant propagation already proves many array lengths; a new pass rewrites those `LenRef::Var`
+operands to `LenRef::Const`, and the register-allocated emitter now compares the index directly
+against the immediate (`cmp $n, %rax`) instead of loading the length into `%rcx` first. Matmul moves
+186 → 183 ms; the other benchmarks are unchanged within noise (btree 166, nbody 1986, particles 604,
+sieve 87). Small but safe, and the IR corpus plus the differential gate pass.
+
 ## v0.8.60 — loop-invariant hoisting attempt caught by the gate (2026-11-06)
 
 A preheader LICM pass (hoisting constants, loads of variables the loop never stores, and pure
