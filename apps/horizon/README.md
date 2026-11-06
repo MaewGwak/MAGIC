@@ -16,12 +16,13 @@ magicc build apps/horizon/horizon.magic --backend c \
 ./horizon launch /tmp/instance
 ```
 
-`init` creates the instance directory and four plain-text config files with
-defaults (`java`, `2G`, `net.minecraft.client.main.Main`, empty classpath).
-`show` prints them, `set <dir> <key> <value>` updates one, `list <dir>` prints
-directory entries (use the instances root), and `launch` builds
-`java -Xmx<memory> -cp <classpath> <main>` and runs it via `proc_run` (C
-`system`). A fake `/bin/echo` java is enough to test the command path offline.
+`init` creates the instance directory and plain-text config files with defaults
+(`java`, `2G`, `net.minecraft.client.main.Main`, empty classpath, `1.20.1`,
+empty `jar`, `jvmargs`, `gameargs`). `show` prints them, `set <dir> <key>
+<value>` updates one, `list <dir>` prints directory entries (use the instances
+root), `doctor` validates required config, and `launch` builds
+`java -Xmx<memory> [jvmargs] -cp <classpath> <main> [gameargs]` (or `-jar
+<jar>` when a jar is configured) and runs it via `proc_run` (C `system`). A fake `/bin/echo` java is enough to test the command path offline.
 
 Current scope is the launcher **core**. It does not yet download Mojang
 metadata/assets, verify hashes, manage multiple instances, or parse JSON; those

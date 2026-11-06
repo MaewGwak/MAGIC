@@ -6,6 +6,8 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 target/release/magicc build apps/horizon/horizon.magic --backend c --cc "$C -O3 -march=native -lm" -o "$TMP/horizon" >/dev/null
 "$TMP/horizon" init "$TMP/inst" | grep -q 'created instance'
 grep -q '^2G$' "$TMP/inst/memory"
+grep -q '^1.20.1$' "$TMP/inst/version"
+"$TMP/horizon" doctor "$TMP/inst" | grep -q 'doctor: OK'
 "$TMP/horizon" set "$TMP/inst" memory 4G >/dev/null
 grep -q '^4G$' "$TMP/inst/memory"
 "$TMP/horizon" show "$TMP/inst" | grep -q 'memory: 4G'

@@ -26,7 +26,7 @@ fn write_value(dir: str, name: str, value: str) -> i32 {
 
 fn main() {
     if argc() < 3 {
-        print("horizon: usage: horizon init <dir> | list <dir> | show <dir> | set <dir> <key> <value> | launch <dir>");
+        print("horizon: usage: horizon init|list|show|set|doctor|launch <dir>");
         return;
     }
     var cmd = arg(1);
@@ -36,6 +36,10 @@ fn main() {
     var nbuf: [u8] = [0; 256];
     var cbuf: [u8] = [0; 256];
     var dbuf: [u8] = [0; 4096];
+    var vbuf: [u8] = [0; 512];
+    var jarbuf: [u8] = [0; 512];
+    var gabuf: [u8] = [0; 1024];
+    var jabuf: [u8] = [0; 1024];
 
     if str_eq(cmd, "init") {
         if dir_mkdir(dir) != 0 && !path_exists(dir) {
@@ -46,6 +50,10 @@ fn main() {
         write_value(dir, "memory", "2G");
         write_value(dir, "main", "net.minecraft.client.main.Main");
         write_value(dir, "classpath", "");
+        write_value(dir, "version", "1.20.1");
+        write_value(dir, "jar", "");
+        write_value(dir, "jvmargs", "");
+        write_value(dir, "gameargs", "");
         print(str_cat("horizon: created instance ", dir));
         return;
     }
@@ -67,18 +75,34 @@ fn main() {
         var mn = read_value(dir, "memory", mbuf, 256);
         var nn = read_value(dir, "main", nbuf, 256);
         var cn = read_value(dir, "classpath", cbuf, 256);
+        var vn = read_value(dir, "version", vbuf, 512);
+        var rn = read_value(dir, "jar", jarbuf, 512);
+        var gn = read_value(dir, "gameargs", gabuf, 1024);
+        var an = read_value(dir, "jvmargs", jabuf, 1024);
         var java = "java";
         var memory = "2G";
         var main = "net.minecraft.client.main.Main";
         var classpath = "";
+        var version = "1.20.1";
+        var jar = "";
+        var gameargs = "";
+        var jvmargs = "";
         if jn >= 0 { java = str_from_bytes(jbuf, jn); }
         if mn >= 0 { memory = str_from_bytes(mbuf, mn); }
         if nn >= 0 { main = str_from_bytes(nbuf, nn); }
         if cn >= 0 { classpath = str_from_bytes(cbuf, cn); }
+        if vn >= 0 { version = str_from_bytes(vbuf, vn); }
+        if rn >= 0 { jar = str_from_bytes(jarbuf, rn); }
+        if gn >= 0 { gameargs = str_from_bytes(gabuf, gn); }
+        if an >= 0 { jvmargs = str_from_bytes(jabuf, an); }
         print(str_cat("java: ", java));
         print(str_cat("memory: ", memory));
         print(str_cat("main: ", main));
         print(str_cat("classpath: ", classpath));
+        print(str_cat("version: ", version));
+        print(str_cat("jar: ", jar));
+        print(str_cat("jvmargs: ", jvmargs));
+        print(str_cat("gameargs: ", gameargs));
         return;
     }
 
@@ -87,12 +111,30 @@ fn main() {
         if !path_exists(dir) { print("horizon: instance directory does not exist"); return; }
         var key = arg(3);
         var value = arg(4);
-        if !(str_eq(key, "java") || str_eq(key, "memory") || str_eq(key, "main") || str_eq(key, "classpath")) {
-            print("horizon: unknown key (java, memory, main, classpath)");
+        if !(str_eq(key, "java") || str_eq(key, "memory") || str_eq(key, "main") || str_eq(key, "classpath") || str_eq(key, "version") || str_eq(key, "jar") || str_eq(key, "jvmargs") || str_eq(key, "gameargs")) {
+            print("horizon: unknown key (java, memory, main, classpath, version, jar, jvmargs, gameargs)");
             return;
         }
         if write_value(dir, key, value) < 0 { print("horizon: cannot write config"); return; }
         print("horizon: config updated");
+        return;
+    }
+
+    if str_eq(cmd, "doctor") {
+        if !path_exists(dir) { print("doctor: FAIL instance directory missing"); return; }
+        var jn = read_value(dir, "java", jbuf, 256);
+        var mn = read_value(dir, "memory", mbuf, 256);
+        var nn = read_value(dir, "main", nbuf, 256);
+        var cn = read_value(dir, "classpath", cbuf, 256);
+        var vn = read_value(dir, "version", vbuf, 512);
+        var rn = read_value(dir, "jar", jarbuf, 512);
+        if jn < 0 { print("doctor: FAIL java config missing"); }
+        if mn < 0 { print("doctor: FAIL memory config missing"); }
+        if nn < 0 { print("doctor: FAIL main class missing"); }
+        if cn < 0 { print("doctor: FAIL classpath config missing"); }
+        if vn < 0 { print("doctor: FAIL version config missing"); }
+        if rn < 0 { print("doctor: WARN jar not configured (using -cp)"); }
+        print("doctor: OK instance config present");
         return;
     }
 
@@ -105,18 +147,35 @@ fn main() {
         var mn = read_value(dir, "memory", mbuf, 256);
         var nn = read_value(dir, "main", nbuf, 256);
         var cn = read_value(dir, "classpath", cbuf, 256);
+        var vn = read_value(dir, "version", vbuf, 512);
+        var rn = read_value(dir, "jar", jarbuf, 512);
+        var gn = read_value(dir, "gameargs", gabuf, 1024);
+        var an = read_value(dir, "jvmargs", jabuf, 1024);
 
         var java = "java";
         var memory = "2G";
         var main = "net.minecraft.client.main.Main";
         var classpath = "";
+        var version = "1.20.1";
+        var jar = "";
+        var gameargs = "";
+        var jvmargs = "";
         if jn >= 0 { java = str_from_bytes(jbuf, jn); }
         if mn >= 0 { memory = str_from_bytes(mbuf, mn); }
         if nn >= 0 { main = str_from_bytes(nbuf, nn); }
         if cn >= 0 { classpath = str_from_bytes(cbuf, cn); }
+        if vn >= 0 { version = str_from_bytes(vbuf, vn); }
+        if rn >= 0 { jar = str_from_bytes(jarbuf, rn); }
+        if gn >= 0 { gameargs = str_from_bytes(gabuf, gn); }
+        if an >= 0 { jvmargs = str_from_bytes(jabuf, an); }
 
-        var line = str_cat(java, str_cat(" -Xmx", str_cat(memory,
-                   str_cat(" -cp ", str_cat(classpath, str_cat(" ", main))))));
+        var line = str_cat(java, str_cat(" -Xmx", str_cat(memory, str_cat(" ", jvmargs))));
+        if str_eq(jar, "") {
+            line = str_cat(line, str_cat(" -cp ", str_cat(classpath, str_cat(" ", main))));
+        } else {
+            line = str_cat(line, str_cat(" -jar ", jar));
+        }
+        if !str_eq(gameargs, "") { line = str_cat(line, str_cat(" ", gameargs)); }
         print(str_cat("horizon: launching: ", line));
         var rc = proc_run(line);
         if rc != 0 {
