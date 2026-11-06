@@ -30,6 +30,19 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.42 — soundness fixes in bounds-check elimination (2026-11-06)
+
+Two security issues in the IR's bounds elimination are fixed. First, the proof only established an
+upper bound, but the emitted check is unsigned: an induction variable that could start negative (for
+example `var i = -2; while i < n`) would have had its check removed and then indexed out of bounds.
+Loops are now only trusted when every path from entry reaches the header through a store of a
+non-negative constant, and every later store is a constant non-negative step (`i = i + c`, `c >= 0`);
+`negative_idx` joins the differential corpus and must panic exactly like the C backend. Second, the
+affine arithmetic (coefficient multiplication, constant folding, maximum computation) now uses
+checked operations and gives up the proof on overflow; a `huge_affine` test exercises an
+overflowing index. The tightened rules keep the previous performance (vecpart 157 ms,
+particles 593 ms, matmul ~118 ms).
+
 ## v0.8.41 — scaled-index cache and displacement addressing in the IR (2026-11-06)
 
 `IndexField` accesses inside a block now share a cached `index * struct_size` register (up to four

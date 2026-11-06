@@ -186,7 +186,9 @@ after the fuzzer found compiler stack overflows on pathological inputs. v0.8.40 
 numbering per basic block (duplicate constants, variable loads and pure arithmetic), taking raytrace
 to 277 ms, matmul to 118 ms and nbody to 1.93 s (type-aware keys prevent merging int and f64
 constants with the same bit pattern). v0.8.41 caches `index * struct_size` per block and uses field
-offsets as displacements: particles 605 ms, raytrace 257 ms, vecpart 158 ms.
+offsets as displacements: particles 605 ms, raytrace 257 ms, vecpart 158 ms. v0.8.42 hardens the
+bounds proofs: induction variables must be provably non-negative on every path (unsigned checks), and
+affine arithmetic is overflow-checked; `negative_idx` and `huge_affine` are differential tests.
 
 ## IR vs AST vs C (v0.8.31 medians)## IR vs AST vs C (v0.8.31 medians)
 

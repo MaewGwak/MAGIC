@@ -1302,23 +1302,34 @@ fn affine_of(
                     Op::Add | Op::Sub => {
                         let (mut a, ca) = affine_of(*l, defs, instrs, consts, vars)?;
                         let (b, cb) = affine_of(*r, defs, instrs, consts, vars)?;
-                        let sign = if *op == Op::Sub { -1 } else { 1 };
+                        let sign: i64 = if *op == Op::Sub { -1 } else { 1 };
                         for (k, val) in b {
-                            *a.entry(k).or_insert(0) += sign * val;
+                            let add = sign.checked_mul(val)?;
+                            let cur = a.entry(k).or_insert(0);
+                            *cur = cur.checked_add(add)?;
                         }
-                        Some((a, ca + sign * cb))
+                        let cterm = sign.checked_mul(cb)?;
+                        Some((a, ca.checked_add(cterm)?))
                     }
                     Op::Mul => {
                         let (la, lc) = affine_of(*l, defs, instrs, consts, vars)?;
                         let (ra, rc) = affine_of(*r, defs, instrs, consts, vars)?;
                         if la.is_empty() && ra.is_empty() {
-                            Some((HashMap::new(), lc * rc))
+                            Some((HashMap::new(), lc.checked_mul(rc)?))
                         } else if la.is_empty() {
                             let k = lc;
-                            Some((ra.into_iter().map(|(v, c)| (v, c * k)).collect(), rc * k))
+                            let m = ra
+                                .into_iter()
+                                .map(|(v, c)| c.checked_mul(k).map(|x| (v, x)))
+                                .collect::<Option<HashMap<_, _>>>()?;
+                            Some((m, rc.checked_mul(k)?))
                         } else if ra.is_empty() {
                             let k = rc;
-                            Some((la.into_iter().map(|(v, c)| (v, c * k)).collect(), lc * k))
+                            let m = la
+                                .into_iter()
+                                .map(|(v, c)| c.checked_mul(k).map(|x| (v, x)))
+                                .collect::<Option<HashMap<_, _>>>()?;
+                            Some((m, lc.checked_mul(k)?))
                         } else {
                             None
                         }
@@ -1327,7 +1338,11 @@ fn affine_of(
                 },
                 Instr::Un { neg: true, a, .. } => {
                     let (m, c) = affine_of(*a, defs, instrs, consts, vars)?;
-                    Some((m.into_iter().map(|(v, c)| (v, -c)).collect(), -c))
+                    let mm = m
+                        .into_iter()
+                        .map(|(v, cv)| cv.checked_neg().map(|x| (v, x)))
+                        .collect::<Option<HashMap<_, _>>>()?;
+                    Some((mm, c.checked_neg()?))
                 }
                 _ => None,
             }
@@ -1371,6 +1386,85 @@ fn def_kind(ins: &Instr) -> Option<(Value, DefKind)> {
         }
         _ => None,
     }
+}
+
+/// The loop index must be provably non-negative for an unsigned bounds check
+/// to be removable: it must be initialised with a non-negative constant before
+/// the header and only ever be incremented by one afterwards.
+fn var_nonneg(
+    defs: &HashMap<Value, (DefKind, usize)>,
+    f: &IrFunc,
+    iv: usize,
+    head: usize,
+    vals: &HashMap<Value, i64>,
+) -> bool {
+    let n = f.blocks.len();
+    let mut good_init: Vec<usize> = Vec::new();
+    for (bi, b) in f.blocks.iter().enumerate() {
+        for ins in &b.instrs {
+            let Instr::StoreVar { var, src } = ins else { continue };
+            if *var != iv {
+                continue;
+            }
+            if let Some(c) = vals.get(src) {
+                if *c < 0 {
+                    return false;
+                }
+                if !good_init.contains(&bi) {
+                    good_init.push(bi);
+                }
+                continue;
+            }
+            let mut increment = false;
+            for b2 in &f.blocks {
+                for i2 in &b2.instrs {
+                    if let Instr::Bin { dst, op: Op::Add, l, r } = i2 {
+                        if dst == src {
+                            let is_iv = |v: &Value| {
+                                matches!(defs.get(v), Some((DefKind::LoadVar(x), _)) if *x == iv)
+                            };
+                            let step_nonneg = |v: &Value| {
+                                match defs.get(v) {
+                                    Some((DefKind::Const(c), _)) => *c >= 0,
+                                    _ => vals.get(v).map(|c| *c >= 0).unwrap_or(false),
+                                }
+                            };
+                            increment = (is_iv(l) && step_nonneg(r)) || (is_iv(r) && step_nonneg(l));
+                        }
+                    }
+                }
+            }
+            if !increment {
+                return false;
+            }
+        }
+    }
+    if good_init.is_empty() {
+        return false;
+    }
+    // Every path from entry to the header must pass through an initialising
+    // block; otherwise the loop can start with an unknown (possibly negative)
+    // value.
+    let mut seen = vec![false; n];
+    let mut stack = vec![0usize];
+    while let Some(bi) = stack.pop() {
+        if bi == head {
+            return false;
+        }
+        if seen[bi] {
+            continue;
+        }
+        seen[bi] = true;
+        if good_init.contains(&bi) {
+            continue;
+        }
+        for succ in block_successors(&f.blocks[bi].instrs) {
+            if succ < n {
+                stack.push(succ);
+            }
+        }
+    }
+    true
 }
 
 /// Remove bounds checks that are implied by a `for i in 0..len` loop:
@@ -1479,6 +1573,12 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                 }
             }
             let (Some(iv), Some(bound)) = (iv, bound) else { continue };
+            if !var_nonneg(&defs, f, iv, h, &vals) {
+                if std::env::var("MAGIC_DEBUG_NONNEG").is_ok() {
+                    eprintln!("rejected loop h={} iv={} bound={:?}", h, iv, bound);
+                }
+                continue;
+            }
             // The index may only be modified by `i = i + 1` inside the region.
             let mut ok = true;
             for bb in &region {
@@ -1605,7 +1705,16 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                 let mut proved = true;
                 for (var, coef) in &coefs {
                     match constraints[bi].get(var) {
-                        Some(Bound::Const(b)) => max += coef * (b - 1),
+                        Some(Bound::Const(b)) => {
+                            let term = coef.checked_mul(b.saturating_sub(1));
+                            match term.and_then(|t| max.checked_add(t)) {
+                                Some(m) => max = m,
+                                None => {
+                                    proved = false;
+                                    break;
+                                }
+                            }
+                        }
                         _ => {
                             proved = false;
                             break;
