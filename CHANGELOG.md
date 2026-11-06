@@ -30,6 +30,22 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.20 — IR fill loops, destination reuse and better variable ranking (2026-11-06)
+
+Three changes to the IR backend:
+
+* **`Fill` instruction**: non-zero array initialisers no longer expand to a generic IR loop with a
+  bounds check per element. The emitter writes a tight unrolled loop (four stores per iteration plus
+  a tail) and `[bool]` fills become a single `memset` of `0xFF`. A 20M-element `[1; n]` fill drops
+  54 → 35 ms (AST: 42 ms, C: 30 ms).
+* **Destination reuse**: when an operand dies at a binary operation the result is written into that
+  operand's register instead of a fresh one, removing a move and a register per operation.
+* **Pointer-weighted promotion**: `Alloc`/`Fill`/index accesses count three times when ranking
+  variables for callee-saved registers, so array pointers stay in registers.
+
+Medians through `--backend ir`: array sum 118 → 63 ms (AST 79), sieve 115 → 90 ms (AST 88),
+matmul 186 → 154 ms (AST 225), fill-only 35 ms (AST 42, C 30).
+
 ## v0.8.19 — dead-register reuse inside IR blocks (2026-11-06)
 
 The block allocator now tracks the last use of every value and frees its register as soon as the

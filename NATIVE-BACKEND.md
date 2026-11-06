@@ -123,7 +123,9 @@ four-register pool, and sieve prints 664579 in 124 ms (AST 88 ms, C 38 ms). v0.8
 function and basic block with `.p2align 4`; this removed a 30 % alignment-induced regression in the
 array-sum loop (120 → 93 ms) and improved matmul to 208 ms, now ahead of the AST backend's 225 ms.
 v0.8.19 frees each block value's register at its last use instead of keeping every temporary until
-the block ends, which takes matmul to ~186 ms.
+the block ends, which takes matmul to ~186 ms. v0.8.20 adds a dedicated unrolled `Fill` (with
+`memset` for bool arrays), destination-register reuse and pointer-weighted variable promotion:
+matmul 154 ms, array sum 63 ms, sieve 90 ms, fill-only 35 ms — all at or ahead of the AST backend.
 Affine indexes like
 `a[i * n + j]` are proved in v0.8.15 after constant propagation makes `n` and `n * n` literal: the
 maximum `(n-1)*n + (n-1)` is compared with the array length, so matmul's inner checks disappear

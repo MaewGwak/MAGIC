@@ -53,6 +53,7 @@ pub enum Instr {
     Br { cond: Value, then_bb: usize, else_bb: usize },
     Jmp(usize),
     Alloc { ptr_var: usize, elem: Ty, len: Value },
+    Fill { ptr_var: usize, elem: Ty, len: Value, value: Value },
     BoundsCheck { idx: Value, len: LenRef, line: usize },
     IndexLoad { dst: Value, ptr_var: usize, idx: Value, elem: Ty },
     IndexStore { ptr_var: usize, idx: Value, elem: Ty, src: Value },
@@ -289,42 +290,12 @@ impl Builder {
                     || matches!(value.kind, ExprKind::Bool(false));
                 if !zero {
                     let init = self.lower_expr(value)?;
-                    let iv = self.nvars;
-                    self.nvars += 1;
-                    let z = self.value();
-                    self.push(Instr::Const { dst: z, v: 0 });
-                    self.push(Instr::StoreVar { var: iv, src: z });
-                    let head = self.new_block();
-                    let body_bb = self.new_block();
-                    let incr = self.new_block();
-                    let end = self.new_block();
-                    self.push(Instr::Jmp(head));
-                    self.cur = head;
-                    let a = self.value();
-                    self.push(Instr::LoadVar { dst: a, var: iv });
-                    let b = self.value();
-                    match len_ref {
-                        LenRef::Const(n) => self.push(Instr::Const { dst: b, v: n }),
-                        LenRef::Var(v) => self.push(Instr::LoadVar { dst: b, var: v }),
-                    }
-                    let c = self.value();
-                    self.push(Instr::Bin { dst: c, op: Op::Lt, l: a, r: b });
-                    self.push(Instr::Br { cond: c, then_bb: body_bb, else_bb: end });
-                    self.cur = body_bb;
-                    let i = self.value();
-                    self.push(Instr::LoadVar { dst: i, var: iv });
-                    self.push(Instr::IndexStore { ptr_var, idx: i, elem: *elem, src: init });
-                    self.push(Instr::Jmp(incr));
-                    self.cur = incr;
-                    let i2 = self.value();
-                    self.push(Instr::LoadVar { dst: i2, var: iv });
-                    let one = self.value();
-                    self.push(Instr::Const { dst: one, v: 1 });
-                    let nv = self.value();
-                    self.push(Instr::Bin { dst: nv, op: Op::Add, l: i2, r: one });
-                    self.push(Instr::StoreVar { var: iv, src: nv });
-                    self.push(Instr::Jmp(head));
-                    self.cur = end;
+                    self.push(Instr::Fill {
+                        ptr_var,
+                        elem: *elem,
+                        len: lenv,
+                        value: init,
+                    });
                 }
                 let _ = len_ref;
             }
@@ -928,6 +899,10 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
         Instr::Br { cond, .. } => uses.push(*cond),
         Instr::Jmp(_) => {}
         Instr::Alloc { len, .. } => uses.push(*len),
+        Instr::Fill { len, value, .. } => {
+            uses.push(*len);
+            uses.push(*value);
+        }
         Instr::BoundsCheck { idx, .. } => uses.push(*idx),
         Instr::IndexLoad { dst, idx, .. } => {
             uses.push(*idx);
@@ -956,6 +931,7 @@ fn slow_block(instrs: &[Instr]) -> bool {
             i,
             Instr::Call { .. }
                 | Instr::Alloc { .. }
+                | Instr::Fill { .. }
                 | Instr::Print { .. }
                 | Instr::Bin { op: Op::Div | Op::Rem, .. }
         )
@@ -1084,6 +1060,19 @@ impl<'a> RegAlloc<'a> {
         }
     }
 
+    fn dead_reg(&mut self, v: Value, at: usize) -> Option<usize> {
+        if self.last_use.get(&v).copied() == Some(at) {
+            self.map.remove(&v).map(|(i, _)| i)
+        } else {
+            None
+        }
+    }
+
+    fn dst_at(&mut self, v: Value, idx: usize) -> usize {
+        self.map.insert(v, (idx, true));
+        idx
+    }
+
     /// Release registers whose value is never used again in this block. Live
     /// out values were already written at their definition, so they are safe
     /// to drop from the register file too.
@@ -1158,33 +1147,65 @@ fn emit_fast_block(
                 }
             }
             Instr::Bin { dst, op, l, r } => {
+                let commutative = matches!(op, Op::Add | Op::Mul | Op::And | Op::Or);
                 let a = ra.operand(*l);
                 let b = ra.operand_excluding(*r, &[a]);
-                let d = ra.dst_excluding(*dst, &[a, b]);
-                ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
-                match op {
-                    Op::Add => ra.out.push_str(&format!("    add {}, {}\n", POOL[b].0, POOL[d].0)),
-                    Op::Sub => ra.out.push_str(&format!("    sub {}, {}\n", POOL[b].0, POOL[d].0)),
-                    Op::Mul => ra
-                        .out
-                        .push_str(&format!("    imul {}, {}\n", POOL[b].0, POOL[d].0)),
-                    Op::And => ra.out.push_str(&format!("    and {}, {}\n", POOL[b].0, POOL[d].0)),
-                    Op::Or => ra.out.push_str(&format!("    or {}, {}\n", POOL[b].0, POOL[d].0)),
-                    Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                        ra.out.push_str(&format!("    cmp {}, {}\n", POOL[b].0, POOL[d].0));
-                        let set = match op {
-                            Op::Eq => "sete",
-                            Op::Ne => "setne",
-                            Op::Lt => "setl",
-                            Op::Le => "setle",
-                            Op::Gt => "setg",
-                            Op::Ge => "setge",
-                            _ => unreachable!(),
-                        };
-                        ra.out.push_str(&format!("    {} %al\n", set));
-                        ra.out.push_str(&format!("    movzbq %al, {}\n", POOL[d].0));
+                let dead_a = ra.dead_reg(*l, ii);
+                let dead_b = if commutative && dead_a.is_none() {
+                    ra.dead_reg(*r, ii)
+                } else {
+                    None
+                };
+                let d = match (dead_a, dead_b) {
+                    (Some(i), _) => ra.dst_at(*dst, i),
+                    (None, Some(i)) => ra.dst_at(*dst, i),
+                    (None, None) => ra.dst_excluding(*dst, &[a, b]),
+                };
+                let is_cmp = matches!(
+                    op,
+                    Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge
+                );
+                if is_cmp {
+                    // setcc needs the operands untouched and writes %al.
+                    if d != a {
+                        ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
                     }
-                    Op::Div | Op::Rem => unreachable!("slow block split"),
+                    ra.out.push_str(&format!("    cmp {}, {}\n", POOL[b].0, POOL[d].0));
+                    let set = match op {
+                        Op::Eq => "sete",
+                        Op::Ne => "setne",
+                        Op::Lt => "setl",
+                        Op::Le => "setle",
+                        Op::Gt => "setg",
+                        Op::Ge => "setge",
+                        _ => unreachable!(),
+                    };
+                    ra.out.push_str(&format!("    {} %al\n", set));
+                    ra.out.push_str(&format!("    movzbq %al, {}\n", POOL[d].0));
+                } else {
+                    // When the destination reuses a dead operand the copy is
+                    // unnecessary; for a dead right operand only commutative
+                    // operations may swap the roles.
+                    if d == a || d == b {
+                        // result already starts in the reused register
+                    } else {
+                        ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
+                    }
+                    let rhs = if d == a {
+                        POOL[b].0
+                    } else if d == b && commutative {
+                        POOL[a].0
+                    } else {
+                        POOL[b].0
+                    };
+                    match op {
+                        Op::Add => ra.out.push_str(&format!("    add {}, {}\n", rhs, POOL[d].0)),
+                        Op::Sub => ra.out.push_str(&format!("    sub {}, {}\n", rhs, POOL[d].0)),
+                        Op::Mul => ra.out.push_str(&format!("    imul {}, {}\n", rhs, POOL[d].0)),
+                        Op::And => ra.out.push_str(&format!("    and {}, {}\n", rhs, POOL[d].0)),
+                        Op::Or => ra.out.push_str(&format!("    or {}, {}\n", rhs, POOL[d].0)),
+                        _ => unreachable!(),
+                    }
                 }
                 ra.def_store(*dst, d);
             }
@@ -1308,7 +1329,10 @@ fn emit_fast_block(
                 }
                 ra.out.push_str(&format!("    jmp .L{}_ret\n", name));
             }
-            Instr::Call { .. } | Instr::Alloc { .. } | Instr::Print { .. } => {
+            Instr::Call { .. }
+            | Instr::Alloc { .. }
+            | Instr::Fill { .. }
+            | Instr::Print { .. } => {
                 unreachable!("slow block")
             }
         }
@@ -1366,6 +1390,12 @@ pub fn emit(prog: &IrProgram) -> String {
                     }
                     Instr::StoreVar { var, .. } => {
                         *var_counts.entry(*var).or_insert(0) += 1;
+                    }
+                    Instr::Alloc { ptr_var, .. }
+                    | Instr::Fill { ptr_var, .. }
+                    | Instr::IndexLoad { ptr_var, .. }
+                    | Instr::IndexStore { ptr_var, .. } => {
+                        *var_counts.entry(*ptr_var).or_insert(0) += 3;
                     }
                     _ => {}
                 }
@@ -1627,6 +1657,55 @@ pub fn emit(prog: &IrProgram) -> String {
                             out.push_str(&format!("    mov %rax, {}\n", reg));
                         } else {
                             out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*ptr_var)));
+                        }
+                    }
+                    Instr::Fill { ptr_var, elem, len, value } => {
+                        out.push_str(&ld(*value));
+                        out.push_str("    mov %rax, %r8\n");
+                        out.push_str(&ld(*len));
+                        out.push_str("    mov %rax, %r11\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %r10\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        }
+                        if *elem == Ty::Bool {
+                            // all bits set: len is in elements, memset whole words
+                            out.push_str("    add $63, %r11\n    shr $6, %r11\n");
+                            out.push_str("    lea 0(,%r11,8), %rdx\n");
+                            out.push_str("    mov %r10, %rdi\n    mov $255, %esi\n");
+                            out.push_str("    call memset@PLT\n");
+                        } else {
+                            let esz = match elem {
+                                Ty::U8 => 1,
+                                Ty::I32 => 4,
+                                _ => 8,
+                            };
+                            out.push_str(&format!(
+                                "    lea (%r10,%r11,{}), %r9\n",
+                                esz
+                            ));
+                            out.push_str("1:\n");
+                            out.push_str(&format!("    lea {}(%r10), %rcx\n", esz * 4));
+                            out.push_str("    cmp %r9, %rcx\n    ja 3f\n");
+                            for k in 0..4 {
+                                match esz {
+                                    1 => out.push_str(&format!("    mov %r8b, {}(%r10)\n", k)),
+                                    4 => out.push_str(&format!("    mov %r8d, {}(%r10)\n", k * 4)),
+                                    _ => out.push_str(&format!("    mov %r8, {}(%r10)\n", k * 8)),
+                                }
+                            }
+                            out.push_str("    mov %rcx, %r10\n    jmp 1b\n");
+                            out.push_str("3:\n");
+                            out.push_str("    cmp %r9, %r10\n    jae 2f\n");
+                            match esz {
+                                1 => out.push_str("    mov %r8b, (%r10)\n"),
+                                4 => out.push_str("    mov %r8d, (%r10)\n"),
+                                _ => out.push_str("    mov %r8, (%r10)\n"),
+                            }
+                            out.push_str(&format!("    add ${}, %r10\n", esz));
+                            out.push_str("    jmp 3b\n");
+                            out.push_str("2:\n");
                         }
                     }
                     Instr::BoundsCheck { idx, len, line } => {

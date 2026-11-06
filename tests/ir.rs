@@ -75,6 +75,10 @@ fn ir_matches_c_on_small_integer_programs() {
         ("boolops", "fn main() { print(1 < 2); print(1 == 2); print(1 <= 1); print(2 > 3); }"),
         ("nested", "fn main() { var t = 0; for i in 0..4 { for j in 0..3 { t = t + i * j; } } print(t); }"),
         ("divmod", "fn main() { var a = 12345; print(a / 10); print(a % 10); print(a / -3); print(a % -3); }"),
+        ("fill1", "fn main() { var a: [i32] = [7; 1]; print(a[0]); }"),
+        ("fill3", "fn main() { var a: [i32] = [7; 3]; print(a[0] + a[1] + a[2]); }"),
+        ("fill5", "fn main() { var a: [i32] = [7; 5]; var t = 0; var i = 0; while i < 5 { t = t + a[i]; i = i + 1; } print(t); }"),
+        ("fill9u8", "fn main() { var a: [u8] = [3; 9]; var t = 0; var i = 0; while i < 9 { t = t + (a[i] as i32); i = i + 1; } print(t); }"),
     ];
     let mut fails = Vec::new();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

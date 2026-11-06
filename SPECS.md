@@ -1,4 +1,4 @@
-# 🔮 MAGIC — Language Specification v0.8.19
+# 🔮 MAGIC — Language Specification v0.8.20
 
 Status: pre-1.0. Breaking changes are allowed in any 0.x release.
 Companion docs: `PLANS.md` (roadmap), `TASKS.md` (board), `TEST.md` (tests).
