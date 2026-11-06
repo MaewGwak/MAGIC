@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.46 — allocation hardening in the IR runtime (2026-11-06)
+
+Every IR heap allocation now checks for failure and for size overflow: `calloc` and `malloc`
+(NULL → `out of memory`, exit 1), `realloc` in `reserve`/`push` (both NULL and overflowing
+`count * element_size`), and the vector growth paths guard the doubled capacity against
+`i64::MAX / element_size` before multiplying. An `oom_alloc` differential case (a 2^60-element array)
+now panics with exit 1 on both backends instead of dereferencing NULL.
+
 ## v0.8.45 — IR semantics fixes caught by a new differential gate (2026-11-06)
 
 `verify-ir.sh` builds every deterministic example, benchmark and database program with the C and IR

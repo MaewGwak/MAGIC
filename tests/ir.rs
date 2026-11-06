@@ -75,6 +75,7 @@ fn ir_matches_c_on_small_integer_programs() {
         ("boolops", "fn main() { print(1 < 2); print(1 == 2); print(1 <= 1); print(2 > 3); }"),
         ("nested", "fn main() { var t = 0; for i in 0..4 { for j in 0..3 { t = t + i * j; } } print(t); }"),
         ("divmod", "fn main() { var a = 12345; print(a / 10); print(a % 10); print(a / -3); print(a % -3); }"),
+        ("oom_alloc", "fn main() { var a: [i32] = [0; 1152921504606846976]; print(a[0]); }"),
         ("negative_idx", "fn main() { var a: [i32] = [7; 4]; var i = -2; while i < 4 { print(a[i]); i = i + 1; } }"),
         ("huge_affine", "fn main() { var a: [i32] = [1; 8]; var t = 0; for i in 0..4 { t = t + a[i * 1000000000000]; } print(t); }"),
         ("vectors", "struct P { x: f64, y: f64 } fn main() { var v: [i32+] = []; for i in 0..10 { v.push(i * i); } var t = 0; for i in 0..(len(v) as i32) { t = t + v[i]; } print(len(v)); print(t); var ps: [P+] = []; reserve(ps, 16); for i in 0..8 { ps.push(P { x: i as f64, y: (i as f64) * 0.5 }); } var u = 0.0; for i in 0..(len(ps) as i32) { u = u + ps[i].x + ps[i].y; } print(u); }"),

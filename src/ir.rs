@@ -3250,6 +3250,7 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str(".Lfalse: .asciz \"false\"\n");
     out.push_str(".Ldiv0: .asciz \"line 0: division by zero\"\n");
     out.push_str(".Lfmt_panic: .asciz \"%s\\n\"\n");
+    out.push_str(".Lom: .asciz \"out of memory\"\n");
     out.push_str(".Lfmt_g: .asciz \"%g\\n\"\n");
     out.push_str(".Lfmt_pf: .asciz \"%.*f\\n\"\n");
     out.push_str(".p2align 3\n.Lf64sign: .quad 0x8000000000000000\n");
@@ -3620,6 +3621,8 @@ pub fn emit(prog: &IrProgram) -> String {
                     Instr::VecNew { ptr_var, len_var, cap_var, esz } => {
                         out.push_str(&format!("    mov ${}, %rdi\n", esz * 8));
                         out.push_str("    call malloc@PLT\n");
+                        out.push_str("    test %rax, %rax\n    jne 8f\n");
+                        out.push_str("    lea .Lom(%rip), %rdi\n    call .Lir_panic\n8:\n");
                         if let Some(reg) = var_regs.get(ptr_var) {
                             out.push_str(&format!("    mov %rax, {}\n", reg));
                         } else {
@@ -3638,11 +3641,17 @@ pub fn emit(prog: &IrProgram) -> String {
                         } else {
                             out.push_str(&format!("    mov -{}(%rbp), %rdi\n", varoff(*ptr_var)));
                         }
+                        out.push_str(&format!(
+                            "    mov ${}, %rax\n    cmp %rax, %r11\n    ja 9f\n",
+                            i64::MAX / (*esz as i64).max(1)
+                        ));
                         out.push_str("    mov %r11, %rsi\n");
                         out.push_str(&scale_insn(*esz, "%rsi"));
                         out.push_str("    push %r11\n    sub $8, %rsp\n");
                         out.push_str("    call realloc@PLT\n");
                         out.push_str("    add $8, %rsp\n    pop %r11\n");
+                        out.push_str("    test %rax, %rax\n    jne 8f\n9:\n");
+                        out.push_str("    lea .Lom(%rip), %rdi\n    call .Lir_panic\n8:\n");
                         if let Some(reg) = var_regs.get(ptr_var) {
                             out.push_str(&format!("    mov %rax, {}\n", reg));
                         } else {
@@ -3666,11 +3675,17 @@ pub fn emit(prog: &IrProgram) -> String {
                         } else {
                             out.push_str(&format!("    mov -{}(%rbp), %rdi\n", varoff(*ptr_var)));
                         }
+                        out.push_str(&format!(
+                            "    mov ${}, %rax\n    cmp %rax, %rcx\n    ja 9f\n",
+                            i64::MAX / (2 * (*esz as i64).max(1))
+                        ));
                         out.push_str("    lea (%rcx,%rcx), %rsi\n");
                         out.push_str(&scale_insn(*esz, "%rsi"));
                         out.push_str("    push %r8\n    push %r11\n");
                         out.push_str("    call realloc@PLT\n");
                         out.push_str("    pop %r11\n    pop %r8\n");
+                        out.push_str("    test %rax, %rax\n    jne 8f\n9:\n");
+                        out.push_str("    lea .Lom(%rip), %rdi\n    call .Lir_panic\n8:\n");
                         if let Some(reg) = var_regs.get(ptr_var) {
                             out.push_str(&format!("    mov %rax, {}\n", reg));
                         } else {
@@ -3703,11 +3718,17 @@ pub fn emit(prog: &IrProgram) -> String {
                         } else {
                             out.push_str(&format!("    mov -{}(%rbp), %rdi\n", varoff(*ptr_var)));
                         }
+                        out.push_str(&format!(
+                            "    mov ${}, %rax\n    cmp %rax, %rcx\n    ja 9f\n",
+                            i64::MAX / (2 * (*esz as i64).max(1))
+                        ));
                         out.push_str("    lea (%rcx,%rcx), %rsi\n");
                         out.push_str(&scale_insn(*esz, "%rsi"));
                         out.push_str("    push %r11\n    sub $8, %rsp\n");
                         out.push_str("    call realloc@PLT\n");
                         out.push_str("    add $8, %rsp\n    pop %r11\n");
+                        out.push_str("    test %rax, %rax\n    jne 8f\n9:\n");
+                        out.push_str("    lea .Lom(%rip), %rdi\n    call .Lir_panic\n8:\n");
                         if let Some(reg) = var_regs.get(ptr_var) {
                             out.push_str(&format!("    mov %rax, {}\n", reg));
                         } else {
@@ -3983,6 +4004,8 @@ pub fn emit(prog: &IrProgram) -> String {
                         let esz = if *elem == Ty::Bool { 8 } else { *esz };
                         out.push_str(&format!("    mov ${}, %esi\n", esz));
                         out.push_str("    call calloc@PLT\n");
+                        out.push_str("    test %rax, %rax\n    jne 8f\n");
+                        out.push_str("    lea .Lom(%rip), %rdi\n    call .Lir_panic\n8:\n");
                         if let Some(reg) = var_regs.get(ptr_var) {
                             out.push_str(&format!("    mov %rax, {}\n", reg));
                         } else {
