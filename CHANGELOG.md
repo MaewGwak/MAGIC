@@ -30,6 +30,18 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.75 — CPU-scaled par runtime and creation fallback (2026-11-06)
+
+The parallel runtime now asks `sysconf(_SC_NPROCESSORS_ONLN)` for the CPU count, uses
+`min(iterations, CPUs, 8)` threads, and spawns every chunk before joining so chunks actually overlap.
+Two robustness fixes came out of stress tests: `pthread_create` failures are detected (the chunk runs
+inline instead of joining an uninitialised id, fixing intermittent crashes at high thread counts), and
+`pthread_join` is skipped for zero ids. Raytrace par improves from ~45 ms to ~27 ms on this machine
+(C/OpenMP ~13 ms); fannkuch streams run eight-wide and keep their checksums (`73196`, `38`). The
+sieve mark loop remains dominated by one large prime (`~265 ms` versus ~183 ms sequential IR and
+~100 ms C/OpenMP); constant-length capture and dynamic scheduling are the next par steps. All gates
+pass, 168 tests, repo parity 60/60.
+
 ## v0.8.74 — real pthread `par for` in the IR (2026-11-06)
 
 `par for` now runs on four pthreads instead of falling back to a sequential loop. The lowerer
