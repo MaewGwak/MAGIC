@@ -1039,6 +1039,14 @@ impl Checker {
                     }
                     return Ok(Ty::Void);
                 }
+                if name == "sha1_file" {
+                    if args.len() != 3 { return Err(format!("{}: sha1_file takes 3 arguments", e.line)); }
+                    self.check_expr(&args[0], Some(Ty::Str), scopes)?;
+                    let vname = match &args[1].kind { ExprKind::Var(n) => n, _ => return Err(format!("{}: sha1_file needs a [u8] variable", e.line)) };
+                    if lookup_array(scopes, vname) != Some(Ty::U8) { return Err(format!("{}: sha1_file needs a [u8] array", e.line)); }
+                    self.check_expr(&args[2], Some(Ty::I32), scopes)?;
+                    return Ok(Ty::I32);
+                }
                 if name == "dir_list" {
                     if args.len() != 3 { return Err(format!("{}: dir_list takes 3 arguments", e.line)); }
                     self.check_expr(&args[0], Some(Ty::Str), scopes)?;

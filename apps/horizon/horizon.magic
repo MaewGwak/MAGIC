@@ -113,9 +113,47 @@ fn check_libraries(dir: str, buf: [u8], len: i32, out: [u8], cap: i32) -> i32 {
     return missing;
 }
 
+
+fn check_hashes(dir: str, buf: [u8], len: i32, pathbuf: [u8], shabuf: [u8], hexbuf: [u8]) -> i32 {
+    var pos = 0;
+    var checked = 0;
+    var bad = 0;
+    var running = true;
+    while running {
+        var p = json_key_pos(buf, len, "path", pos);
+        if p < 0 { running = false; }
+        else {
+            var pn = json_string(buf, len, p, pathbuf, 512);
+            var sp = json_key_pos(buf, len, "sha1", p);
+            if pn >= 0 && sp >= 0 {
+                var sn = json_string(buf, len, sp, shabuf, 64);
+                if sn >= 0 {
+                    checked = checked + 1;
+                    var rel = str_from_bytes(pathbuf, pn);
+                    var full = str_cat(str_cat(str_cat(dir, "/libraries/"), rel), "");
+                    var hn = sha1_file(full, hexbuf, 64);
+                    if hn < 0 {
+                        bad = bad + 1;
+                        print(str_cat("horizon: missing for hash ", rel));
+                    } else if !str_eq(str_from_bytes(hexbuf, hn), str_from_bytes(shabuf, sn)) {
+                        bad = bad + 1;
+                        print(str_cat("horizon: sha1 mismatch ", rel));
+                    }
+                }
+            }
+            pos = p + 1;
+        }
+    }
+    print("horizon: hashes checked");
+    print(checked);
+    print("horizon: hashes bad");
+    print(bad);
+    return bad;
+}
+
 fn main() {
     if argc() < 3 {
-        print("horizon: usage: horizon init|list|show|set|doctor|import|assets|launch <dir>");
+        print("horizon: usage: horizon init|list|show|set|doctor|import|assets|verify|launch <dir>");
         return;
     }
     var cmd = arg(1);
@@ -131,6 +169,9 @@ fn main() {
     var jabuf: [u8] = [0; 1024];
     var jsonbuf: [u8] = [0; 65536];
     var outbuf: [u8] = [0; 512];
+    var pathbuf: [u8] = [0; 512];
+    var shabuf: [u8] = [0; 64];
+    var hexbuf: [u8] = [0; 64];
 
     if str_eq(cmd, "init") {
         if dir_mkdir(dir) != 0 && !path_exists(dir) {
@@ -208,6 +249,19 @@ fn main() {
         }
         if write_value(dir, key, value) < 0 { print("horizon: cannot write config"); return; }
         print("horizon: config updated");
+        return;
+    }
+
+    if str_eq(cmd, "verify") {
+        if argc() < 4 { print("horizon: verify needs <dir> <version.json>"); return; }
+        if !path_exists(dir) { print("horizon: instance directory does not exist"); return; }
+        var fd = file_open(arg(3), "r");
+        if fd < 0 { print("horizon: cannot open version json"); return; }
+        var n = file_read(fd, jsonbuf, 65535);
+        file_close(fd);
+        if n < 0 { print("horizon: cannot read version json"); return; }
+        var bad = check_hashes(dir, jsonbuf, n as i32, pathbuf, shabuf, hexbuf);
+        if bad == 0 { print("horizon: sha1 verification OK"); }
         return;
     }
 

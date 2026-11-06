@@ -15,6 +15,11 @@ printf '{"id":"1.21","mainClass":"example.Main","libraries":[{"path":"a/b.jar"},
 grep -q '^1.21$' "$TMP/inst/version"
 grep -q '^example.Main$' "$TMP/inst/main"
 "$TMP/horizon" assets "$TMP/inst" "$TMP/version.json" | grep -q 'missing library c/d.jar'
+H=$(sha1sum "$TMP/inst/libraries/a/b.jar" | cut -d' ' -f1)
+printf '{"libraries":[{"path":"a/b.jar","sha1":"%s"}]}' "$H" > "$TMP/hashes.json"
+"$TMP/horizon" verify "$TMP/inst" "$TMP/hashes.json" | grep -q 'sha1 verification OK'
+printf 'tampered\n' > "$TMP/inst/libraries/a/b.jar"
+"$TMP/horizon" verify "$TMP/inst" "$TMP/hashes.json" | grep -q 'sha1 mismatch a/b.jar'
 "$TMP/horizon" set "$TMP/inst" memory 4G >/dev/null
 grep -q '^4G$' "$TMP/inst/memory"
 "$TMP/horizon" show "$TMP/inst" | grep -q 'memory: 4G'

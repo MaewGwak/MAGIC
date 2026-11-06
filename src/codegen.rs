@@ -507,6 +507,56 @@ static inline int32_t magic_dir_list(const char *path, uint8_t *buf, int32_t cap
 }
 "#);
     }
+    if all_calls.contains("sha1_file") {
+        out.push_str(r#"typedef struct { uint32_t h[5]; uint64_t len; uint8_t buf[64]; size_t n; } magic_sha1_ctx;
+static inline uint32_t magic_sha1_rol(uint32_t x, int n) { return (x << n) | (x >> (32 - n)); }
+static void magic_sha1_block(magic_sha1_ctx *c, const uint8_t *p) {
+    uint32_t w[80];
+    for (int i = 0; i < 16; i++) w[i] = ((uint32_t)p[4*i] << 24) | ((uint32_t)p[4*i+1] << 16) | ((uint32_t)p[4*i+2] << 8) | p[4*i+3];
+    for (int i = 16; i < 80; i++) w[i] = magic_sha1_rol(w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16], 1);
+    uint32_t a=c->h[0], b=c->h[1], cc=c->h[2], d=c->h[3], e=c->h[4];
+    for (int i = 0; i < 80; i++) {
+        uint32_t f, k;
+        if (i < 20) { f = (b & cc) | ((~b) & d); k = 0x5A827999; }
+        else if (i < 40) { f = b ^ cc ^ d; k = 0x6ED9EBA1; }
+        else if (i < 60) { f = (b & cc) | (b & d) | (cc & d); k = 0x8F1BBCDC; }
+        else { f = b ^ cc ^ d; k = 0xCA62C1D6; }
+        uint32_t t = magic_sha1_rol(a,5) + f + e + k + w[i];
+        e = d; d = cc; cc = magic_sha1_rol(b,30); b = a; a = t;
+    }
+    c->h[0]+=a; c->h[1]+=b; c->h[2]+=cc; c->h[3]+=d; c->h[4]+=e;
+}
+static inline int32_t magic_sha1_file(const char *path, uint8_t *out, int32_t cap) {
+    if (cap < 41) return -1;
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    magic_sha1_ctx c = {{0x67452301u,0xEFCDAB89u,0x98BADCFEu,0x10325476u,0xC3D2E1F0u},0,{0},0};
+    uint8_t tmp[8192]; size_t n;
+    while ((n = fread(tmp,1,sizeof tmp,f)) > 0) {
+        c.len += (uint64_t)n * 8;
+        for (size_t i = 0; i < n; i++) {
+            c.buf[c.n++] = tmp[i];
+            if (c.n == 64) { magic_sha1_block(&c,c.buf); c.n = 0; }
+        }
+    }
+    fclose(f);
+    uint64_t bits = c.len;
+    c.buf[c.n++] = 0x80;
+    if (c.n > 56) { while (c.n < 64) c.buf[c.n++] = 0; magic_sha1_block(&c,c.buf); c.n = 0; }
+    while (c.n < 56) c.buf[c.n++] = 0;
+    for (int i = 7; i >= 0; i--) c.buf[c.n++] = (uint8_t)(bits >> (i*8));
+    magic_sha1_block(&c,c.buf);
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 5; i++) for (int j = 0; j < 4; j++) {
+        uint8_t v = (uint8_t)(c.h[i] >> ((3-j)*8));
+        out[(i*4+j)*2] = (uint8_t)hex[v >> 4];
+        out[(i*4+j)*2+1] = (uint8_t)hex[v & 15];
+    }
+    out[40] = 0;
+    return 40;
+}
+"#);
+    }
     if uses_perm {
         out.push_str(r#"static _Thread_local __m128i magic_perm_v;
 static _Thread_local int32_t magic_cnt[8];
@@ -1453,6 +1503,9 @@ fn expr(e: &Expr) -> String {
                     expr(&args[0]),
                     expr(&args[1])
                 );
+            }
+            if name == "sha1_file" && args.len() == 3 {
+                return format!("magic_sha1_file(({}), ({}), (int32_t)({}))", expr(&args[0]), expr(&args[1]), expr(&args[2]));
             }
             if name == "dir_list" && args.len() == 3 {
                 return format!("magic_dir_list(({}), ({}), (int32_t)({}))", expr(&args[0]), expr(&args[1]), expr(&args[2]));

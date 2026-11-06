@@ -14,6 +14,7 @@ magicc build apps/horizon/horizon.magic --backend c \
 ./horizon list /tmp/instance
 ./horizon import /tmp/instance version.json
 ./horizon assets /tmp/instance version.json
+./horizon verify /tmp/instance hashes.json
 # edit /tmp/instance/{java,memory,main,classpath}, then:
 ./horizon launch /tmp/instance
 ```
