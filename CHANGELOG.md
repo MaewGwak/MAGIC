@@ -30,6 +30,15 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v1.0.1 — benchmark verdicts as explicit speed factors (2026-11-07)
+
+README/BENCHMARKS summary tables now report `Nx faster` / `Nx slower` instead of `win`/`loss`, with
+the direction defined: fastest C/C++/Rust baseline ÷ MAGIC best for faster, and MAGIC best ÷ fastest
+baseline for slower. A separate default-IR ratio is shown, the fastest baseline is bold, and variant
+names remain visible (particles closed, hash direct, binary-trees loop), so algorithmic variants are
+not confused with compiler speedups. N-body's native 613 ms is 2.70x slower than Rust 227 ms; its
+C-backend AVX2 build is noted at 198 ms (1.15x faster). No code change.
+
 ## v1.0.0 — first stable release (2026-11-07)
 
 Independent audit (Vera) reports COMPLETE on clauses 1–6 after v0.10.18. Evidence at this tag:

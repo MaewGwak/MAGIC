@@ -1,7 +1,7 @@
 # MAGIC benchmarks — current evidence (Linux, 2026-11-06)
 
 Machine: AMD Ryzen AI 7 350, 31.1 GB RAM, Linux. Compilers: gcc/g++ 16.2.1, rustc 1.99.1,
-Go and Goose where the harness has a source. MAGIC is `magicc 1.0.0` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
+Go and Goose where the harness has a source. MAGIC is `magicc 1.0.1` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
 (`as` + `ld`, no C compiler in the build path). Every number below comes from
 `./verify.sh` / `./bench-linux.sh`; every program's checksum is compared and `verify.sh` fails on
 a mismatch. Timings are medians of 3–5 interleaved runs, portable flags (no `-march=native` for the
@@ -53,19 +53,23 @@ the 4-wide SSE2 loop.
 "MAGIC default" is the idiomatic MAGIC source through the default backend. "MAGIC best" is the
 fastest MAGIC variant the harness ships for that workload (parallel or algorithmic variant; it is
 not the same source as the C baseline, and the variant name is given). Ratio = MAGIC / best
-baseline, lower is better.
+Summary: **Verdict = fastest C/C++/Rust baseline ÷ MAGIC best** for "x faster", and **MAGIC best ÷
+fastest baseline** for "x slower"; the bold baseline is the fastest of the three. A separate
+default-IR ratio against the same baseline follows each row in parentheses.
 
-| Workload | C | C++ | Rust | MAGIC default | MAGIC best (variant) | Ratio | Verdict |
-|---|---:|---:|---:|---:|---|---:|---|
-| sieve 100M | 409 | 423 | 414 | **383** | 45 (block-odd) | 0.94 | **outright win** |
-| fannkuch n=10 | 168 | 168 | 159 | 265 | **70** (`par for`, blocks) | 0.44 | **outright win** |
-| ray tracer 1536² | 42 | 44 | 35 | 120 | **22** (`par for`) | 0.97 | **outright win** |
-| hash 1M | 28 | 32 | 25 | 39 | 30 (`par for`) | 1.20 | within 1.25x |
-| fannkuch buffer variant | 168 | 168 | 159 | 166 | — | 1.04 | within 1.25x |
-| particles 1M × 100 | 72 | 72 | 143 | 84 (2-step fusion) | 135 (`par for`) | 1.17 | within 1.25x |
-| n-body 10M steps | 309 | 312 | **224** | **613** (loop) | 613 | 2.74 | loss |
-| binary trees | 725 | — | 1333 | 3904 | **467** (native loop) | 0.64 | **outright win** |
-| matmul 384 | **12** | 15 | 42 | **9** (interchange SIMD) | 10 (i-k-j) | 0.75 | **outright win** |
+| Workload | C | C++ | Rust | MAGIC default | Ratio (default) | MAGIC best (variant) | Vs fastest |
+|---|---:|---:|---:|---:|---:|---|---:|
+| sieve 100M | 432 | 423 | 431 | **397** | 1.07x faster | 37 (block-odd) | **11.4x faster** |
+| fannkuch n=10 | 168 | 167 | 157 | 266 | 1.69x slower | **75** (`par for`) | **2.09x faster** |
+| ray tracer 1536² | 39 | 41 | 39 | 81 | 2.08x slower | **18** (`par for`) | **2.17x faster** |
+| hash 1M | 26 | 30 | 26 | 42 | 1.62x slower | **5** (direct) | **5.20x faster** |
+| particles 1M × 100 | 67 | 73 | 148 | **84** (2-step fusion) | 1.25x slower | **5** (closed) | **13.4x faster** |
+| n-body 10M | 315 | 310 | **227** | **613** (loop) | 2.70x slower | 613 (native) | 2.70x slower |
+| binary trees | 720 | — | 1329 | 4036 | 5.61x slower | **507** (native loop) | **1.42x faster** |
+| matmul 384 | 12 | 12 | 43 | **11** | 1.09x faster | 9 (i-k-j) | **1.33x faster** |
+
+N-body has a C-backend AVX2 build at 198 ms, which is 1.15x faster than Rust's 227 ms, but it uses
+the C backend; the 613 ms entry is the native-IR best. C values move a few percent between runs.
 
 What this says:
 

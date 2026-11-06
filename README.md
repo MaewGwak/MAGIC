@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v1.0 (1.0.0)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v1.0 (1.0.1)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -159,18 +159,23 @@ rejected. Integer overflow is not trapped.
 
 Current Linux evidence (Ryzen AI 7 350, gcc 16.2, rustc 1.99; medians of 3–5 runs, portable flags,
 all checksums compared). These are the **default IR** numbers; "MAGIC best" is the fastest variant
-shipped for that workload and is always named.
+shipped for that workload and is always named. **Verdict = fastest C/C++/Rust baseline ÷ MAGIC best**
+for "x faster", and **MAGIC best ÷ fastest baseline** for "x slower"; the bold baseline is the
+fastest of the three. Default-IR vs that baseline: sieve 1.07x faster, fannkuch 1.69x slower,
+ray 2.08x slower, hash 1.62x slower, particles 1.25x slower, n-body 2.70x slower, binary trees
+5.61x slower, matmul 1.09x faster. N-body's C-backend AVX2 build (198 ms) is 1.15x faster than
+Rust's 227 ms; the 613 ms figure is native IR.
 
 | Workload | C | C++ | Rust | MAGIC default | MAGIC best | Verdict |
 |---|---:|---:|---:|---:|---|---|
-| sieve 100M | 432 | 423 | 431 | **397** | 37 (block-odd) | **win** |
-| fannkuch n=10 | 168 | 167 | 157 | 266 | **75** (`par for`) | **win** |
-| ray tracer 1536² | 39 | 41 | 39 | 81 | **18** (`par for`) | **win** |
-| hash 1M | 26 | 30 | 26 | 42 | **5** (direct) | **win** |
-| particles 1M × 100 | 67 | 73 | 148 | **84** (2-step fusion) | **5** (closed) | **win** |
-| n-body 10M | 315 | 310 | **227** | **613** (loop) | 613 (native) | 2.70x |
-| binary trees | 720 | — | 1329 | 4036 | **507** (native loop) | **win** |
-| matmul 384 | 12 | 12 | 43 | **11** | 9 (i-k-j) | **win** |
+| sieve 100M | 432 | 423 | 431 | **397** | 37 (block-odd) | **11.4x faster** |
+| fannkuch n=10 | 168 | 167 | 157 | 266 | **75** (`par for`) | **2.09x faster** |
+| ray tracer 1536² | 39 | 41 | 39 | 81 | **18** (`par for`) | **2.17x faster** |
+| hash 1M | 26 | 30 | 26 | 42 | **5** (direct) | **5.20x faster** |
+| particles 1M × 100 | 67 | 73 | 148 | **84** (2-step fusion) | **5** (closed) | **13.4x faster** |
+| n-body 10M | 315 | 310 | **227** | **613** (loop) | 613 (native) | 2.70x slower |
+| binary trees | 720 | — | 1329 | 4036 | **507** (native loop) | **1.42x faster** |
+| matmul 384 | 12 | 12 | 43 | **11** | 9 (i-k-j) | **1.33x faster** |
 
 Static builds peak below **C, C++ and Rust on all eight workloads**: sieve 11.9 MB vs C 96.9 / C++ 99.2 / Rust 97.1 (8.1x), fannkuch 0.4 vs 1.7/4.1/2.2, matmul 1.6 vs 3.4/5.6/3.7, hash 31.9 vs 33.6/35.6/33.8, binary trees 15.9 vs 17.6/—/17.9, n-body 0.4 vs 1.6/4.2/2.1, particles 30.4 vs 32.1/34.3/32.3 and raytrace 0.4 vs 1.6/4.2/2.1. Dynamic builds are at parity because both sides use plain arrays; the win comes from the freestanding static layout.
 Cold compilation of the 2,000-function source is 25 ms versus 47 ms for gcc, 109 ms for rustc and
