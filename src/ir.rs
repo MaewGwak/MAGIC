@@ -1809,6 +1809,242 @@ impl Builder {
         Ok(())
     }
 
+    fn try_lower_matmul(&mut self, cond: &Expr, body: &[Stmt], line: usize) -> Result<bool, String> {
+        let (i, end_i) = match &cond.kind {
+            ExprKind::Bin { op: BinOp::Lt, l, r } => match &l.kind {
+                ExprKind::Var(i) => (i.clone(), r),
+                _ => return Ok(false),
+            },
+            _ => return Ok(false),
+        };
+        if body.len() != 3 {
+            return Ok(false);
+        }
+        let StmtKind::Let { name: j, mutable: _, init: jinit, .. } = &body[0].kind else { return Ok(false) };
+        if !matches!(jinit.kind, ExprKind::Int(0)) {
+            return Ok(false);
+        }
+        let StmtKind::While { cond: jcond, body: jbody } = &body[1].kind else { return Ok(false) };
+        let (j2, end_j) = match &jcond.kind {
+            ExprKind::Bin { op: BinOp::Lt, l, r } => match &l.kind {
+                ExprKind::Var(j2) if j2 == j => (j2.clone(), r),
+                _ => return Ok(false),
+            },
+            _ => return Ok(false),
+        };
+        if jbody.len() != 5 {
+            return Ok(false);
+        }
+        let StmtKind::Let { name: sname, init: sinit, mutable: _, .. } = &jbody[0].kind else { return Ok(false) };
+        if !matches!(sinit.kind, ExprKind::Int(0)) {
+            return Ok(false);
+        }
+        let StmtKind::Let { name: k, init: kinit, mutable: _, .. } = &jbody[1].kind else { return Ok(false) };
+        if !matches!(kinit.kind, ExprKind::Int(0)) {
+            return Ok(false);
+        }
+        let StmtKind::While { cond: kcond, body: kbody } = &jbody[2].kind else { return Ok(false) };
+        let (k2, end_k) = match &kcond.kind {
+            ExprKind::Bin { op: BinOp::Lt, l, r } => match &l.kind {
+                ExprKind::Var(k2) if k2 == k => (k2.clone(), r),
+                _ => return Ok(false),
+            },
+            _ => return Ok(false),
+        };
+        let _ = k2;
+        if kbody.len() != 2 {
+            return Ok(false);
+        }
+        let (aidx, bidx) = match &kbody[0].kind {
+            StmtKind::Assign { name: s, value } if s == sname => match &value.kind {
+                ExprKind::Bin { op: BinOp::Add, l, r } => {
+                    let is_s = matches!(&l.kind, ExprKind::Var(n) if n == sname);
+                    if !is_s {
+                        return Ok(false);
+                    }
+                    match &r.kind {
+                        ExprKind::Bin { op: BinOp::Mul, l: a, r: b } => match (&a.kind, &b.kind) {
+                            (ExprKind::Index { name: an, index: ai }, ExprKind::Index { name: bn, index: bi }) => {
+                                (ai.clone(), bi.clone())
+                            }
+                            _ => return Ok(false),
+                        },
+                        _ => return Ok(false),
+                    }
+                }
+                _ => return Ok(false),
+            },
+            _ => return Ok(false),
+        };
+        let StmtKind::IndexAssign { name: cname, index: cidx, value: cval } = &jbody[3].kind else { return Ok(false) };
+        if !matches!(&cval.kind, ExprKind::Var(n) if n == sname) {
+            return Ok(false);
+        }
+        // A/B names from the mul indexes (recover by matching again)
+        let (aname, aidx2) = match &kbody[0].kind {
+            StmtKind::Assign { value, .. } => match &value.kind {
+                ExprKind::Bin { r, .. } => match &r.kind {
+                    ExprKind::Bin { op: BinOp::Mul, l, .. } => match &l.kind {
+                        ExprKind::Index { name, index } => (name.clone(), index.clone()),
+                        _ => return Ok(false),
+                    },
+                    _ => return Ok(false),
+                },
+                _ => return Ok(false),
+            },
+            _ => return Ok(false),
+        };
+        let (bname, bidx2) = match &kbody[0].kind {
+            StmtKind::Assign { value, .. } => match &value.kind {
+                ExprKind::Bin { r, .. } => match &r.kind {
+                    ExprKind::Bin { op: BinOp::Mul, r, .. } => match &r.kind {
+                        ExprKind::Index { name, index } => (name.clone(), index.clone()),
+                        _ => return Ok(false),
+                    },
+                    _ => return Ok(false),
+                },
+                _ => return Ok(false),
+            },
+            _ => return Ok(false),
+        };
+        let _ = (&aidx, &bidx, &bidx2);
+        let (aname, ai, bidx, bname) = (aname, aidx2, {
+            match &kbody[0].kind {
+                StmtKind::Assign { value, .. } => match &value.kind {
+                    ExprKind::Bin { r, .. } => match &r.kind {
+                        ExprKind::Bin { op: BinOp::Mul, r, .. } => match &r.kind {
+                            ExprKind::Index { index, .. } => index.clone(),
+                            _ => return Ok(false),
+                        },
+                        _ => return Ok(false),
+                    },
+                    _ => return Ok(false),
+                },
+                _ => return Ok(false),
+            }
+        }, bname);
+        if cname == &aname || cname == &bname || aname == bname {
+            return Ok(false);
+        }
+        if !self.local_arrays.contains(cname) || !self.local_arrays.contains(&aname) || !self.local_arrays.contains(&bname) {
+            return Ok(false);
+        }
+        if !expr_same(end_i, end_j) || !expr_same(end_i, end_k) {
+            return Ok(false);
+        }
+        let Some(climit) = self.const_eval(end_i) else { return Ok(false) };
+        if climit < 0 || climit > i32::MAX as i64 {
+            return Ok(false);
+        }
+        let Some((celem, _)) = self.arrays.get(cname).copied() else { return Ok(false) };
+        let Some((aelem, _)) = self.arrays.get(&aname).copied() else { return Ok(false) };
+        let Some((belem, _)) = self.arrays.get(&bname).copied() else { return Ok(false) };
+        if celem != Ty::I32 || aelem != Ty::I32 || belem != Ty::I32 {
+            return Ok(false);
+        }
+        let Some(iv) = self.vars.get(&i).copied() else { return Ok(false) };
+        if self.var_init_const.get(&iv).copied() != Some(0) {
+            return Ok(false);
+        }
+        let (ca, _) = match split_affine_j(&ai, k) { Some(v) => v, None => return Ok(false) };
+        let (cb, _) = match split_affine_j(&bidx, j) { Some(v) => v, None => return Ok(false) };
+        let (cc, _) = match split_affine_j(cidx, j) { Some(v) => v, None => return Ok(false) };
+        if ca != 1 || cb != 1 || cc != 1 {
+            return Ok(false);
+        }
+        if expr_mentions(&ai, j) || expr_mentions(&bidx, &i) || expr_mentions(cidx, k) {
+            return Ok(false);
+        }
+        let (_, resta) = split_affine_j(&ai, k).unwrap();
+        let (_, restc) = split_affine_j(cidx, j).unwrap();
+        if !expr_same(&resta, &restc) {
+            return Ok(false);
+        }
+        // Build: zero c, then i/k loops with a saxpy for each k.
+        let mk = |kind: ExprKind| Expr { kind, line };
+        let var = |n: &str| mk(ExprKind::Var(n.to_string()));
+        let int = |v: i64| mk(ExprKind::Int(v));
+        let assign = |name: &str, value: Expr| Stmt { kind: StmtKind::Assign { name: name.to_string(), value }, line };
+        let zname = format!("#mmz{}", line);
+        let avname = format!("#mmav{}", line);
+        let nn = mk(ExprKind::Bin { op: BinOp::Mul, l: Box::new(end_i.as_ref().clone()), r: Box::new(end_i.as_ref().clone()) });
+        let zero_body = vec![
+            Stmt { kind: StmtKind::IndexAssign { name: cname.clone(), index: var(zname.as_str()), value: int(0) }, line },
+            assign(&zname, mk(ExprKind::Bin { op: BinOp::Add, l: Box::new(var(zname.as_str())), r: Box::new(int(1)) })),
+        ];
+        let zero_loop = vec![
+            Stmt { kind: StmtKind::Let { name: zname.clone(), ty: None, mutable: true, init: int(0) }, line },
+            Stmt { kind: StmtKind::While { cond: mk(ExprKind::Bin { op: BinOp::Lt, l: Box::new(var(zname.as_str())), r: Box::new(nn) }), body: zero_body }, line },
+        ];
+        let saxpy_stmt = Stmt {
+            kind: StmtKind::IndexAssign {
+                name: cname.clone(),
+                index: cidx.clone(),
+                value: mk(ExprKind::Bin {
+                    op: BinOp::Add,
+                    l: Box::new(mk(ExprKind::Index { name: cname.clone(), index: Box::new((*cidx).clone()) })),
+                    r: Box::new(mk(ExprKind::Bin {
+                        op: BinOp::Mul,
+                        l: Box::new(var(&avname)),
+                        r: Box::new(mk(ExprKind::Index { name: bname.clone(), index: Box::new(bidx.as_ref().clone()) })),
+                    })),
+                }),
+            },
+            line,
+        };
+        let jloop = vec![
+            Stmt { kind: StmtKind::Let { name: j.clone(), ty: None, mutable: true, init: int(0) }, line },
+            Stmt {
+                kind: StmtKind::While {
+                    cond: mk(ExprKind::Bin { op: BinOp::Lt, l: Box::new(var(j.as_str())), r: Box::new(end_i.as_ref().clone()) }),
+                    body: vec![
+                        saxpy_stmt,
+                        assign(j, mk(ExprKind::Bin { op: BinOp::Add, l: Box::new(var(j.as_str())), r: Box::new(int(1)) })),
+                    ],
+                },
+                line,
+            },
+        ];
+        let mut kbody = vec![Stmt {
+            kind: StmtKind::Let {
+                name: avname.clone(),
+                ty: None,
+                mutable: false,
+                init: mk(ExprKind::Index { name: aname, index: Box::new(ai.as_ref().clone()) }),
+            },
+            line,
+        }];
+        kbody.extend(jloop);
+        kbody.push(assign(k, mk(ExprKind::Bin { op: BinOp::Add, l: Box::new(var(k.as_str())), r: Box::new(int(1)) })));
+        let kloop = vec![
+            Stmt { kind: StmtKind::Let { name: k.clone(), ty: None, mutable: true, init: int(0) }, line },
+            Stmt {
+                kind: StmtKind::While {
+                    cond: mk(ExprKind::Bin { op: BinOp::Lt, l: Box::new(var(k.as_str())), r: Box::new(end_i.as_ref().clone()) }),
+                    body: kbody,
+                },
+                line,
+            },
+        ];
+        let mut ibody = kloop;
+        ibody.push(assign(&i, mk(ExprKind::Bin { op: BinOp::Add, l: Box::new(var(i.as_str())), r: Box::new(int(1)) })));
+        let mut stmts = zero_loop;
+        stmts.push(Stmt {
+            kind: StmtKind::While {
+                cond: mk(ExprKind::Bin { op: BinOp::Lt, l: Box::new(var(i.as_str())), r: Box::new(end_i.as_ref().clone()) }),
+                body: ibody,
+            },
+            line,
+        });
+        for st in &stmts {
+            self.lower_stmt(st)?;
+        }
+        if let Some(b) = self.scopes.pop() {
+            self.restore_binds(b);
+        }
+        Ok(true)
+    }
+
     fn try_lower_saxpy(&mut self, cond: &Expr, body: &[Stmt], _line: usize) -> Result<bool, String> {
         if body.len() != 2 {
             return Ok(false);
@@ -2381,6 +2617,9 @@ impl Builder {
                 self.cur = end_bb;
             }
             StmtKind::While { cond, body } => {
+                if self.try_lower_matmul(cond, body, s.line)? {
+                    return Ok(());
+                }
                 if self.try_lower_saxpy(cond, body, s.line)? {
                     return Ok(());
                 }

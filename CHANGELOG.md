@@ -30,6 +30,17 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.9.0 — matmul interchange reaches the saxpy path (2026-11-06)
+
+The lowerer recognises the canonical i-j-k square matrix multiply (three `while` loops over the same
+constant bound, zero `i`, a scalar dot accumulation and `c[i,j] = s`) and rewrites it in place:
+zero `c[0..n*n)`, then `i`/`k` loops whose inner statement is the original
+`c[i,j] += a[i,k]*b[k,j]`, which the guarded saxpy recogniser turns into a 4-wide/eight-wide SSE2
+loop. Integer addition order per output element is unchanged. Default matmul drops 74 → **9 ms**
+against C's 12 ms; the i-k-j source stays ~10 ms. The transform requires local distinct i32 arrays,
+pure indexes, the same loop bound and a known-zero `i`, and restores its binding snapshot before
+returning. All gates pass, 168 tests, parity 60/60.
+
 ## v0.8.100 — refresh saxpy numbers (2026-11-06)
 
 Matmul i-k-j with the eight-wide saxpy measures 9–11 ms across runs (C 12 ms); the docs now quote
