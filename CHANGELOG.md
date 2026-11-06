@@ -30,6 +30,15 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.83 — one fused SIMD step (2026-11-06)
+
+The pair add and pair multiply for `x += vx; y += vy; vx *= k; vy *= k` are now one `Aos2Step`
+instruction: the velocity pair is loaded once, both `addpd`/`mulpd` complete before either store, and
+the multiplier is broadcast in place. This removes one 16-byte load and improves memory-level
+parallelism. The small differential program and the particles checksum are unchanged; particles
+measures 140 ms (C 70 ms) and par 134 ms, so the loop is now bandwidth-bound rather than
+instruction-bound. All gates pass, 168 tests, repo parity 60/60.
+
 ## v0.8.82 — SSE2 pair operations for struct-array updates (2026-11-06)
 
 A new pass recognises `x += vx; y += vy; vx *= k; vy *= k` on an array of structs and replaces the

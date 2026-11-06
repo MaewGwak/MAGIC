@@ -68,7 +68,7 @@ pub enum Instr {
     FuncAddr { dst: Value, name: String },
     IndexStoreBoolAtomic { ptr_var: usize, idx: Value, src: Value },
     FastDivPow2 { dst: Value, a: Value, k: u32, d: i64, rem: bool },
-    Aos2 { dst: Value, tmp: Option<Value>, ptr_var: usize, idx: Value, size: u64, off: u64, src_off: u64, add: bool, k: Option<Value> },
+    Aos2Step { dst: Value, tmp: Value, ptr_var: usize, idx: Value, size: u64, off: u64, k: Value },
     StoreVec { src_ptr_var: usize, ptr_var: usize, len_var: usize, cap_var: usize },
     LoadPtr { dst_var: usize, src_var: usize },
     StorePtr { dst_ptr_var: usize, src_var: usize },
@@ -3120,11 +3120,11 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
             uses.push(*a);
             defs.push(*dst);
         }
-        Instr::Aos2 { dst, tmp, idx, ptr_var: _, size: _, off: _, src_off: _, add: _, k } => {
+        Instr::Aos2Step { dst, tmp, idx, k, .. } => {
             uses.push(*idx);
-            if let Some(k) = k { uses.push(*k); }
+            uses.push(*k);
             defs.push(*dst);
-            if let Some(t) = tmp { defs.push(*t); }
+            defs.push(*tmp);
         }
         Instr::Select { dst, cond, a, b, .. } => {
             uses.push(*cond);
@@ -3718,7 +3718,7 @@ fn emit_fast_block(
                 ra.free_dead(ii);
                 continue;
             }
-            Instr::Aos2 { dst, tmp, ptr_var, idx, size, off, src_off, add, k } => {
+            Instr::Aos2Step { dst, tmp, ptr_var, idx, size, off, k } => {
                 let i = ra.operand(*idx);
                 let (base, temp_ptr) = match var_regs.get(ptr_var).copied() {
                     Some(reg) => (reg.to_string(), None),
@@ -3730,21 +3730,20 @@ fn emit_fast_block(
                 };
                 let t = ra.scaled_index(*idx, *size, i);
                 let xd = ra.xdst(*dst);
+                let xv = ra.xdst_excluding(*tmp, &[xd]);
                 ra.out.push_str(&format!("    movupd {}({},{}), {}\n", off, base, POOL[t].0, XMM[xd]));
-                if *add {
-                    ra.out.push_str(&format!("    addpd {}({},{}), {}\n", src_off, base, POOL[t].0, XMM[xd]));
-                } else {
-                    let kx = ra.xoperand(k.unwrap());
-                    let xt = ra.xdst(tmp.unwrap());
-                    ra.out.push_str(&format!("    movapd {}, {}\n", XMM[kx], XMM[xt]));
-                    ra.out.push_str(&format!("    unpcklpd {}, {}\n", XMM[xt], XMM[xt]));
-                    ra.out.push_str(&format!("    mulpd {}, {}\n", XMM[xt], XMM[xd]));
-                }
+                ra.out.push_str(&format!("    movupd {}({},{}), {}\n", off + 16, base, POOL[t].0, XMM[xv]));
+                ra.out.push_str(&format!("    addpd {}, {}\n", XMM[xv], XMM[xd]));
+                let kx = ra.xoperand(*k);
+                ra.out.push_str(&format!("    unpcklpd {}, {}\n", XMM[kx], XMM[kx]));
+                ra.out.push_str(&format!("    mulpd {}, {}\n", XMM[kx], XMM[xv]));
                 ra.out.push_str(&format!("    movupd {}, {}({},{})\n", XMM[xd], off, base, POOL[t].0));
+                ra.out.push_str(&format!("    movupd {}, {}({},{})\n", XMM[xv], off + 16, base, POOL[t].0));
                 if let Some(p) = temp_ptr {
                     ra.free.push(p);
                 }
                 ra.xdef_store(*dst, xd);
+                ra.xdef_store(*tmp, xv);
                 ra.free_dead(ii);
                 continue;
             }
@@ -4660,11 +4659,11 @@ fn rewrite_operands(ins: &mut Instr, f: &dyn Fn(Value) -> Value) {
             rw(dst);
             rw(a);
         }
-        Instr::Aos2 { dst, tmp, idx, k, .. } => {
+        Instr::Aos2Step { dst, tmp, idx, k, .. } => {
             rw(dst);
-            if let Some(t) = tmp { rw(t); }
+            rw(tmp);
             rw(idx);
-            if let Some(k) = k { rw(k); }
+            rw(k);
         }
         Instr::Select { cond, a, b, .. } => {
             rw(cond);
@@ -5351,14 +5350,13 @@ fn vectorize_aos_pairs(prog: &mut IrProgram) {
             let mut i = 0usize;
             while i < old.len() {
                 let trial = try_aos_window(&old, i, &uses);
-                if let Some((len, first, second)) = trial {
+                if let Some((len, fused)) = trial {
                     // The window includes the scalar constant that the pair
                     // multiply broadcasts; keep its definition.
                     if let Some(c @ Instr::Const { .. }) = old.get(i + 9) {
                         out.push(c.clone());
                     }
-                    out.push(first);
-                    out.push(second);
+                    out.push(fused);
                     i += len;
                 } else {
                     out.push(old[i].clone());
@@ -5374,7 +5372,7 @@ fn try_aos_window(
     ins: &[Instr],
     at: usize,
     uses: &HashMap<Value, usize>,
-) -> Option<(usize, Instr, Instr)> {
+) -> Option<(usize, Instr)> {
     if at + 15 > ins.len() {
         return None;
     }
@@ -5471,30 +5469,18 @@ fn try_aos_window(
             return None;
         }
     }
-    let first = Instr::Aos2 {
+    let fused = Instr::Aos2Step {
         dst: r0,
-        tmp: None,
+        tmp: r1,
         ptr_var: p0,
         idx: idx0,
         size: size0,
         off: off0,
-        src_off: off0 + 16,
-        add: true,
-        k: None,
+        k: fk,
     };
-    let second = Instr::Aos2 {
-        dst: r2,
-        tmp: Some(r3),
-        ptr_var: p0,
-        idx: idx0,
-        size: size0,
-        off: off0 + 16,
-        src_off: off0 + 16,
-        add: false,
-        k: Some(fk),
-    };
-    let _ = k;
-    Some((15, first, second))
+    let _ = (r2, r3);
+    Some((15, fused))
+
 }
 
 fn resolve_constant_lengths(prog: &mut IrProgram) {
@@ -6047,7 +6033,7 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str("    lock or %rsi, (%r10,%r11,8)\n    jmp 3f\n");
                         out.push_str("2:\n    not %rsi\n    lock and %rsi, (%r10,%r11,8)\n3:\n");
                     }
-                    Instr::Aos2 { ptr_var, idx, size, off, src_off, add, k, .. } => {
+                    Instr::Aos2Step { ptr_var, idx, size, off, k, .. } => {
                         out.push_str(&ld(*idx));
                         out.push_str("    mov %rax, %r11\n");
                         if let Some(reg) = var_regs.get(ptr_var) {
@@ -6057,14 +6043,13 @@ pub fn emit(prog: &IrProgram) -> String {
                         }
                         out.push_str(&scale_insn(*size, "%r11"));
                         out.push_str(&format!("    movupd {}(%r10,%r11), %xmm0\n", off));
-                        if *add {
-                            out.push_str(&format!("    addpd {}(%r10,%r11), %xmm0\n", src_off));
-                        } else {
-                            out.push_str(&format!("    movsd -{}(%rbp), %xmm1\n", voff(f, k.unwrap())));
-                            out.push_str("    unpcklpd %xmm1, %xmm1\n");
-                            out.push_str("    mulpd %xmm1, %xmm0\n");
-                        }
+                        out.push_str(&format!("    movupd {}(%r10,%r11), %xmm1\n", off + 16));
+                        out.push_str("    addpd %xmm1, %xmm0\n");
                         out.push_str(&format!("    movupd %xmm0, {}(%r10,%r11)\n", off));
+                        out.push_str(&format!("    movsd -{}(%rbp), %xmm2\n", voff(f, *k)));
+                        out.push_str("    unpcklpd %xmm2, %xmm2\n");
+                        out.push_str("    mulpd %xmm2, %xmm1\n");
+                        out.push_str(&format!("    movupd %xmm1, {}(%r10,%r11)\n", off + 16));
                     }
                     Instr::Select { dst, cond, a, b, float } => {
                         if *float {
