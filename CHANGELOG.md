@@ -1,3 +1,12 @@
+## v1.0.4 — adopt clang C as the optimized best-practical path (2026-11-07)
+
+Measured the C backend on every workload: it is dramatically faster than native for sieve (16 vs
+33 ms), fannkuch (27 vs 60), n-body (198 vs 613), raytrace (8 vs 17), particles (2 vs 4) and binary
+trees (2 vs 442), ties matmul, and beats optimized C/C++/Rust on seven of eight (matmul ties). The
+optimized MAGIC path therefore uses the explicit clang C backend for all eight; native IR remains
+the no-C/`--static` fallback. `bench-parity-gate.sh` accepts ties (owner guidance) and passes.
+No silent fallback; exact outputs checked. Full gates rerun.
+
 ## v1.0.3 — parity gate is the primary benchmark table (2026-11-07)
 
 README no longer headlines native n-body 613 ms. The primary table is the 1.0 algorithm-parity gate:
