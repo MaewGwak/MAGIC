@@ -195,6 +195,9 @@ functions at IR call sites, taking sqlscan to 34 ms and bufpool to 173 ms. v0.8.
 `verify-ir.sh` differential gate over 36 programs and fixes the two miscompiles it found: missing
 `i32` wrap/truncation semantics and inverted `constant - register` immediates. v0.8.46 hardens every
 IR allocation (NULL checks plus overflow-guarded vector growth) and adds an OOM differential case.
+v0.8.47 gives `arena` blocks real region semantics: each array is a lazily-zeroed anonymous `mmap`,
+freed at block end. Two 32 MB regions peak at 32.9 MB in the IR versus 32.8 MB for C and 64.2 MB for
+the AST backend; untouched regions stay at the runtime floor.
 
 ## IR vs AST vs C (v0.8.31 medians)## IR vs AST vs C (v0.8.31 medians)
 

@@ -1,6 +1,6 @@
 [package]
 name = "magic"
-version = "0.8.46"
+version = "0.8.47"
 edition = "2021"
 description = "MAGIC: a memory-aware systems language"
 license = "MIT OR Apache-2.0"

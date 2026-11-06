@@ -30,6 +30,18 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.47 — real arena regions in the IR (2026-11-06)
+
+`arena { ... }` blocks now use a region allocator: each array inside the block is an anonymous
+`mmap` (lazily zeroed pages), registered in a per-process table, and the region is `munmap`ed when
+the block ends (with a 4096-allocation guard). Sequential arena regions therefore never accumulate
+and untouched pages never become resident. Measured on two 32 MB regions: IR 32.9 MB peak versus C's
+32.8 MB (parity) and the AST native backend's 64.2 MB (2x better than AST); a region whose pages are
+never touched stays at the 1.6 MB runtime floor. An earlier bump-allocator version was rejected
+because `realloc` + explicit zeroing made glibc raise its mmap threshold and touch every page
+(33 MB peak), while `mmap` keeps the lazy-zero advantage. Arena examples still match the C backend
+through the full differential gate.
+
 ## v0.8.46 — allocation hardening in the IR runtime (2026-11-06)
 
 Every IR heap allocation now checks for failure and for size overflow: `calloc` and `malloc`

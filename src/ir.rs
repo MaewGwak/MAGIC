@@ -53,7 +53,9 @@ pub enum Instr {
     Br { cond: Value, then_bb: usize, else_bb: usize },
     Jmp(usize),
     Assert { cond: Value, line: usize },
-    Alloc { ptr_var: usize, elem: Ty, esz: u64, len: Value },
+    Alloc { ptr_var: usize, elem: Ty, esz: u64, len: Value, arena: bool },
+    ArenaBegin { dst: Value },
+    ArenaEnd { mark: Value },
     Fill { ptr_var: usize, elem: Ty, esz: u64, len: Value, value: Value },
     StructInit { var_index: usize, slots: usize, fields: Vec<(u64, Ty, Value)> },
     FieldLoad { dst: Value, var_index: usize, slots: usize, off: u64, ty: Ty },
@@ -176,6 +178,7 @@ struct Builder {
     argv_var: Option<usize>,
     inlinable: HashMap<String, (Vec<String>, Expr)>,
     subst_stack: Vec<HashMap<String, Value>>,
+    arena_depth: usize,
     ret: Ty,
 }
 
@@ -202,6 +205,7 @@ impl Builder {
             argv_var: None,
             inlinable: HashMap::new(),
             subst_stack: Vec::new(),
+            arena_depth: 0,
             ret,
         }
     }
@@ -848,9 +852,14 @@ impl Builder {
                 return Ok(());
             }
             StmtKind::Arena { body } => {
+                let mark = self.value();
+                self.push(Instr::ArenaBegin { dst: mark });
+                self.arena_depth += 1;
                 for st in body {
                     self.lower_stmt(st)?;
                 }
+                self.arena_depth -= 1;
+                self.push(Instr::ArenaEnd { mark });
                 return Ok(());
             }
             StmtKind::Assert { cond } => {
@@ -911,6 +920,7 @@ impl Builder {
                     elem: *elem,
                     esz,
                     len: lenv,
+                    arena: self.arena_depth > 0,
                 });
                 let len_var = self.nvars;
                 self.nvars += 1;
@@ -1492,6 +1502,7 @@ fn def_kind(ins: &Instr) -> Option<(Value, DefKind)> {
         }
         Instr::VecLen { dst, .. } => Some((*dst, DefKind::Other)),
         Instr::Argv { dst, .. } | Instr::InputRead { dst, .. } => Some((*dst, DefKind::Other)),
+        Instr::ArenaBegin { dst } => Some((*dst, DefKind::Other)),
         Instr::FieldLoad { dst, .. } | Instr::IndexFieldLoad { dst, .. } => {
             Some((*dst, DefKind::Other))
         }
@@ -1904,6 +1915,8 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
         Instr::Jmp(_) => {}
         Instr::Assert { cond, .. } => uses.push(*cond),
         Instr::Alloc { len, .. } => uses.push(*len),
+        Instr::ArenaBegin { dst } => defs.push(*dst),
+        Instr::ArenaEnd { mark } => uses.push(*mark),
         Instr::Str { dst, .. } => defs.push(*dst),
         Instr::FBin { dst, l, r, .. } | Instr::FCmp { dst, l, r, .. } => {
             uses.push(*l);
@@ -1998,6 +2011,8 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::InputRead { .. }
                 | Instr::PrintBytes { .. }
                 | Instr::Assert { .. }
+                | Instr::ArenaBegin { .. }
+                | Instr::ArenaEnd { .. }
                 | Instr::Bin { op: Op::Div | Op::Rem, .. }
         )
     })
@@ -2966,7 +2981,9 @@ fn emit_fast_block(
             | Instr::Argv { .. }
             | Instr::InputRead { .. }
             | Instr::PrintBytes { .. }
-            | Instr::Assert { .. } => {
+            | Instr::Assert { .. }
+            | Instr::ArenaBegin { .. }
+            | Instr::ArenaEnd { .. } => {
                 unreachable!("slow block")
             }
         }
@@ -3771,6 +3788,14 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&format!("    lea .Lamsg{}(%rip), %rdi\n", line));
                         out.push_str("    call .Lir_panic\n7:\n");
                     }
+                    Instr::ArenaBegin { dst } => {
+                        out.push_str("    sub $8, %rsp\n    call .Lmf_arena_begin\n    add $8, %rsp\n");
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::ArenaEnd { mark } => {
+                        out.push_str(&ld(*mark));
+                        out.push_str("    mov %rax, %rdi\n    call .Lmf_arena_end\n");
+                    }
                     Instr::Argv { dst, argv_var, idx } => {
                         out.push_str(&ld(*idx));
                         out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*argv_var)));
@@ -3995,17 +4020,21 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&format!("    jne {}\n    jmp {}\n", lblock(*then_bb), lblock(*else_bb)));
                     }
                     Instr::Jmp(bb) => out.push_str(&format!("    jmp {}\n", lblock(*bb))),
-                    Instr::Alloc { ptr_var, elem, esz, len } => {
+                    Instr::Alloc { ptr_var, elem, esz, len, arena } => {
                         out.push_str(&ld(*len));
                         if *elem == Ty::Bool {
                             out.push_str("    add $63, %rax\n    shr $6, %rax\n");
                         }
-                        out.push_str("    mov %rax, %rdi\n");
                         let esz = if *elem == Ty::Bool { 8 } else { *esz };
-                        out.push_str(&format!("    mov ${}, %esi\n", esz));
-                        out.push_str("    call calloc@PLT\n");
-                        out.push_str("    test %rax, %rax\n    jne 8f\n");
-                        out.push_str("    lea .Lom(%rip), %rdi\n    call .Lir_panic\n8:\n");
+                        out.push_str(&format!("    mov ${}, %rcx\n    cmp %rcx, %rax\n    ja 8f\n", i64::MAX / (esz as i64).max(1)));
+                        out.push_str(&format!("    imul ${}, %rax\n", esz));
+                        if *arena {
+                            out.push_str("    mov %rax, %rdi\n    call .Lmf_arena_alloc\n");
+                        } else {
+                            out.push_str("    mov %rax, %rdi\n    mov $1, %esi\n");
+                            out.push_str("    call calloc@PLT\n");
+                            out.push_str("    test %rax, %rax\n    jne 7f\n8:\n    lea .Lom(%rip), %rdi\n    call .Lir_panic\n7:\n");
+                        }
                         if let Some(reg) = var_regs.get(ptr_var) {
                             out.push_str(&format!("    mov %rax, {}\n", reg));
                         } else {
@@ -4196,6 +4225,26 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str("    mov %rbx, %rdi\n    call ftell@PLT\n    mov %rax, %r12\n");
     out.push_str("    mov %rbx, %rdi\n    mov %r13, %rsi\n    xor %edx, %edx\n    call fseek@PLT\n");
     out.push_str("    mov %r12, %rax\n    add $8, %rsp\n    pop %r13\n    pop %r12\n    pop %rbx\n    ret\n");
+    // Arena blocks: allocations are anonymous mmap regions (lazily zeroed
+    // pages) that are munmap'd when the block ends, so sequential regions
+    // never accumulate and untouched pages stay unreachable.
+    out.push_str(".section .bss\n.p2align 3\n.Larena_ptrs: .zero 65536\n.Larena_count: .zero 8\n.text\n");
+    out.push_str(".p2align 4\n.Lmf_arena_begin:\n    mov .Larena_count(%rip), %rax\n    ret\n");
+    out.push_str(".p2align 4\n.Lmf_arena_alloc:\n    push %rbx\n    push %r12\n");
+    out.push_str("    mov %rdi, %rbx\n    xor %edi, %edi\n    mov %rbx, %rsi\n");
+    out.push_str("    mov $3, %edx\n    mov $0x22, %ecx\n    mov $-1, %r8\n    xor %r9d, %r9d\n");
+    out.push_str("    call mmap@PLT\n    cmp $-1, %rax\n    je 9f\n");
+    out.push_str("    mov .Larena_count(%rip), %r12\n    cmp $4096, %r12\n    jae 8f\n");
+    out.push_str("    lea (%r12,%r12), %rcx\n    mov %rax, .Larena_ptrs(,%rcx,8)\n");
+    out.push_str("    mov %rbx, .Larena_ptrs+8(,%rcx,8)\n    inc %r12\n    mov %r12, .Larena_count(%rip)\n");
+    out.push_str("    pop %r12\n    pop %rbx\n    ret\n8:\n    mov %rax, %rdi\n    mov %rbx, %rsi\n    call munmap@PLT\n");
+    out.push_str("9:\n    lea .Lom(%rip), %rdi\n    call .Lir_panic\n");
+    out.push_str(".p2align 4\n.Lmf_arena_end:\n    push %rbx\n    push %r12\n    sub $8, %rsp\n    mov %rdi, %r12\n");
+    out.push_str("1:\n    mov .Larena_count(%rip), %rbx\n    cmp %r12, %rbx\n    jbe 2f\n");
+    out.push_str("    dec %rbx\n    mov %rbx, .Larena_count(%rip)\n    lea (%rbx,%rbx), %rcx\n");
+    out.push_str("    mov .Larena_ptrs(,%rcx,8), %rdi\n    mov .Larena_ptrs+8(,%rcx,8), %rsi\n");
+    out.push_str("    call munmap@PLT\n    jmp 1b\n");
+    out.push_str("2:\n    add $8, %rsp\n    pop %r12\n    pop %rbx\n    ret\n");
     // String literals.
     let mut strs: Vec<(usize, String)> = Vec::new();
     for f in &prog.funcs {
