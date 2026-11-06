@@ -21,7 +21,7 @@ fn run(src: &str, dir: &Path, name: &str, ir: bool, cc_cmd: &str) -> Option<(Str
         if !Command::new("as").arg("--64").arg("-o").arg(&op).arg(&sp).status().ok()?.success() {
             return None;
         }
-        if !Command::new(cc_cmd).arg(&op).arg("-o").arg(&exe).status().ok()?.success() {
+        if !Command::new(&cc_cmd).arg(&op).arg("-o").arg(&exe).status().ok()?.success() {
             return None;
         }
     } else {
@@ -946,10 +946,26 @@ fn division_by_zero_reports_line_and_trace() {
     let exe = dir.join("div");
     std::fs::write(&sp, asm).unwrap();
     assert!(Command::new("as").arg("--64").arg("-o").arg(&op).arg(&sp).status().unwrap().success());
-    assert!(Command::new(cc_cmd).arg(&op).arg("-o").arg(&exe).status().unwrap().success());
+    assert!(Command::new(&cc_cmd).arg(&op).arg("-o").arg(&exe).status().unwrap().success());
     let out = Command::new(&exe).output().unwrap();
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("line 3: division by zero"), "stderr: {err}");
     assert!(err.contains("main"), "stderr: {err}");
+
+    // With a source segment, the same panic must name the file and local line.
+    let asm2 = magic::compile_to_asm_ir_with_sources(
+        src,
+        &[(1, "demo.magic".to_string())],
+    )
+    .expect("compile mapped");
+    let sp2 = dir.join("div2.s");
+    let op2 = dir.join("div2.o");
+    let exe2 = dir.join("div2");
+    std::fs::write(&sp2, asm2).unwrap();
+    assert!(Command::new("as").arg("--64").arg("-o").arg(&op2).arg(&sp2).status().unwrap().success());
+    assert!(Command::new(&cc_cmd).arg(&op2).arg("-o").arg(&exe2).status().unwrap().success());
+    let out2 = Command::new(&exe2).output().unwrap();
+    let err2 = String::from_utf8_lossy(&out2.stderr);
+    assert!(err2.contains("demo.magic:3: division by zero"), "stderr: {err2}");
 }

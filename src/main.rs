@@ -123,6 +123,10 @@ fn run() -> Result<(), String> {
     for p in &args[2..] {
         load_source(Path::new(p), &mut visited, &mut source, &mut segments)?;
     }
+    let source_files: Vec<(usize, String)> = segments
+        .iter()
+        .map(|(start, path)| (*start, display_path(path)))
+        .collect();
 
     if report_bound {
         let rows =
@@ -138,7 +142,7 @@ fn run() -> Result<(), String> {
         "check" => {
             match backend.as_str() {
                 "ir" => {
-                    magic::compile_to_asm_ir(&source)
+                    magic::compile_to_asm_ir_with_sources(&source, &source_files)
                         .map_err(|e| map_diagnostic(e, &segments, src_path))?;
                 }
                 "native" => {
@@ -155,7 +159,7 @@ fn run() -> Result<(), String> {
         }
         "emit" => {
             if backend == "ir" {
-                let asm = magic::compile_to_asm_ir(&source)
+                let asm = magic::compile_to_asm_ir_with_sources(&source, &source_files)
                     .map_err(|e| map_diagnostic(e, &segments, src_path))?;
                 print!("{}", asm);
             } else if backend == "native" {
@@ -171,7 +175,7 @@ fn run() -> Result<(), String> {
         }
         "build" | "run" => {
             if static_link {
-                let asm = magic::compile_to_asm_ir(&source)
+                let asm = magic::compile_to_asm_ir_with_sources(&source, &source_files)
                     .map_err(|e| map_diagnostic(e, &segments, src_path))?;
                 if asm.lines().any(|l| l.contains("lea .Lfmt_g(")) {
                     return Err("--static does not support %g printing (use print_prec)".to_string());
@@ -197,6 +201,7 @@ fn run() -> Result<(), String> {
                     command == "run",
                     cc_override.as_deref(),
                     backend == "ir",
+                    &source_files,
                 )
                 .map_err(|e| map_diagnostic(e, &segments, src_path));
             }
@@ -591,6 +596,7 @@ fn build_native(
     run: bool,
     cc_override: Option<&str>,
     use_ir: bool,
+    source_files: &[(usize, String)],
 ) -> Result<(), String> {
     if !(cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) {
         return Err("the native backend currently targets Linux x86-64 only; use the C backend".to_string());
@@ -614,10 +620,15 @@ fn build_native(
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "out".to_string())
     };
+    let files_key: String = source_files
+        .iter()
+        .map(|(start, path)| format!("{}:{};", start, path))
+        .collect();
     let flags = format!(
-        "v2|{}|{:x}|{}|{}|{}|{}|{}",
+        "v2|{}|{:x}|{:x}|{}|{}|{}|{}|{}",
         env!("CARGO_PKG_VERSION"),
         fnv64(source.as_bytes()),
+        fnv64(files_key.as_bytes()),
         if use_ir { "ir" } else { "native" },
         env::var("AS").unwrap_or_default(),
         env::var("LD").unwrap_or_default(),
@@ -648,7 +659,7 @@ fn build_native(
         return Ok(());
     }
     let asm = if use_ir {
-        magic::compile_to_asm_ir(source)?
+        magic::compile_to_asm_ir_with_sources(source, source_files)?
     } else {
         magic::compile_to_asm(source)?
     };

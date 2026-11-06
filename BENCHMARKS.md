@@ -124,15 +124,16 @@ native build possible: after the parser/checker it emits GNU assembler directly 
 | Rust 2,000-function program | 4,538,288 B |
 | Goose 2,000-function program | 72,024 B |
 
-Process startup (50 runs, wall): MAGIC 0.93 ms vs gcc 0.94 ms — the number is dominated by process
-creation. MAGIC binaries are small and need no C compiler at build time, but they **link libc
-dynamically**; they are not fully static ELF yet.
+Process startup (50 runs, wall): MAGIC 0.93 ms vs gcc 0.94 ms — dominated by process creation.
+Default builds link libc dynamically; `--static` produces freestanding 5–13 KB ELFs with no
+interpreter and no libc (see the static section).
 
 ## Diagnostics and security evidence
 
-- Out-of-bounds index: `line N: index out of bounds` followed by a symbolized stack trace
-  (`inner`, `middle`, `main`, libc, `_start`); division by zero and assertion failures report
-  `file:line` too.
+- Runtime panics report `file:line: message` with the canonical source path, including when the
+  fault is inside an imported file (the loader's concatenated line is remapped through its
+  `(start_line, path)` segments). Out-of-bounds and division-by-zero panics are followed by a
+  symbolized stack trace (`inner`, `middle`, `main`, libc, `_start`).
 - 170 Rust tests; 60/60 `.magic` corpus compiles through both C and IR backends; `verify-ir.sh`
   runs the differential corpus; `tests/fuzz_diff.rs` mutation-fuzzes programs against the C
   backend; `verify-native.sh` builds the corpus with a PATH containing only `as` and `ld`.

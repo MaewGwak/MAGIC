@@ -107,7 +107,7 @@ fn main() {
 EOF
 if "$M" build "$OUT/div.magic" --static -o "$OUT/div" >/dev/null 2>&1; then
   "$OUT/div" >/dev/null 2>"$OUT/de"; rc=$?
-  if [ "$rc" -ne 0 ] && grep -q 'line 5: division by zero' "$OUT/de" && grep -q 'stack trace:' "$OUT/de"; then
+  if [ "$rc" -ne 0 ] && grep -q ':5: division by zero' "$OUT/de" && grep -q 'stack trace:' "$OUT/de"; then
     echo "division_zero: ok static"
   else
     echo "division_zero: FAIL rc=$rc"; FAIL=1

@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.12 — runtime panics name the imported file (2026-11-06)
+
+The CLI now passes the loader's `(start_line, canonical_path)` segments into the IR program, and the
+emitter bakes `path:local_line` into bounds and division panic strings instead of printing the
+concatenated loader offset. A fault at main-file line 5 after a three-line import now prints
+`/tmp/impt/main2.magic:5: index out of bounds` (previously `line 9`); single-file and static panics
+also carry the absolute path. The native build cache key includes the segment map. A regression test
+compiles with a synthetic `demo.magic` segment and requires `demo.magic:3: division by zero`. All
+gates pass, 170 tests, parity 60/60, static-memory and scaling green.
+
 ## v0.10.11 — memory vs C/C++/Rust and line-correct division panics (2026-11-06)
 
 `bench-static-memory.sh` now builds gcc, g++ and rustc baselines and requires static MAGIC to peak

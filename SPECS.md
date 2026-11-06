@@ -236,7 +236,7 @@ static int64_t magic_index(int64_t i, int64_t len, const char *msg);
 
 ## 7. Diagnostics
 
-Format: `file:line:col: message` for parse/type errors; `line N: message` at runtime (panic).
+Format: `file:line:col: message` for parse/type errors; `file:line: message` at runtime (panic), using the canonical source file even when the fault is inside an imported file.
 
 ## 8. Versioning
 

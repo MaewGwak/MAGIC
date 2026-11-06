@@ -123,6 +123,15 @@ pub struct IrFunc {
 
 pub struct IrProgram {
     pub funcs: Vec<IrFunc>,
+    pub source_files: Vec<(usize, String)>,
+}
+
+fn panic_text(line: usize, files: &[(usize, String)], what: &str) -> String {
+    if let Some((start, path)) = files.iter().rev().find(|(s, _)| *s <= line) {
+        format!("{}:{}: {}", path, line - start + 1, what)
+    } else {
+        format!("line {}: {}", line, what)
+    }
 }
 
 fn struct_layout(defs: &[StructDef], id: u16) -> (u64, Vec<u64>) {
@@ -2991,7 +3000,7 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
         extras.append(&mut ex);
     }
     funcs.append(&mut extras);
-    Ok(IrProgram { funcs })
+    Ok(IrProgram { funcs, source_files: Vec::new() })
 }
 
 fn lower_func(
@@ -4394,6 +4403,7 @@ fn emit_fast_block(
     uses_at: &HashMap<Value, Vec<usize>>,
     consts: &HashMap<Value, i64>,
     deferred: &HashMap<Value, (Op, Value, Value, usize)>,
+    source_files: &[(usize, String)],
 ) {
     let mut ra = RegAlloc {
         out,
@@ -4633,8 +4643,8 @@ fn emit_fast_block(
                 let a = ra.operand(*value);
                 ra.out.push_str(&format!("    test {}, {}\n    jne 1f\n", POOL[a].0, POOL[a].0));
                 ra.out.push_str(&format!(
-                    "    .pushsection .rodata\n    .p2align 2\n.Ldivmsg{}_{}: .asciz \"line {}: division by zero\"\n    .popsection\n",
-                    line, id.0, line
+                    "    .pushsection .rodata\n    .p2align 2\n.Ldivmsg{}_{}: .asciz \"{}\"\n    .popsection\n",
+                    line, id.0, panic_text(*line, source_files, "division by zero")
                 ));
                 ra.out.push_str(&format!("    lea .Ldivmsg{}_{}(%rip), %rdi\n    call .Lir_panic\n1:\n", line, id.0));
                 ra.free_dead(ii);
@@ -6945,8 +6955,9 @@ pub fn emit(prog: &IrProgram) -> String {
     }
     for line in &lines {
         out.push_str(&format!(
-            ".Lmsg{}: .asciz \"line {}: index out of bounds\"\n",
-            line, line
+            ".Lmsg{}: .asciz \"{}\"\n",
+            line,
+            panic_text(*line, &prog.source_files, "index out of bounds")
         ));
     }
     let mut assert_lines: Vec<usize> = Vec::new();
@@ -7240,6 +7251,7 @@ pub fn emit(prog: &IrProgram) -> String {
                     &uses_at,
                     &fn_vals,
                     &deferred,
+                    &prog.source_files,
                 );
                 continue;
             }
@@ -7250,8 +7262,8 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&ld(*value));
                         out.push_str("    test %rax, %rax\n    jne 1f\n");
                         out.push_str(&format!(
-                            "    .pushsection .rodata\n    .p2align 2\n.Ldivmsg{}_{}: .asciz \"line {}: division by zero\"\n    .popsection\n",
-                            line, id.0, line
+                            "    .pushsection .rodata\n    .p2align 2\n.Ldivmsg{}_{}: .asciz \"{}\"\n    .popsection\n",
+                            line, id.0, panic_text(*line, &prog.source_files, "division by zero")
                         ));
                         out.push_str(&format!("    lea .Ldivmsg{}_{}(%rip), %rdi\n    call .Lir_panic\n1:\n", line, id.0));
                     }

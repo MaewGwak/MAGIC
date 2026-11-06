@@ -61,12 +61,19 @@ pub fn compile_to_asm(src: &str) -> Result<String, String> {
 
 /// Compile to x86-64 assembly through the experimental typed IR.
 pub fn compile_to_asm_ir(src: &str) -> Result<String, String> {
+    compile_to_asm_ir_with_sources(src, &[])
+}
+
+/// Compile to IR assembly with `(concatenated_start_line, display_path)` segments
+/// so runtime panics can report `file:line` instead of a loader offset.
+pub fn compile_to_asm_ir_with_sources(src: &str, sources: &[(usize, String)]) -> Result<String, String> {
     let tokens = lexer::Lexer::new(src).tokenize()?;
     let mut program = parser::Parser::new(tokens).parse_program()?;
     types::Checker::check(&mut program)?;
     types::lower_calls(&mut program);
     codegen::retain_reachable(&mut program);
     let mut ir = ir::lower(&program)?;
+    ir.source_files = sources.to_vec();
     ir::optimize(&mut ir);
     Ok(ir::emit(&ir))
 }
