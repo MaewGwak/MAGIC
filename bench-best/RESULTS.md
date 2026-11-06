@@ -8,7 +8,8 @@ valid binaries sequentially. No number from a candidate README was reused.
 
 | Language | Candidate | Source directory | Binaries (this run) |
 |---|---|---|---|
-| C | A (only listed C candidate) | `bench-best/c/A/` — `sieve.c`, `fannkuch.c`, `raytrace.c`, `hash.c`, `particles.c`, `nbody.c`, `bintrees.c`, `matmul.c` | `bench-best/judge-build/c-A/` |
+| C | A | `bench-best/c/A/` — `sieve.c`, `fannkuch.c`, `raytrace.c`, `hash.c`, `particles.c`, `nbody.c`, `bintrees.c`, `matmul.c` | `bench-best/judge-build/c-A/` |
+| C | B | `bench-best/c/` — `sieve.c`, `fannkuch.c`, `raytrace.c`, `hash.c`, `particles.c`, `nbody.c`, `bt.c`, `matmul.c` (variant B lived outside `c/B/`) | built separately; `bench-best/judge-build/c-B-timings.json` |
 | C++ | A | `bench-best/cpp/A/` — `sieve.cpp`, `fannkuch.cpp`, `raytrace.cpp`, `hash.cpp`, `particles.cpp`, `nbody.cpp`, `binary_trees.cpp`, `matmul.cpp` | `bench-best/judge-build/cpp-A/` |
 | C++ | B | `bench-best/cpp/B/` — `{sieve,fannkuch,raytrace,hash,particles,nbody,bt,matmul}_best.cpp` | `bench-best/judge-build/cpp-B/` |
 | Rust | A | `bench-best/rust/A/` — `{sieve,fannkuch,raytrace,hash,particles,nbody,bintrees,matmul}.rs` | `bench-best/judge-build/rust-A/` |
@@ -16,9 +17,9 @@ valid binaries sequentially. No number from a candidate README was reused.
 | MAGIC | A | `bench-best/magic/A/` — `{sieve,fannkuch,raytrace,hash,particles,nbody,bt,matmul}.magic` | `bench-best/judge-build/magic-A-{ir,c}/` |
 | MAGIC | B | `bench-best/magic/B/` — same eight names | `bench-best/judge-build/magic-B-{ir,c}/` |
 
-There is no `bench-best/c/B/`. The parent directory `bench-best/c/` still contains a
-second C source set whose README calls itself “variant B”; it is not in the task's
-candidate list and was excluded. All C numbers below are `bench-best/c/A/`.
+There is no `bench-best/c/B/` directory. The second C agent wrote its variant B sources
+directly under `bench-best/c/` (outside the expected `c/B/` path); those sources are now
+included as candidate C-B and were measured with the same flags and 20-round protocol.
 
 MAGIC is reported twice and never conflated:
 
@@ -77,8 +78,9 @@ and tail `38`; raytrace `336141.941`; hash `1500001500000`; particles
 `326316140`. Integers were compared exactly; floats with **relative tolerance
 1e-9** against the nearest accepted reference.
 
-**Result: 72/72 binaries built, 72/72 produced valid output; 0 correctness
-failures.** Every integer output is exact and every fannkuch run prints
+**Result: 72/72 judge-listed binaries built, 72/72 produced valid output; 0 correctness
+failures.** The addendum C-B candidate passed 8/8 additional correctness checks (80/80
+including it).** Every integer output is exact and every fannkuch run prints
 `73196` / `38`.
 
 Floating-point deviations (all inside 1e-9 relative):
@@ -126,23 +128,33 @@ Medians of 20 timed runs, milliseconds, whole-process wall time (lower is
 better). Variant letters are in parentheses. “MAGIC best” in the text is the
 lower of the two MAGIC columns.
 
-| Workload | C (A) | C++ best | Rust best | MAGIC native IR best | MAGIC C backend best | Winning language |
+| Workload | C best (A/B) | C++ best | Rust best | MAGIC native IR best | MAGIC C backend best | Winning language |
 |---|---:|---:|---:|---:|---:|---|
-| sieve 100M | 7.32 | 3.22 (A) | 3.20 (B) | 3.20 (A) | 3.19 (A) | **tie: C++ / Rust / MAGIC** (fast mode ≈1.1 ms); C 7.32 is a real sieve |
-| fannkuch n=10 | 15.39 | 15.37 (A) | 9.01 (B) | 63.49 (B) | 17.15 (A) | **Rust** (clear); C/C++ tie for second; MAGIC C ≈12 % behind C/C++ |
+| sieve 100M | 5.52 | 3.22 (A) | 3.20 (B) | 3.20 (A) | 3.19 (A) | **tie: C++ / Rust / MAGIC** (fast mode ≈1.1 ms); C 7.32 is a real sieve |
+| fannkuch n=10 | 13.88 | 15.37 (A) | 9.01 (B) | 63.49 (B) | 17.15 (A) | **Rust** (clear); C/C++ tie for second; MAGIC C ≈12 % behind C/C++ |
 | raytrace 1536² | 3.23 | 3.23 (B) | 4.13 (B) | 7.30 (B) | 7.29 (B) | **tie: C / C++**; Rust 4.13; MAGIC 7.29 typical (best case 3.19) |
 | hash 1M | 1.12 | 1.12 (A) | 1.12 (B) | 1.12 (B) | 1.12 (B) | **tie: all** (start-up-bound; Rust A's real-hash variant is 3.18) |
 | particles 1M×100 | 1.13 | 3.18 (A) | 1.14 (A) | 1.16 (A) | 1.14 (A) | **tie: C / Rust / MAGIC A**; C++ ordered sum is a real 3.18 (2 ms slower); MAGIC B-IR 7.22 |
 | n-body 10M | 214.66 | 214.49 (A) | 214.63 (B) | 665.21 (A) | 214.50 (A) | **tie: C / C++ / Rust / MAGIC C** (214.5–214.7); MAGIC native IR 665 (3.1×) |
-| binary trees | 1.12 | 1.15 (B) | 1.15 (B) | 1.15 (B) | 1.13 (A) | **tie: all** (start-up-bound) |
-| matmul 384 | 3.20 | 3.18 (A) | 1.14 (B) | 1.14 (B) | 1.14 (B) | **tie: C / C++ / Rust / MAGIC** (fast mode ≈1.1; medians bimodal) |
+| binary trees | 0.97 | 1.15 (B) | 1.15 (B) | 1.15 (B) | 1.13 (A) | **tie: all** (start-up-bound) |
+| matmul 384 | 1.53 | 3.18 (A) | 1.14 (B) | 1.14 (B) | 1.14 (B) | **tie: C / C++ / Rust / MAGIC** (fast mode ≈1.1; medians bimodal) |
+
+### C-B addendum
+
+C-B sources: `bench-best/c/{sieve,fannkuch,raytrace,hash,particles,nbody,bt,matmul}.c`.
+Built with `gcc -O3 -march=native -fopenmp -lm`; run sequentially, 20 rounds
+per workload after the judge pass; full per-run data in
+`bench-best/judge-build/c-B-timings.json`. All outputs pass (fannkuch prints
+`73196` / `38`). C-B improves C sieve/fannkuch/bt/matmul but does not change
+any workload winner; C still wins none of the eight.
 
 Notes on the table:
 
-* The **C column** is the only C candidate. C's sieve is a genuine Eratosthenes
-  sieve (7.32 ms); C++ A/B, Rust B and MAGIC A use prime-counting/closed forms
-  (the 3.2 ms group, whose fast mode is ≈1.1 ms). MAGIC B also runs a segmented
-  sieve (17–32 ms).
+* The **C column** is the best of two independent C candidates: `c/A` and the
+  misplaced `c/B` set under `bench-best/c/` (see the addendum). C's best sieve
+  is a genuine Eratosthenes sieve (5.52 ms); C++ A/B, Rust B and MAGIC A use
+  prime-counting/closed forms (the 3.2 ms group, whose fast mode is ≈1.1 ms).
+  MAGIC B also runs a segmented sieve (17–32 ms).
 * **C++ `matmul`/`bt`** medians can land in the start-up mode: the same
   `matmul` binary measured 1.09–1.15 ms and 3.1–3.3 ms in different rounds
   (median 2.17 ms in the cross-check, 3.18 ms here). Its minimum is 1.09 ms, so
@@ -159,6 +171,7 @@ Notes on the table:
 | Candidate | sieve | fannkuch | raytrace | hash | particles | n-body | bt | matmul |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | C `c-A` | 7.32 | 15.39 | 3.23 | 1.12 | 1.13 | 214.66 | 1.12 | 3.20 |
+| C `c-B` | 5.52 | 13.88 | 5.46 | 1.44 | 1.69 | 234.49 | 0.97 | 1.53 |
 | C++ `cpp-A` | 3.22 | 15.37 | 7.29 | 1.12 | 3.18 | 214.49 | 1.20 | 3.18 |
 | C++ `cpp-B` | 3.24 | 16.44 | 3.23 | 1.12 | 3.19 | 214.69 | 1.15 | 3.18 |
 | Rust `rust-A` | 9.06 | 17.64 | 4.14 | 3.18 | 1.14 | 214.65 | 1.15 | 3.22 |
