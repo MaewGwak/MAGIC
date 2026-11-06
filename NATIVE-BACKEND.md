@@ -115,6 +115,11 @@ registers for the whole function (saved in the prologue), which matmul keeps fro
 251 ms (481 ms before allocation; C: 31 ms). Bounds checks, index scaling and the lack of
 vectorisation are the remaining costs.
 
+v0.8.14 adds loop bounds elimination in the IR: if a natural loop compares `i` against the same
+length used by an `a[i]` check and only increments `i` by one, the check is dropped. A 20M-element
+direct-index sum then emits zero checks (93 ms vs AST 77 ms, C 36 ms). Affine indexes like
+`a[i * n + j]` are not proved yet, so matmul keeps its checks.
+
 ## Differential harness## Differential harness
 
 `tests/native_diff.rs` builds a 27-program corpus (all examples, the integer/float/struct/vector

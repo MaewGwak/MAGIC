@@ -507,6 +507,197 @@ fn lower_func(f: &Func) -> Result<IrFunc, String> {
     Ok(out)
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum DefKind {
+    Const(i64),
+    LoadVar(usize),
+    Other,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Bound {
+    Const(i64),
+    Var(usize),
+}
+
+fn def_kind(ins: &Instr) -> Option<(Value, DefKind)> {
+    match ins {
+        Instr::Const { dst, v } => Some((*dst, DefKind::Const(*v))),
+        Instr::LoadVar { dst, var } => Some((*dst, DefKind::LoadVar(*var))),
+        Instr::Bin { dst, .. } => Some((*dst, DefKind::Other)),
+        Instr::Un { dst, .. } => Some((*dst, DefKind::Other)),
+        Instr::Trunc { dst, .. } => Some((*dst, DefKind::Other)),
+        Instr::IndexLoad { dst, .. } => Some((*dst, DefKind::Other)),
+        Instr::Call { dst: Some(d), .. } => Some((*d, DefKind::Other)),
+        _ => None,
+    }
+}
+
+/// Remove bounds checks that are implied by a `for i in 0..len` loop:
+/// inside such a loop `i < len` holds, and if the emitted check compares the
+/// same `i` against the same length (constant or variable), it is redundant.
+/// Only loops whose index is modified solely by `i = i + 1` are trusted.
+fn remove_redundant_bounds(prog: &mut IrProgram) {
+    for f in &mut prog.funcs {
+        let n = f.blocks.len();
+        let mut defs: HashMap<Value, (DefKind, usize)> = HashMap::new();
+        for (bi, b) in f.blocks.iter().enumerate() {
+            for ins in &b.instrs {
+                if let Some((v, k)) = def_kind(ins) {
+                    defs.insert(v, (k, bi));
+                }
+            }
+        }
+        let mut remove: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+        for h in 0..n {
+            let last = match f.blocks[h].instrs.last() {
+                Some(Instr::Br { then_bb, else_bb, .. }) => (*then_bb, *else_bb),
+                _ => continue,
+            };
+            let (body, exit) = last;
+            // Natural-loop region: DFS from the body, not crossing the header.
+            let mut region = std::collections::HashSet::new();
+            let mut stack = vec![body];
+            let mut reaches = false;
+            while let Some(bb) = stack.pop() {
+                if bb == h {
+                    reaches = true;
+                    continue;
+                }
+                if bb == exit || !region.insert(bb) {
+                    continue;
+                }
+                for succ in block_successors(&f.blocks[bb].instrs) {
+                    if succ < n {
+                        stack.push(succ);
+                    }
+                }
+            }
+            if !reaches {
+                continue;
+            }
+            // Head layout: LoadVar iv; ...; Bin Lt(l=iv', r=end) -> cond.
+            let mut iv: Option<usize> = None;
+            let mut bound: Option<Bound> = None;
+            for ins in &f.blocks[h].instrs {
+                if let Instr::Bin { op: Op::Lt, l, r, .. } = ins {
+                    if let Some((DefKind::LoadVar(v), hb)) = defs.get(l).copied() {
+                        if hb != h {
+                            continue;
+                        }
+                        match defs.get(r).copied() {
+                            Some((DefKind::Const(k), rb)) if rb == h => {
+                                iv = Some(v);
+                                bound = Some(Bound::Const(k));
+                            }
+                            Some((DefKind::LoadVar(w), rb)) if rb == h => {
+                                iv = Some(v);
+                                bound = Some(Bound::Var(w));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            let (Some(iv), Some(bound)) = (iv, bound) else { continue };
+            // The index may only be modified by `i = i + 1` inside the region.
+            let mut ok = true;
+            for bb in &region {
+                for ins in &f.blocks[*bb].instrs {
+                    if let Instr::StoreVar { var, src } = ins {
+                        if *var == iv {
+                            let good = match defs.get(src).copied() {
+                                Some((DefKind::Other, _)) => {
+                                    // find the defining Bin and check Add(i, const 1)
+                                    let bin = f.blocks.iter().flat_map(|b| &b.instrs).find_map(|i| {
+                                        if let Instr::Bin { dst, op: Op::Add, l, r } = i {
+                                            if dst == src {
+                                                return Some((*l, *r));
+                                            }
+                                        }
+                                        None
+                                    });
+                                    match bin {
+                                        Some((l, r)) => {
+                                            let one = |v: Value| {
+                                                matches!(defs.get(&v), Some((DefKind::Const(1), _)))
+                                            };
+                                            let is_iv = |v: Value| {
+                                                matches!(defs.get(&v), Some((DefKind::LoadVar(x), _)) if *x == iv)
+                                            };
+                                            (is_iv(l) && one(r)) || (is_iv(r) && one(l))
+                                        }
+                                        None => false,
+                                    }
+                                }
+                                _ => false,
+                            };
+                            if !good {
+                                ok = false;
+                            }
+                        }
+                        if let Bound::Var(w) = bound {
+                            if *var == w {
+                                ok = false;
+                            }
+                        }
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            // Mark redundant checks.
+            for bb in &region {
+                for (ii, ins) in f.blocks[*bb].instrs.iter().enumerate() {
+                    if let Instr::BoundsCheck { idx, len, .. } = ins {
+                        let idx_is_iv = matches!(
+                            defs.get(idx),
+                            Some((DefKind::LoadVar(x), db)) if *x == iv && *db == *bb
+                        );
+                        let len_matches = match (bound, len) {
+                            (Bound::Const(a), LenRef::Const(b)) => a == *b,
+                            (Bound::Var(a), LenRef::Var(b)) => a == *b,
+                            _ => false,
+                        };
+                        if idx_is_iv && len_matches {
+                            remove.insert((*bb, ii));
+                        }
+                    }
+                }
+            }
+        }
+        // Constant indexes that are known in range.
+        for (bi, b) in f.blocks.iter().enumerate() {
+            for (ii, ins) in b.instrs.iter().enumerate() {
+                if let Instr::BoundsCheck { idx, len, .. } = ins {
+                    if let Some((DefKind::Const(k), _)) = defs.get(idx) {
+                        let len_ok = match len {
+                            LenRef::Const(n) => *k >= 0 && *k < *n,
+                            LenRef::Var(_) => false,
+                        };
+                        if len_ok {
+                            remove.insert((bi, ii));
+                        }
+                    }
+                }
+            }
+        }
+        if remove.is_empty() {
+            continue;
+        }
+        for (bi, b) in f.blocks.iter_mut().enumerate() {
+            let mut new_instrs = Vec::new();
+            for (ii, ins) in b.instrs.drain(..).enumerate() {
+                if !remove.contains(&(bi, ii)) {
+                    new_instrs.push(ins);
+                }
+            }
+            b.instrs = new_instrs;
+        }
+    }
+}
+
 fn voff(f: &IrFunc, v: Value) -> i64 {
     8 * (f.nvars as i64 + v.0 as i64 + 1)
 }
@@ -893,6 +1084,10 @@ fn emit_fast_block(
             }
         }
     }
+}
+
+pub fn optimize(prog: &mut IrProgram) {
+    remove_redundant_bounds(prog);
 }
 
 pub fn emit(prog: &IrProgram) -> String {

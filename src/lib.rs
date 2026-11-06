@@ -66,7 +66,8 @@ pub fn compile_to_asm_ir(src: &str) -> Result<String, String> {
     types::Checker::check(&mut program)?;
     types::lower_calls(&mut program);
     codegen::retain_reachable(&mut program);
-    let ir = ir::lower(&program)?;
+    let mut ir = ir::lower(&program)?;
+    ir::optimize(&mut ir);
     Ok(ir::emit(&ir))
 }
 

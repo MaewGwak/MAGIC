@@ -30,6 +30,15 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.14 — IR bounds-check elimination for counted loops (2026-11-06)
+
+The IR now removes bounds checks that a loop condition already guarantees: a natural loop whose
+header compares an induction variable `i` against a length (constant or variable), whose index is
+only modified by `i = i + 1`, and whose access is exactly `a[i]` with the same length, needs no
+per-iteration check. Constant in-range indexes are removed too. A 20M-element sum over `a[i]` emits
+zero bounds checks and runs in 93 ms (AST backend: 77 ms, C: 36 ms). Affine indexes such as matmul's
+`a[i * n + j]` are not proved yet and keep their checks; matmul stays at ~260 ms.
+
 ## v0.8.13 — IR variables in callee-saved registers (2026-11-06)
 
 The IR emitter ranks variables by use count and keeps the top five in `%rbx`/`%r12-%r15` for the
