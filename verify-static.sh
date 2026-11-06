@@ -33,6 +33,29 @@ check nbody bench-suite/nbody_magic.magic 11211.531383831
 check particles bench-suite/particles_magic.magic 500094707846.643
 check ray bench-suite/raytrace_magic.magic 336141.941
 check ray_par bench-suite/raytrace_magic_par.magic 336141.941
+IOBIN="$OUT/io.bin"; IOSRC="$OUT/io.magic"
+cat > "$IOSRC" <<EOF
+fn main() {
+    var fd = file_open("$IOBIN", "wb");
+    var b: [u8] = [65; 3];
+    file_write(fd, b, 3);
+    file_close(fd);
+    var rf = file_open("$IOBIN", "rb");
+    var c: [u8] = [0; 3];
+    var n = file_read(rf, c, 3);
+    print(n);
+    print(c[0]);
+    print(file_size(rf));
+    file_close(rf);
+}
+EOF
+if "$M" build "$IOSRC" --static -o "$OUT/io" >/dev/null 2>&1; then
+  got=$("$OUT/io" 2>/dev/null | tr '\n' ' ')
+  if [ "$got" = "3 65 3 " ]; then echo "file_io: ok static"; else echo "file_io: FAIL got=$got"; FAIL=1; fi
+else
+  echo "file_io: build FAIL"; FAIL=1
+fi
+
 printf 'fn main() { let x = 1.5; print(x); }\n' > "$OUT/g.magic"
 if "$M" build "$OUT/g.magic" --static -o "$OUT/g" >/dev/null 2>&1; then
   echo "%%g program unexpectedly accepted"; FAIL=1

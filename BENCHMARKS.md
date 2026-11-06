@@ -148,8 +148,8 @@ dynamically**; they are not fully static ELF yet.
 static_runtime.s`: mmap-based calloc, memset/memcpy, `%lld`/`%d`/`%s` printf, exit, simple panic).
 No C compiler and no libc are involved. All eight workloads build to 5.2–9.6 KB ELFs with **no
 PT_INTERP** and correct checksums; `par for` uses a `clone`/`wait4` runtime, and `print_prec` uses a
-fixed-point x87 formatter (precision <= 9, overflow guarded). `%g`/`print` of floats, file and net
-are rejected at build time, never silently miscompiled. `verify-static.sh` is part of `verify.sh`.
+fixed-point x87 formatter (precision <= 9, overflow guarded). `%g`/`print` of floats and net are rejected at build time; file I/O
+(`file_open/read/write/seek/tell/size`) is implemented with Linux syscalls and covered by the gate. `verify-static.sh` is part of `verify.sh`.
 
 ## Latest full matrix run (v0.9.5, 2026-11-06)
 

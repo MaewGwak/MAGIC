@@ -30,6 +30,13 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.3 — static file I/O (2026-11-06)
+
+The freestanding runtime gained syscall-backed `fopen/fclose/fread/fwrite/fseek/ftell/fflush`, so
+`file_open/read/write/seek/tell/size` work in static binaries without libc. `verify-static.sh` now
+writes and reads a three-byte file, checks the two prints and `file_size`, and keeps the `%g`
+rejection check. All gates pass, 169 tests, parity 60/60, static-memory green.
+
 ## v0.10.2 — release dead float operands (2026-11-06)
 
 The fast float arms (FBin, FNeg, FCmp, I2F, F2I, Sqrt) never called `free_dead`, so an xmm register
