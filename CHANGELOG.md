@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.17 — bool element accesses in the register-allocated IR path (2026-11-06)
+
+Bit-packed bool loads and stores now run inside the linear-scan blocks instead of falling back to
+slots: the word index, bit index and mask use `%rsi`/`%rdi` as scratch, so functions that touch bool
+elements use a four-register pool (`%rdx/%r8/%r9/%r11`) while all other functions keep six. Sieve
+stays correct (664579) and improves 145 → 124 ms (AST backend: 88 ms, C: 38 ms). Matmul and the
+integer-array sum are unchanged (~230 ms and ~116 ms).
+
 ## v0.8.16 — bit-packed `[bool]` arrays in the IR (2026-11-06)
 
 The IR now lowers `[bool]` arrays: allocation reserves `(len + 63) / 64` words, loads shift and mask

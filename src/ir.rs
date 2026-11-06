@@ -958,8 +958,6 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::Alloc { .. }
                 | Instr::Print { .. }
                 | Instr::Bin { op: Op::Div | Op::Rem, .. }
-                | Instr::IndexLoad { elem: Ty::Bool, .. }
-                | Instr::IndexStore { elem: Ty::Bool, .. }
         )
     })
 }
@@ -979,6 +977,7 @@ struct RegAlloc<'a> {
     live_out: &'a std::collections::HashSet<Value>,
     map: HashMap<Value, (usize, bool)>,
     free: Vec<usize>,
+    pool: &'a [usize],
 }
 
 impl<'a> RegAlloc<'a> {
@@ -1092,13 +1091,15 @@ fn emit_fast_block(
     live_out: &std::collections::HashSet<Value>,
     name: &str,
     var_regs: &HashMap<usize, &'static str>,
+    pool: &[usize],
 ) {
     let mut ra = RegAlloc {
         out,
         f,
         live_out,
         map: HashMap::new(),
-        free: (0..POOL.len()).rev().collect(),
+        free: pool.iter().rev().copied().collect(),
+        pool,
     };
     for ins in instrs {
         match ins {
@@ -1228,6 +1229,12 @@ fn emit_fast_block(
                 match elem {
                     Ty::U8 => ra.out.push_str("    movzbq (%r10,%rax,1), %rax\n"),
                     Ty::I32 => ra.out.push_str("    movslq (%r10,%rax,4), %rax\n"),
+                    Ty::Bool => {
+                        ra.out.push_str("    mov %rax, %rsi\n    shr $6, %rsi\n");
+                        ra.out.push_str("    and $63, %rax\n    mov %rax, %rcx\n");
+                        ra.out.push_str("    mov (%r10,%rsi,8), %rax\n");
+                        ra.out.push_str("    shr %cl, %rax\n    and $1, %rax\n");
+                    }
                     _ => ra.out.push_str("    mov (%r10,%rax,8), %rax\n"),
                 }
                 let d = ra.dst(*dst);
@@ -1247,6 +1254,17 @@ fn emit_fast_block(
                 match elem {
                     Ty::U8 => ra.out.push_str("    movb %cl, (%r10,%rax,1)\n"),
                     Ty::I32 => ra.out.push_str("    movl %ecx, (%r10,%rax,4)\n"),
+                    Ty::Bool => {
+                        ra.out.push_str("    mov %rcx, %rdi\n");
+                        ra.out.push_str("    mov %rax, %rsi\n    shr $6, %rsi\n");
+                        ra.out.push_str("    and $63, %rax\n    mov %rax, %rcx\n");
+                        ra.out.push_str("    mov $1, %rax\n    shl %cl, %rax\n");
+                        ra.out.push_str("    mov (%r10,%rsi,8), %rcx\n");
+                        ra.out.push_str("    test %rdi, %rdi\n    je 2f\n");
+                        ra.out.push_str("    or %rax, %rcx\n    jmp 3f\n");
+                        ra.out.push_str("2:\n    not %rax\n    and %rax, %rcx\n3:\n");
+                        ra.out.push_str("    mov %rcx, (%r10,%rsi,8)\n");
+                    }
                     _ => ra.out.push_str("    movq %rcx, (%r10,%rax,8)\n"),
                 }
             }
@@ -1341,6 +1359,19 @@ pub fn emit(prog: &IrProgram) -> String {
             .map(|(i, (var, _))| (var, ["%rbx", "%r12", "%r13", "%r14", "%r15"][i]))
             .collect();
         let var_regs: HashMap<usize, &'static str> = chosen.iter().copied().collect();
+        let has_bool = f.blocks.iter().any(|b| {
+            b.instrs.iter().any(|i| {
+                matches!(
+                    i,
+                    Instr::IndexLoad { elem: Ty::Bool, .. } | Instr::IndexStore { elem: Ty::Bool, .. }
+                )
+            })
+        });
+        let pool: Vec<usize> = if has_bool {
+            vec![0, 3, 4, 5]
+        } else {
+            (0..POOL.len()).collect()
+        };
 
         out.push_str(&format!(".globl {}\n.type {}, @function\n{}:\n", f.name, f.name, f.name));
         out.push_str("    push %rbp\n    mov %rsp, %rbp\n");
@@ -1414,7 +1445,7 @@ pub fn emit(prog: &IrProgram) -> String {
         for (bb, b) in f.blocks.iter().enumerate() {
             out.push_str(&format!("{}:\n", lblock(bb)));
             if !slow_block(&b.instrs) {
-                emit_fast_block(&mut out, f, &b.instrs, &live_out[bb], &f.name, &var_regs);
+                emit_fast_block(&mut out, f, &b.instrs, &live_out[bb], &f.name, &var_regs, &pool);
                 continue;
             }
             for ins in &b.instrs {
