@@ -186,8 +186,9 @@ file: f64 values live in `%xmm2`–`%xmm15` with `movsd` spills, taking nbody to
 block (one less jump per iteration); unrolling-by-2 was measured and rejected as consistently slower
 or neutral. v0.8.35 covers the last statement forms (`arena`, `assert`, sequential `par for`,
 string printing, `file_pread_at`), so every program in the repository compiles through the IR, and
-makes `&&`/`||` short-circuit in both backends. Known open issue: `bufpool_magic_fast3` prints a
-wrong checksum on the AST native backend (IR and C agree).
+makes `&&`/`||` short-circuit in both backends. An open issue found there — `bufpool_magic_fast3` printing a wrong checksum on the AST native
+backend — was fixed in v0.8.36: the native 5-argument `file_pread_at` passed the buffer offset as the
+destination pointer, so all three backends now agree and a regression test compares them.
 
 ## Register-allocation experiments## Register-allocation experiments (v0.8.8 → v0.8.9)
 

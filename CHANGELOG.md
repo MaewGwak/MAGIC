@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.36 — native `file_pread_at` fixed (2026-11-06)
+
+The AST native backend's 5-argument `file_pread_at`/`file_pread` assembled its arguments wrongly: it
+passed the buffer offset as the destination pointer to `fread`, so reads went to a small integer
+address (a segfault in isolation and silently wrong data in `bufpool_magic_fast3`). The argument
+sequence is rewritten as fseek(file offset) followed by fread into `buf + off`, matching the C and IR
+backends. `bench-db/bufpool_magic_fast3` now prints 24997 / 175003 / 25510321 on all three backends,
+and a regression test (`native_file_pread_at_matches_c`) compares the two native paths in a temp
+directory.
+
 ## v0.8.35 — IR feature parity for the whole corpus, short-circuit logic (2026-11-06)
 
 The IR now lowers `arena` blocks (as their body), `assert` (panic with `line N: assertion failed`),

@@ -1939,30 +1939,35 @@ impl Emitter {
                 self.call(f);
             }
             "file_pread" | "file_pread_at" => {
-                // Correctness first: pread is fseek + fread on the native path.
-                let (buf_idx, off_idx) = if args.len() == 4 { (1, 3) } else { (1, 4) };
+                let (off_idx, len_idx) = if args.len() == 4 { (3, 2) } else { (4, 3) };
                 if args.len() != 4 && args.len() != 5 {
                     return Err(format!(
                         "native backend line {}: {} takes 4 or 5 arguments",
                         line, name
                     ));
                 }
-                self.expr(&args[0])?;
-                self.push("%rax");
+                // fseek(fd, file_offset, SEEK_SET)
                 self.expr(&args[off_idx])?;
-                self.line("    mov %rax, %rsi");
-                self.line("    xor %edx, %edx");
-                self.pop("%rdi");
-                self.call("fseek@PLT");
-                self.expr(&args[buf_idx])?;
                 self.push("%rax");
+                self.expr(&args[0])?;
+                self.line("    mov %rax, %rdi");
+                self.pop("%rsi");
+                self.line("    xor %edx, %edx");
+                self.call("fseek@PLT");
+                // read into buf (+ buffer offset for the 5-argument form)
+                self.expr(&args[1])?;
                 if args.len() == 5 {
-                    self.expr(&args[2])?;
                     self.push("%rax");
+                    self.expr(&args[2])?;
+                    self.line("    mov %rax, %rsi");
+                    self.pop("%rdi");
+                    self.line("    add %rsi, %rdi");
+                    self.line("    mov %rdi, %rax");
                 }
+                self.push("%rax");
                 self.expr(&args[0])?;
                 self.push("%rax");
-                self.expr(&args[if args.len() == 4 { 2 } else { 3 }])?;
+                self.expr(&args[len_idx])?;
                 self.line("    mov %rax, %rdx");
                 self.pop("%rcx");
                 self.pop("%rdi");

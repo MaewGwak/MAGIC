@@ -176,3 +176,39 @@ fn native_matches_c_on_the_benchmark_corpus() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(mismatches.is_empty(), "native/C mismatch:\n{}", mismatches.join("\n"));
 }
+
+#[test]
+fn native_file_pread_at_matches_c() {
+    if !native_available() {
+        return;
+    }
+    let Some(cc_cmd) = cc() else { return };
+    let dir = std::env::temp_dir().join(format!("magic_pread_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let data = dir.join("pread.dat");
+    let src = format!(
+        r#"fn main() {{
+    var fd = file_open("{path}", "wb");
+    var w: [u8] = [0; 16];
+    w[0] = 65; w[1] = 66; w[2] = 67; w[3] = 68;
+    file_write(fd, w, 16);
+    file_close(fd);
+    var r = file_open("{path}", "rb");
+    var b: [u8] = [0; 32];
+    file_pread_at(r, b, 8, 4, 0);
+    print(b[8] as i32);
+    print(b[9] as i32);
+    file_close(r);
+}}
+"#,
+        path = data.display()
+    );
+    let c_exe = build(&src, &cc_cmd, &dir, "pread_c", false).expect("C build");
+    let n_exe = build(&src, &cc_cmd, &dir, "pread_n", true).expect("native build");
+    let c_run = run_with_timeout(&c_exe, &dir, 60).expect("C run");
+    let n_run = run_with_timeout(&n_exe, &dir, 60).expect("native run");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(c_run.0, "65\n66\n");
+    assert_eq!(c_run, n_run);
+}
