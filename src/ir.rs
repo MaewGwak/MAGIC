@@ -851,6 +851,25 @@ impl Builder {
         Ok(())
     }
 
+    fn lower_struct_vec_pop_value(&mut self, vec_name: &str, line: usize) -> Result<Value, String> {
+        let (elem, pv, _lv, esz, newlen) = self.lower_vec_pop_prepare(vec_name, line)?;
+        let Ty::Struct(id) = elem else {
+            return Err(format!("line {}: IR: pop() value is not a struct", line));
+        };
+        let (size, _) = struct_layout(&self.struct_defs, id);
+        let slots = ((size + 7) / 8) as usize;
+        let var_index = self.nvars;
+        self.nvars += slots;
+        let scratch = self.nvars;
+        self.nvars += 1;
+        self.push(Instr::ElemAddr { dst_var: scratch, ptr_var: pv, idx: newlen, size: esz });
+        self.push(Instr::CopySlots { ptr_var: scratch, var_index, slots });
+        let dst = self.value();
+        self.push(Instr::AddrVar { dst, var_index, slots });
+        self.vty[dst.0 as usize] = Ty::I64;
+        Ok(dst)
+    }
+
     fn lower_vec_clear(&mut self, name: &str, line: usize) -> Result<Value, String> {
         let (_, _, lv, _, _) = *self
             .vecs
@@ -948,7 +967,11 @@ impl Builder {
                 Ok(dst)
             }
             ExprKind::VecParamPop(n) => {
-                self.lower_vec_pop(n, e.line)
+                if matches!(self.vecs.get(n), Some((Ty::Struct(_), _, _, _, _))) {
+                    self.lower_struct_vec_pop_value(n, e.line)
+                } else {
+                    self.lower_vec_pop(n, e.line)
+                }
             }
             ExprKind::VecParamClear(n) => {
                 self.lower_vec_clear(n, e.line)
@@ -1385,6 +1408,9 @@ impl Builder {
                 }
                 if name == "pop" && args.len() == 1 {
                     if let ExprKind::Var(vn) = &args[0].kind {
+                        if let Some((Ty::Struct(_), _, _, _, _)) = self.vecs.get(vn).copied() {
+                            return self.lower_struct_vec_pop_value(vn, e.line);
+                        }
                         if self.vecs.contains_key(vn) {
                             return self.lower_vec_pop(vn, e.line);
                         }

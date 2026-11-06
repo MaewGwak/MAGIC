@@ -126,6 +126,24 @@ else
   echo "local_pop: build FAIL"; FAIL=1
 fi
 
+cat > "$OUT/pspop.magic" <<'EOF'
+struct P { x: i32, y: i32 }
+fn take(v: [P+]) -> P { return pop(v); }
+fn main() {
+    var v: [P+] = [];
+    v.push(P { x: 1, y: 2 });
+    var p: P = take(v);
+    print(p.x);
+    print(len(v));
+}
+EOF
+if "$M" build "$OUT/pspop.magic" --static -o "$OUT/pspop" >/dev/null 2>&1; then
+  got=$("$OUT/pspop" 2>/dev/null | tr '\n' ' ')
+  if [ "$got" = "1 0 " ]; then echo "struct_pop_param: ok static"; else echo "struct_pop_param: FAIL got=$got"; FAIL=1; fi
+else
+  echo "struct_pop_param: build FAIL"; FAIL=1
+fi
+
 cat > "$OUT/spop.magic" <<'EOF'
 struct P { x: i32, y: i32 }
 fn main() {

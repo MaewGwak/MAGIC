@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.18 — struct-vector pop on parameters (2026-11-07)
+
+`VecParamPop` and a bare `pop(v)` now return a temporary struct value address for struct element
+vectors: pop-prepare updates the caller length, ElemAddr/CopySlots materialize the struct into fresh
+slots, and AddrVar hands the sret pointer to `return`. `fn take(v:[P+])->P { return pop(v); }` prints
+`1 0` (p.x and caller len) in IR/static/C instead of segfaulting. Regression covers C/IR and a static
+gate. All gates pass, 171 tests, parity60/60.
+
 ## v0.10.17 — struct-vector pop (2026-11-07)
 
 `var p: P = pop(v)` on a `[P+]` vector now lowers: a shared pop-prepare does the empty/length
