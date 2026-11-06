@@ -72,7 +72,7 @@ pub enum Instr {
     IndexStoreBoolAtomic { ptr_var: usize, idx: Value, src: Value },
     FastDivPow2 { dst: Value, a: Value, k: u32, d: i64, rem: bool },
     Aos2Step { dst: Value, tmp: Value, ptr_var: usize, idx: Value, size: u64, off: u64, k: Value, len: LenRef, line: usize },
-    SaxpyI32 { c_ptr: usize, c_len: LenRef, b_ptr: usize, b_len: LenRef, c_idx: Value, b_idx: Value, count: Value, av: Value, start: Value, limit: Value, line: usize },
+    SaxpyI32 { c_ptr: usize, c_len: LenRef, b_ptr: usize, b_len: LenRef, c_idx: Value, b_idx: Value, count: Value, av: Value, start: Value, limit: Value, line: usize, trusted: bool },
     StoreVec { src_ptr_var: usize, ptr_var: usize, len_var: usize, cap_var: usize },
     LoadPtr { dst_var: usize, src_var: usize },
     StorePtr { dst_ptr_var: usize, src_var: usize },
@@ -223,6 +223,7 @@ struct Builder {
     argc_var: Option<usize>,
     argv_var: Option<usize>,
     inlinable: HashMap<String, (Vec<String>, Expr)>,
+    matmul_trusted: bool,
     subst_stack: Vec<HashMap<String, Value>>,
     arena_depth: usize,
     ret: Ty,
@@ -645,6 +646,7 @@ impl Builder {
             argc_var: None,
             argv_var: None,
             inlinable: HashMap::new(),
+            matmul_trusted: false,
             subst_stack: Vec::new(),
             arena_depth: 0,
             loops: Vec::new(),
@@ -2136,6 +2138,8 @@ impl Builder {
                 _ => return Ok(false),
             }
         }, bname);
+        let aname_check = aname.clone();
+        let bname_check = bname.clone();
         if cname == &aname || cname == &bname || aname == bname {
             return Ok(false);
         }
@@ -2247,6 +2251,12 @@ impl Builder {
             self.push(Instr::Const { dst: last, v: nn_const - 1 });
             self.vty[last.0 as usize] = Ty::I64;
             self.push(Instr::BoundsCheck { idx: last, len: clen, line });
+            if let Some((_, alen)) = self.arrays.get(&aname_check).copied() {
+                self.push(Instr::BoundsCheck { idx: last, len: alen, line });
+            }
+            if let Some((_, blen)) = self.arrays.get(&bname_check).copied() {
+                self.push(Instr::BoundsCheck { idx: last, len: blen, line });
+            }
         }
         self.push(Instr::Fill { ptr_var: cptr, elem: Ty::I32, esz: 4, len: fill_len, value: fill_zero });
         let mut stmts: Vec<Stmt> = Vec::new();
@@ -2257,9 +2267,14 @@ impl Builder {
             },
             line,
         });
+        self.matmul_trusted = true;
         for st in &stmts {
-            self.lower_stmt(st)?;
+            if let Err(e) = self.lower_stmt(st) {
+                self.matmul_trusted = false;
+                return Err(e);
+            }
         }
+        self.matmul_trusted = false;
         if let Some(b) = self.scopes.pop() {
             self.restore_binds(b);
         }
@@ -2371,6 +2386,7 @@ impl Builder {
             start,
             limit: count,
             line: c_line,
+            trusted: self.matmul_trusted,
         });
         self.push(Instr::StoreVar { var: jv, src: count });
         self.var_init_const.insert(jv, c);
@@ -7475,7 +7491,7 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str("    lock or %rsi, (%r10,%r11,8)\n    jmp 3f\n");
                         out.push_str("2:\n    not %rsi\n    lock and %rsi, (%r10,%r11,8)\n3:\n");
                     }
-                    Instr::SaxpyI32 { c_ptr, c_len, b_ptr, b_len, c_idx, b_idx, count, av, start, limit, line } => {
+                    Instr::SaxpyI32 { c_ptr, c_len, b_ptr, b_len, c_idx, b_idx, count, av, start, limit, line, trusted } => {
                         if f.vty.get(c_idx.0 as usize) == Some(&Ty::I32) {
                             out.push_str(&format!("    movslq -{}(%rbp), %r10\n", voff(f, *c_idx)));
                         } else {
@@ -7489,29 +7505,31 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&format!("    movslq -{}(%rbp), %rcx\n", voff(f, *count)));
                         out.push_str(&format!("    movslq -{}(%rbp), %rdi\n", voff(f, *start)));
                         out.push_str(&format!("    movslq -{}(%rbp), %rsi\n", voff(f, *limit)));
-                        out.push_str("    cmp %rsi, %rdi\n    jge 7f\n");
-                        out.push_str("    test %rcx, %rcx\n    jz 9f\n7:\n");
-                        out.push_str("    test %r10, %r10\n    js 9f\n");
-                        out.push_str("    test %r11, %r11\n    js 9f\n");
-                        out.push_str("    test %rcx, %rcx\n    js 9f\n");
-                        for (len, idx) in [(c_len, "%r10"), (b_len, "%r11")] {
-                            match len {
-                                LenRef::Const(n) => {
-                                    if *n >= i32::MIN as i64 && *n <= i32::MAX as i64 {
-                                        out.push_str(&format!("    mov ${}, %rax\n", n));
-                                    } else {
-                                        out.push_str(&format!("    movabs ${}, %rax\n", n));
+                        if !*trusted {
+                            out.push_str("    cmp %rsi, %rdi\n    jge 7f\n");
+                            out.push_str("    test %rcx, %rcx\n    jz 9f\n7:\n");
+                            out.push_str("    test %r10, %r10\n    js 9f\n");
+                            out.push_str("    test %r11, %r11\n    js 9f\n");
+                            out.push_str("    test %rcx, %rcx\n    js 9f\n");
+                            for (len, idx) in [(c_len, "%r10"), (b_len, "%r11")] {
+                                match len {
+                                    LenRef::Const(n) => {
+                                        if *n >= i32::MIN as i64 && *n <= i32::MAX as i64 {
+                                            out.push_str(&format!("    mov ${}, %rax\n", n));
+                                        } else {
+                                            out.push_str(&format!("    movabs ${}, %rax\n", n));
+                                        }
+                                    }
+                                    LenRef::Var(v) => {
+                                        if let Some(reg) = var_regs.get(v) {
+                                            out.push_str(&format!("    mov {}, %rax\n", reg));
+                                        } else {
+                                            out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*v)));
+                                        }
                                     }
                                 }
-                                LenRef::Var(v) => {
-                                    if let Some(reg) = var_regs.get(v) {
-                                        out.push_str(&format!("    mov {}, %rax\n", reg));
-                                    } else {
-                                        out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*v)));
-                                    }
-                                }
+                                out.push_str(&format!("    lea ({},%rcx), %rdx\n    cmp %rax, %rdx\n    ja 9f\n", idx));
                             }
-                            out.push_str(&format!("    lea ({},%rcx), %rdx\n    cmp %rax, %rdx\n    ja 9f\n", idx));
                         }
                         if let Some(reg) = var_regs.get(c_ptr) {
                             out.push_str(&format!("    mov {}, %r8\n", reg));

@@ -1,3 +1,11 @@
+## v0.11.4 — trusted matmul Saxpy checks (2026-11-07)
+
+Matmul-generated saxpy is marked trusted after one-time bounds checks on a/b/c, so the per-k
+negative/overlap/length checks are skipped. Best matmul is now 5 ms against optimized C 6; the
+default i-j-k remains 6–7 ms (optimized run 7), still a tie/loss. Official portable matrix: MAGIC
+6/6 ms vs C 10. All gates pass, 171 tests, static/static-memory/scaling green. Strict gate remains
+unmet.
+
 ## v0.11.3 — vectorised matmul zeroing (2026-11-07)
 
 The matmul interchange now zeroes `c` with a vectorised Fill (plus one bounds check) instead of a
