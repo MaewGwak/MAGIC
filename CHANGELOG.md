@@ -30,6 +30,13 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.7 — thread scaling evidence (2026-11-06)
+
+`par for` now honours `MAGIC_THREADS` as a cap for measurement/tuning. On this 16-thread host the
+parallel raytracer goes 91 -> 56 -> 35 -> 23 -> 17 ms at 1/2/4/8/16 threads (5.4x, same checksum).
+`bench-scaling.sh` requires at least 3x and joins verify.sh. All gates pass, 169 tests, parity 60/60,
+static and static-memory green.
+
 ## v0.10.6 — in-place float destinations (2026-11-06)
 
 The float emitter now reuses an operand register for the result when that operand is dead at the

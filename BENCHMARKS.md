@@ -172,6 +172,18 @@ This run confirms the four compiler-driven wins (sieve, fannkuch blocks, matmul,
 hash par inside 1.25x; n-body/particles/bt remain behind. C values move a few percent between runs
 (particles 65→72, sieve 409→431), so treat single-digit differences as noise.
 
+## High-end scaling (`bench-scaling.sh`)
+
+`par for` reads `MAGIC_THREADS` as a test/tuning cap (default: min(CPUs, body cap, iterations)). On
+the 16-thread Ryzen host, the parallel raytracer scales:
+
+| threads | 1 | 2 | 4 | 8 | 16 |
+|---|---:|---:|---:|---:|---:|
+| avg ms | 91 | 56 | 35 | 23 | **17** |
+
+with the same checksum at every point, 5.4x from one to sixteen threads. The gate requires at least
+3x and is part of `verify.sh`.
+
 ## Static peak RSS (`bench-static-memory.sh`)
 
 Freestanding integer builds peak below the C -O3 baseline on every workload measured:

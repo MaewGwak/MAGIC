@@ -8189,6 +8189,7 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str("    sub %rdx, %rcx\n    jle .Lpar_done\n    mov %rcx, 640(%rsp)\n");
     out.push_str("    mov $84, %edi\n    call sysconf@PLT\n    cmp $1, %rax\n    jge 0f\n    mov $4, %rax\n0:\n");
     out.push_str("    mov 664(%rsp), %r9\n    cmp %r9, %rax\n    jle 0f\n    mov %r9, %rax\n0:\n");
+    out.push_str("    mov %rax, 672(%rsp)\n    lea .Lenv_threads(%rip), %rdi\n    call getenv@PLT\n    test %rax, %rax\n    jz 7f\n    xor %edx, %edx\n    mov %rax, %rdi\n8:\n    movzbl (%rdi), %ecx\n    test %cl, %cl\n    jz 9f\n    sub $48, %ecx\n    cmp $9, %ecx\n    ja 9f\n    imul $10, %edx\n    add %ecx, %edx\n    inc %rdi\n    jmp 8b\n9:\n    test %edx, %edx\n    jle 7f\n    mov 672(%rsp), %eax\n    cmp %edx, %eax\n    jle 7f\n    mov %edx, %eax\n    mov %rax, 672(%rsp)\n7:\n    mov 672(%rsp), %rax\n");
     out.push_str("    mov 640(%rsp), %rdx\n    cmp %rdx, %rax\n    jle 1f\n    mov %rdx, %rax\n1:\n");
     out.push_str("    mov %rax, %rdx\n");
     out.push_str("1:\n    mov %rdx, 648(%rsp)\n    lea -1(%rdx), %rax\n");
@@ -8313,6 +8314,7 @@ pub fn emit(prog: &IrProgram) -> String {
             out.push_str(&format!(".Lstr_{}_{}: .asciz \"{}\"\n", fname, id, asm_escape(text)));
         }
     }
+    out.push_str(".section .rodata\n.Lenv_threads: .asciz \"MAGIC_THREADS\"\n");
     out.push_str(".section .note.GNU-stack,\"\",@progbits\n");
     peephole_asm(out)
 }
