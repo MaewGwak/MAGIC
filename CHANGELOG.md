@@ -30,6 +30,17 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.70 — `break`/`continue` in the IR (2026-11-06)
+
+The IR lowering keeps a loop-context stack: `break` jumps to the loop exit and `continue` to the
+condition block (`while`) or to a dedicated increment block (`for`, created only when the body
+contains a `continue` so the normal path keeps its inline increment). Statements after a break or
+continue go into a fresh unreachable block, keeping each block's terminator last. Nested loops target
+their own context. A differential case covers `while` break/continue, `for` continue-then-break and a
+nested inner-loop break; C and IR agree on `7 / 9 / 19 / 10`. Repo parity stays 60/60. Remaining IR
+gaps before the default-backend switch: struct-return functions and struct literals in expression
+position.
+
 ## v0.8.69 — IR parity: bit-packed bool parameters and `net_read_at` (2026-11-06)
 
 Bit-packed `[bool]` parameters now lower in the IR (pointer + length, same representation the IR

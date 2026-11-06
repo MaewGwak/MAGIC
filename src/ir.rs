@@ -187,6 +187,19 @@ struct Builder {
     subst_stack: Vec<HashMap<String, Value>>,
     arena_depth: usize,
     ret: Ty,
+    loops: Vec<(usize, usize)>,
+}
+
+fn stmt_has_continue(st: &Stmt) -> bool {
+    match &st.kind {
+        StmtKind::Continue => true,
+        StmtKind::If { then, els, .. } => {
+            then.iter().any(stmt_has_continue) || els.iter().any(stmt_has_continue)
+        }
+        StmtKind::Arena { body } => body.iter().any(stmt_has_continue),
+        StmtKind::While { .. } | StmtKind::For { .. } => false,
+        _ => false,
+    }
 }
 
 impl Builder {
@@ -214,6 +227,7 @@ impl Builder {
             inlinable: HashMap::new(),
             subst_stack: Vec::new(),
             arena_depth: 0,
+            loops: Vec::new(),
             ret,
         }
     }
@@ -1384,9 +1398,11 @@ impl Builder {
                 let c = self.lower_expr(cond)?;
                 self.push(Instr::Br { cond: c, then_bb: body_bb, else_bb: end_bb });
                 self.cur = body_bb;
+                self.loops.push((end_bb, head));
                 for st in body {
                     self.lower_stmt(st)?;
                 }
+                self.loops.pop();
                 self.push(Instr::Jmp(head));
                 self.cur = end_bb;
             }
@@ -1407,8 +1423,16 @@ impl Builder {
                 self.push(Instr::Bin { dst: cv, op: Op::Lt, l: lv, r: ev });
                 self.push(Instr::Br { cond: cv, then_bb: body_bb, else_bb: end_bb });
                 self.cur = body_bb;
+                let has_continue = body.iter().any(stmt_has_continue);
+                let incr_bb = if has_continue { Some(self.new_block()) } else { None };
+                self.loops.push((end_bb, incr_bb.unwrap_or(head)));
                 for st in body {
                     self.lower_stmt(st)?;
+                }
+                self.loops.pop();
+                if let Some(ib) = incr_bb {
+                    self.push(Instr::Jmp(ib));
+                    self.cur = ib;
                 }
                 let lv2 = self.value();
                 self.push(Instr::LoadVar { dst: lv2, var: idx });
@@ -1419,6 +1443,20 @@ impl Builder {
                 self.push(Instr::StoreVar { var: idx, src: nv });
                 self.push(Instr::Jmp(head));
                 self.cur = end_bb;
+            }
+            StmtKind::Break => {
+                let Some((brk, _)) = self.loops.last().copied() else {
+                    return Err(format!("line {}: IR: break outside a loop", s.line));
+                };
+                self.push(Instr::Jmp(brk));
+                self.cur = self.new_block();
+            }
+            StmtKind::Continue => {
+                let Some((_, cont)) = self.loops.last().copied() else {
+                    return Err(format!("line {}: IR: continue outside a loop", s.line));
+                };
+                self.push(Instr::Jmp(cont));
+                self.cur = self.new_block();
             }
             other => {
                 return Err(format!(

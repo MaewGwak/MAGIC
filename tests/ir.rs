@@ -113,6 +113,39 @@ fn main() {
 "#,
         ),
         (
+            "break_continue_loops",
+            r#"
+fn main() {
+    var i = 0; var t = 0;
+    while i < 20 {
+        i = i + 1;
+        if i == 7 { break; }
+        if i % 2 == 0 { continue; }
+        t = t + i;
+    }
+    print(i); print(t);
+    var s = 0;
+    for k in 0..10 {
+        if k % 3 == 0 { continue; }
+        if k == 8 { break; }
+        s = s + k;
+    }
+    print(s);
+    var n = 0; var a = 0;
+    while a < 5 {
+        a = a + 1;
+        var b = 0;
+        while b < 5 {
+            b = b + 1;
+            if b == 3 { break; }
+            n = n + 1;
+        }
+    }
+    print(n);
+}
+"#,
+        ),
+        (
             "bool_array_param",
             r#"
 fn count(b: [bool], n: i32) -> i32 {
