@@ -798,6 +798,65 @@ impl Builder {
                         return r;
                     }
                 }
+                if (name == "net_read_at" || name == "net_write_at") && args.len() == 4 {
+                    let fd = self.lower_expr(&args[0])?;
+                    let buf = self.lower_expr(&args[1])?;
+                    let off = self.lower_expr(&args[2])?;
+                    let len = self.lower_expr(&args[3])?;
+                    let cap = match &args[1].kind {
+                        ExprKind::Var(vn) => {
+                            if let Some((_, l)) = self.arrays.get(vn).copied() {
+                                let v = self.value();
+                                match l {
+                                    LenRef::Const(n) => self.push(Instr::Const { dst: v, v: n }),
+                                    LenRef::Var(var) => self.push(Instr::LoadVar { dst: v, var }),
+                                }
+                                self.vty[v.0 as usize] = Ty::I32;
+                                v
+                            } else if let Some((_, _, lv, _, _)) = self.vecs.get(vn).copied() {
+                                let v = self.value();
+                                self.push(Instr::LoadVar { dst: v, var: lv });
+                                self.vty[v.0 as usize] = Ty::I32;
+                                v
+                            } else {
+                                return Err(format!("line {}: IR: net_read_at buffer must be an array or vector", e.line));
+                            }
+                        }
+                        _ => {
+                            return Err(format!(
+                                "line {}: IR: net_read_at buffer must be a variable",
+                                e.line
+                            ))
+                        }
+                    };
+                    let zero = self.value();
+                    self.push(Instr::Const { dst: zero, v: 0 });
+                    self.vty[zero.0 as usize] = Ty::I32;
+                    for (l, r, op) in [(off, zero, Op::Ge), (len, zero, Op::Ge), (off, cap, Op::Le)] {
+                        let c = self.value();
+                        self.push(Instr::Bin { dst: c, op, l, r });
+                        self.vty[c.0 as usize] = Ty::Bool;
+                        self.vbool[c.0 as usize] = true;
+                        self.push(Instr::Assert { cond: c, line: e.line });
+                    }
+                    let room = self.value();
+                    self.push(Instr::Bin { dst: room, op: Op::Sub, l: cap, r: off });
+                    self.vty[room.0 as usize] = Ty::I32;
+                    let c = self.value();
+                    self.push(Instr::Bin { dst: c, op: Op::Le, l: len, r: room });
+                    self.vty[c.0 as usize] = Ty::Bool;
+                    self.vbool[c.0 as usize] = true;
+                    self.push(Instr::Assert { cond: c, line: e.line });
+                    let dst = self.value();
+                    let label = if name == "net_read_at" { ".Lnet_read_at" } else { ".Lnet_write_at" };
+                    self.push(Instr::Call {
+                        dst: Some(dst),
+                        name: label.to_string(),
+                        args: vec![fd, buf, off, len],
+                    });
+                    self.vty[dst.0 as usize] = Ty::I32;
+                    return Ok(dst);
+                }
                 let builtin = match name.as_str() {
                     "file_open" => Some(".Lmf_open"),
                     "file_close" => Some(".Lmf_close"),
@@ -1472,12 +1531,6 @@ fn lower_func(
                 nparams += 1;
             }
             ParamTy::Array(elem) => {
-                if *elem == Ty::Bool {
-                    return Err(format!(
-                        "IR: `{}` takes a bit-packed `[bool]` parameter, not supported yet",
-                        f.name
-                    ));
-                }
                 let pv = b.var(name);
                 let lv = b.nvars;
                 b.nvars += 1;
@@ -5297,6 +5350,8 @@ pub fn emit(prog: &IrProgram) -> String {
     // Network helpers mirroring the native backend's inline sequences.
     out.push_str(".p2align 4\n.Lmf_flush:\n    xor %edi, %edi\n    jmp fflush@PLT\n");
     out.push_str(".p2align 4\n.Lnet_read:\n    jmp read@PLT\n");
+    out.push_str(".p2align 4\n.Lnet_read_at:\n    add %rdx, %rsi\n    mov %rcx, %rdx\n    jmp read@PLT\n");
+    out.push_str(".p2align 4\n.Lnet_write_at:\n    add %rdx, %rsi\n    mov %rcx, %rdx\n    jmp write@PLT\n");
     out.push_str(".p2align 4\n.Lnet_write:\n    jmp write@PLT\n");
     out.push_str(".p2align 4\n.Lnet_close:\n    jmp close@PLT\n");
     out.push_str(".p2align 4\n.Lnet_accept:\n    xor %esi, %esi\n    xor %edx, %edx\n    jmp accept@PLT\n");

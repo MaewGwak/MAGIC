@@ -30,6 +30,17 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.69 — IR parity: bit-packed bool parameters and `net_read_at` (2026-11-06)
+
+Bit-packed `[bool]` parameters now lower in the IR (pointer + length, same representation the IR
+already used for local bool arrays), and `net_read_at`/`net_write_at` are supported with explicit
+range checks (offset/length non-negative, offset ≤ capacity, length ≤ capacity − offset) before the
+runtime performs `read`/`write` at `buf + off`. The existing IR TCP test now uses the `_at` forms for
+both directions, and a differential case covers the bool-array parameter. A scripted parity audit
+compiles every tracked `.magic` program through both the C and IR backends: **60/60 now compile with
+IR**, including `pgserver_magic.magic`. Remaining known IR gaps before switching the default backend:
+`break`/`continue`, struct-return functions and struct-literal expressions outside `let`/`push`.
+
 ## v0.8.68 — stack traces in the C backend too (2026-11-06)
 
 The C backend's panic helper now takes a backtrace and symbolizes it with `dladdr`, retrying the

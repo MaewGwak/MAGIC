@@ -113,6 +113,21 @@ fn main() {
 "#,
         ),
         (
+            "bool_array_param",
+            r#"
+fn count(b: [bool], n: i32) -> i32 {
+    var i = 0; var c = 0;
+    while i < n { if b[i] { c = c + 1; } i = i + 1; }
+    return c;
+}
+fn main() {
+    var b: [bool] = [false; 8];
+    b[1] = true; b[5] = true;
+    print(count(b, 8));
+}
+"#,
+        ),
+        (
             "i64_index_not_narrowed",
             r#"
 fn main() {
@@ -281,11 +296,11 @@ fn main() {
     flush();
     var cfd = net_accept(lfd);
     var buf: [u8] = [0; 16];
-    var n = net_read(cfd, buf, 4);
+    var n = net_read_at(cfd, buf, 2, 4);
     print(n);
     var out: [u8] = [0; 4];
     out[0] = 112; out[1] = 111; out[2] = 110; out[3] = 103;
-    net_write(cfd, out, 4);
+    net_write_at(cfd, out, 0, 4);
     net_close(cfd);
     net_close(lfd);
 }
@@ -308,7 +323,7 @@ fn main() {{
     out[0] = 112; out[1] = 105; out[2] = 110; out[3] = 103;
     net_write(fd, out, 4);
     var buf: [u8] = [0; 4];
-    var n = net_read(fd, buf, 4);
+    var n = net_read_at(fd, buf, 0, 4);
     print(n);
     print(buf[0]);
     net_close(fd);
