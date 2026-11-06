@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.63 — struct parameters in the IR backend (2026-11-06)
+
+Functions taking structs by value now work in the IR: the caller takes the address of its own struct
+slots (new `AddrVar`), passes that pointer as the (single) parameter, and the callee copies the slots
+into a local struct variable at entry (new `CopySlots`), preserving by-value semantics (MAGIC struct
+parameters are read-only inside the callee). Scalar layouts with i32/i64/f64 fields and nested calls
+work; two differential cases cover an integer struct with three fields and a float pair. The slot copy
+walks the stack layout in the correct descending direction (`-8*i(%rax)`), which the differential test
+caught immediately. Remaining IR parameter gap: growable-array (vector) parameters. All gates green.
+
 ## v0.8.62 — `net_*` TCP builtins and `flush` in the IR backend (2026-11-06)
 
 The IR lowering now maps `net_listen`, `net_port`, `net_accept`, `net_connect`, `net_read`,

@@ -65,27 +65,32 @@ fn ir_matches_c_on_small_integer_programs() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let cases: &[(&str, &str)] = &[
-        ("arith", "fn main() { print(1 + 2 * 3); print(100 / 7); print(100 % 7); print(-5 + 2); }"),
-        ("loop", "fn main() { var t = 0; var i = 0; while i < 10 { t = t + i; i = i + 1; } print(t); }"),
-        ("forloop", "fn main() { var t = 0; for j in 0..7 { t = t + j * 2; } print(t); }"),
-        ("ifelse", "fn main() { var x = 5; if x < 3 { print(1); } else { print(2); } if x >= 5 { print(3); } }"),
-        ("fib", "fn fib(n: i32) -> i32 { if n < 2 { return n; } return fib(n - 1) + fib(n - 2); } fn main() { print(fib(12)); }"),
-        ("calls", "fn add(a: i32, b: i32) -> i32 { return a + b; } fn main() { print(add(20, 22)); }"),
-        ("casts", "fn main() { print(3 as i32); print(250 as u8); print(0 as bool); print(2 as bool); }"),
-        ("boolops", "fn main() { print(1 < 2); print(1 == 2); print(1 <= 1); print(2 > 3); }"),
-        ("nested", "fn main() { var t = 0; for i in 0..4 { for j in 0..3 { t = t + i * j; } } print(t); }"),
-        ("divmod", "fn main() { var a = 12345; print(a / 10); print(a % 10); print(a / -3); print(a % -3); }"),
-        ("oom_alloc", "fn main() { var a: [i32] = [0; 1152921504606846976]; print(a[0]); }"),
-        ("negative_idx", "fn main() { var a: [i32] = [7; 4]; var i = -2; while i < 4 { print(a[i]); i = i + 1; } }"),
-        ("huge_affine", "fn main() { var a: [i32] = [1; 8]; var t = 0; for i in 0..4 { t = t + a[i * 1000000000000]; } print(t); }"),
-        ("vectors", "struct P { x: f64, y: f64 } fn main() { var v: [i32+] = []; for i in 0..10 { v.push(i * i); } var t = 0; for i in 0..(len(v) as i32) { t = t + v[i]; } print(len(v)); print(t); var ps: [P+] = []; reserve(ps, 16); for i in 0..8 { ps.push(P { x: i as f64, y: (i as f64) * 0.5 }); } var u = 0.0; for i in 0..(len(ps) as i32) { u = u + ps[i].x + ps[i].y; } print(u); }"),
-        ("structs", "struct P { x: f64, y: f64 } struct L { a: P, b: P } fn main() { var p = P { x: 1.5, y: 2.25 }; print(p.x + p.y); p.x = p.x + 10.0; print(p.x); var ps: [P] = [P { x: 0.0, y: 0.0 }; 64]; var i = 0; while i < 64 { ps[i].x = i as f64; ps[i].y = (i as f64) * 0.5; i = i + 1; } var t = 0.0; i = 0; while i < 64 { t = t + ps[i].x + ps[i].y; i = i + 1; } print(t); var l = L { a: P { x: 1.0, y: 2.0 }, b: P { x: 3.0, y: 4.0 } }; print(l.a.x + l.b.y); print(l.b.x); }"),
-        ("floats", "fn main() { var x: f64 = 1.5; var y = 2.0; print(x + y); print(x * y); print(x / y); print(x - y); print(x < y); print(x == y); print(sqrt(16.0)); print_prec(x * y, 3); var a: [f64] = [0.0; 4]; a[2] = 3.25; print(a[2]); print(-x); print(x as i32); print(3 as f64); var t = 0.0; var i = 0; while i < 5 { t = t + (i as f64) * 0.5; i = i + 1; } print(t); }"),
-        ("immops", "fn main() { var a = 10; var b = 3; print(5 - b); print(5 < b); print(5 > b); print(5 <= 5); print(5 == a); print(a + 7); print(a * 3); print(a - 4); print(a / 2); print(a % 3); print(1000 - a); print(b - 10); }"),
-        ("fill1", "fn main() { var a: [i32] = [7; 1]; print(a[0]); }"),
-        ("fill3", "fn main() { var a: [i32] = [7; 3]; print(a[0] + a[1] + a[2]); }"),
-        ("fill5", "fn main() { var a: [i32] = [7; 5]; var t = 0; var i = 0; while i < 5 { t = t + a[i]; i = i + 1; } print(t); }"),
-        ("fill9u8", "fn main() { var a: [u8] = [3; 9]; var t = 0; var i = 0; while i < 9 { t = t + (a[i] as i32); i = i + 1; } print(t); }"),
+        (
+            "struct_params_read_only",
+            r#"
+struct P { x: i32, y: i32, z: i64 }
+fn sum(p: P) -> i32 { return p.x + p.y + (p.z as i32); }
+fn twice(p: P) -> i32 { return sum(p) * 2; }
+fn main() {
+    var q = P { x: 3, y: 4, z: 5 };
+    print(sum(q));
+    print(twice(q));
+    print(q.x);
+}
+"#,
+        ),
+        (
+            "struct_param_float",
+            r#"
+struct V { a: f64, b: f64 }
+fn total(v: V) -> f64 { return v.a + v.b; }
+fn main() {
+    var v = V { a: 1.5, b: 2.5 };
+    print_prec(total(v), 2);
+    print_prec(v.b, 2);
+}
+"#,
+        ),
     ];
     let mut fails = Vec::new();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

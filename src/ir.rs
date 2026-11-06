@@ -58,6 +58,8 @@ pub enum Instr {
     ArenaEnd { mark: Value },
     Fill { ptr_var: usize, elem: Ty, esz: u64, len: Value, value: Value },
     StructInit { var_index: usize, slots: usize, fields: Vec<(u64, Ty, Value)> },
+    AddrVar { dst: Value, var_index: usize, slots: usize },
+    CopySlots { ptr_var: usize, var_index: usize, slots: usize },
     FieldLoad { dst: Value, var_index: usize, slots: usize, off: u64, ty: Ty },
     FieldStore { var_index: usize, slots: usize, off: u64, ty: Ty, src: Value },
     IndexFieldLoad { dst: Value, ptr_var: usize, idx: Value, size: u64, off: u64, ty: Ty, len: LenRef, line: usize },
@@ -298,6 +300,12 @@ impl Builder {
                 Ok(dst)
             }
             ExprKind::Var(n) => {
+                if let Some((var_index, slots, _)) = self.struct_vars.get(n).copied() {
+                    let dst = self.value();
+                    self.push(Instr::AddrVar { dst, var_index, slots });
+                    self.vty[dst.0 as usize] = Ty::I64;
+                    return Ok(dst);
+                }
                 if let Some(v) = self
                     .subst_stack
                     .iter()
@@ -1303,9 +1311,18 @@ fn lower_func(
     b.struct_defs = structs.to_vec();
     b.inlinable = inlinable.clone();
     let mut nparams = 0usize;
+    let mut struct_params: Vec<(String, u16, usize)> = Vec::new();
     for (name, pty) in &f.params {
         match pty {
             ParamTy::Scalar(ty) => {
+                if let Ty::Struct(id) = ty {
+                    let ptr_name = format!("{}#ptr", name);
+                    let pv = b.var(&ptr_name);
+                    b.var_ty.insert(ptr_name.clone(), Ty::I64);
+                    struct_params.push((name.clone(), *id, pv));
+                    nparams += 1;
+                    continue;
+                }
                 b.var(name);
                 b.var_ty.insert(name.clone(), *ty);
                 nparams += 1;
@@ -1331,6 +1348,14 @@ fn lower_func(
                 ))
             }
         }
+    }
+    for (name, id, ptr_var) in struct_params {
+        let (size, _) = struct_layout(&b.struct_defs, id);
+        let slots = ((size + 7) / 8) as usize;
+        let var_index = b.nvars;
+        b.nvars += slots;
+        b.struct_vars.insert(name, (var_index, slots, id));
+        b.push(Instr::CopySlots { ptr_var, var_index, slots });
     }
     let (argc_var, argv_var) = if f.name == "main" {
         let a = b.nvars;
@@ -1960,6 +1985,8 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
         Instr::ArenaBegin { dst } => defs.push(*dst),
         Instr::ArenaEnd { mark } => uses.push(*mark),
         Instr::Str { dst, .. } => defs.push(*dst),
+        Instr::AddrVar { dst, .. } => defs.push(*dst),
+        Instr::CopySlots { .. } => {}
         Instr::FBin { dst, l, r, .. } | Instr::FCmp { dst, l, r, .. } => {
             uses.push(*l);
             uses.push(*r);
@@ -1977,6 +2004,7 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
             uses.push(*len);
             uses.push(*value);
         }
+        Instr::AddrVar { .. } | Instr::CopySlots { .. } => {}
         Instr::StructInit { fields, .. } => {
             for (_, _, v) in fields {
                 uses.push(*v);
@@ -2044,6 +2072,9 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::PrintPrec { .. }
                 | Instr::Print { float: true, .. }
                 | Instr::StructInit { .. }
+                | Instr::AddrVar { .. }
+                | Instr::CopySlots { .. }
+        | Instr::AddrVar { .. }
                 | Instr::VecNew { .. }
                 | Instr::VecReserve { .. }
                 | Instr::VecLen { .. }
@@ -2376,6 +2407,7 @@ fn emit_fast_block(
     };
     for (ii, ins) in instrs.iter().enumerate() {
         match ins {
+            Instr::AddrVar { .. } | Instr::CopySlots { .. } => {}
             Instr::Const { dst, v } => {
                 if ra.is_float(*dst) {
                     let d = ra.xdst(*dst);
@@ -3033,6 +3065,7 @@ fn emit_fast_block(
             | Instr::Print { .. }
             | Instr::PrintPrec { .. }
             | Instr::StructInit { .. }
+        | Instr::AddrVar { .. }
             | Instr::VecNew { .. }
             | Instr::VecReserve { .. }
             | Instr::VecLen { .. }
@@ -3288,6 +3321,7 @@ fn rewrite_operands(ins: &mut Instr, f: &dyn Fn(Value) -> Value) {
             rw(idx);
             rw(src);
         }
+        Instr::AddrVar { .. } | Instr::CopySlots { .. } => {}
         Instr::StructInit { fields, .. } => {
             for (_, _, v) in fields {
                 rw(v);
@@ -4428,6 +4462,25 @@ pub fn emit(prog: &IrProgram) -> String {
                             out.push_str("    mov stdin@GOTPCREL(%rip), %rax\n    mov (%rax), %rcx\n");
                         }
                         out.push_str("    call fwrite@PLT\n");
+                    }
+                    Instr::AddrVar { dst, var_index, slots } => {
+                        let _ = slots;
+                        out.push_str(&format!("    lea -{}(%rbp), %rax\n", varoff(*var_index)));
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::CopySlots { ptr_var, var_index, slots } => {
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %rax\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*ptr_var)));
+                        }
+                        for i in 0..*slots {
+                            out.push_str(&format!("    mov -{}(%rax), %rdx\n", i * 8));
+                            out.push_str(&format!(
+                                "    mov %rdx, -{}(%rbp)\n",
+                                varoff(var_index + i)
+                            ));
+                        }
                     }
                     Instr::StructInit { var_index, slots, fields } => {
                         let base = -8 * (*var_index + *slots) as i64;
