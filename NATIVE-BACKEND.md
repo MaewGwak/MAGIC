@@ -179,7 +179,8 @@ optimisation must pass; a mismatch fails the test with the program names. Curren
 All three backends are within noise: these programs are payload-dominated and every backend already
 bit-packs booleans and zero-fills allocations. A structural 5x memory advantage over the best C
 baseline is not available from codegen alone; it requires runtime memory policies (arena/region
-allocation, compressed containers). This audit gates the 1.0 memory claim.
+allocation, compressed containers). This audit gates the 1.0 memory claim. v0.8.38 additionally uses
+`shl` for power-of-two struct/vector strides (vecpart 203 → 191 ms).
 
 ## IR vs AST vs C (v0.8.31 medians)## IR vs AST vs C (v0.8.31 medians)
 

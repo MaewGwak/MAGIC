@@ -2499,7 +2499,7 @@ fn emit_fast_block(
                     }
                     let t = ra.alloc_excluding(&[i]);
                     ra.out.push_str(&format!("    mov {}, {}\n", POOL[i].0, POOL[t].0));
-                    ra.out.push_str(&format!("    imul ${}, {}\n", size, POOL[t].0));
+                    ra.out.push_str(&scale_insn(*size, POOL[t].0));
                     if *off > 0 {
                         ra.out.push_str(&format!("    add ${}, {}\n", off, POOL[t].0));
                     }
@@ -2579,7 +2579,7 @@ fn emit_fast_block(
                     }
                     let t = ra.alloc_excluding(&[x, i]);
                     ra.out.push_str(&format!("    mov {}, {}\n", POOL[i].0, POOL[t].0));
-                    ra.out.push_str(&format!("    imul ${}, {}\n", size, POOL[t].0));
+                    ra.out.push_str(&scale_insn(*size, POOL[t].0));
                     if *off > 0 {
                         ra.out.push_str(&format!("    add ${}, {}\n", off, POOL[t].0));
                     }
@@ -2612,7 +2612,7 @@ fn emit_fast_block(
                 } else {
                     ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
                 }
-                ra.out.push_str(&format!("    imul ${}, %rax\n", size));
+                ra.out.push_str(&scale_insn(*size, "%rax"));
                 if *off > 0 {
                     ra.out.push_str(&format!("    add ${}, %rax\n", off));
                 }
@@ -3167,7 +3167,7 @@ pub fn emit(prog: &IrProgram) -> String {
                             out.push_str(&format!("    mov -{}(%rbp), %rdi\n", varoff(*ptr_var)));
                         }
                         out.push_str("    mov %r11, %rsi\n");
-                        out.push_str(&format!("    imul ${}, %rsi\n", esz));
+                        out.push_str(&scale_insn(*esz, "%rsi"));
                         out.push_str("    push %r11\n    sub $8, %rsp\n");
                         out.push_str("    call realloc@PLT\n");
                         out.push_str("    add $8, %rsp\n    pop %r11\n");
@@ -3195,7 +3195,7 @@ pub fn emit(prog: &IrProgram) -> String {
                             out.push_str(&format!("    mov -{}(%rbp), %rdi\n", varoff(*ptr_var)));
                         }
                         out.push_str("    lea (%rcx,%rcx), %rsi\n");
-                        out.push_str(&format!("    imul ${}, %rsi\n", esz));
+                        out.push_str(&scale_insn(*esz, "%rsi"));
                         out.push_str("    push %r8\n    push %r11\n");
                         out.push_str("    call realloc@PLT\n");
                         out.push_str("    pop %r11\n    pop %r8\n");
@@ -3214,7 +3214,7 @@ pub fn emit(prog: &IrProgram) -> String {
                             out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
                         }
                         out.push_str("    mov %r8, %rax\n");
-                        out.push_str(&format!("    imul ${}, %r11\n", esz));
+                        out.push_str(&scale_insn(*esz, "%r11"));
                         match ty {
                             Ty::U8 | Ty::Bool => out.push_str("    movb %al, (%r10,%r11)\n"),
                             Ty::I32 => out.push_str("    movl %eax, (%r10,%r11)\n"),
@@ -3232,7 +3232,7 @@ pub fn emit(prog: &IrProgram) -> String {
                             out.push_str(&format!("    mov -{}(%rbp), %rdi\n", varoff(*ptr_var)));
                         }
                         out.push_str("    lea (%rcx,%rcx), %rsi\n");
-                        out.push_str(&format!("    imul ${}, %rsi\n", esz));
+                        out.push_str(&scale_insn(*esz, "%rsi"));
                         out.push_str("    push %r11\n    sub $8, %rsp\n");
                         out.push_str("    call realloc@PLT\n");
                         out.push_str("    add $8, %rsp\n    pop %r11\n");
@@ -3250,7 +3250,7 @@ pub fn emit(prog: &IrProgram) -> String {
                         } else {
                             out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
                         }
-                        out.push_str(&format!("    imul ${}, %r11, %r11\n", esz));
+                        out.push_str(&scale_insn(*esz, "%r11"));
                         out.push_str("    add %r11, %r10\n");
                         let tmp_base = -8 * (*tmp_var + *tmp_slots) as i64;
                         let mut done = 0u64;
@@ -3364,7 +3364,7 @@ pub fn emit(prog: &IrProgram) -> String {
                         } else {
                             out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
                         }
-                        out.push_str(&format!("    imul ${}, %r11, %r11\n", size));
+                        out.push_str(&scale_insn(*size, "%r11"));
                         out.push_str(&format!("    add ${}, %r11\n", off));
                         match ty {
                             Ty::U8 | Ty::Bool => out.push_str("    movzbq (%r10,%r11), %rax\n"),
@@ -3396,7 +3396,7 @@ pub fn emit(prog: &IrProgram) -> String {
                         } else {
                             out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
                         }
-                        out.push_str(&format!("    imul ${}, %r11, %r11\n", size));
+                        out.push_str(&scale_insn(*size, "%r11"));
                         out.push_str(&format!("    add ${}, %r11\n", off));
                         match ty {
                             Ty::U8 | Ty::Bool => out.push_str("    movb %r8b, (%r10,%r11)\n"),
@@ -3748,6 +3748,14 @@ fn peephole_asm(asm: String) -> String {
     let mut result = out.join("\n");
     result.push('\n');
     result
+}
+
+fn scale_insn(size: u64, reg: &str) -> String {
+    if size > 1 && (size & (size - 1)) == 0 {
+        format!("    shl ${}, {}\n", size.trailing_zeros(), reg)
+    } else {
+        format!("    imul ${}, {}\n", size, reg)
+    }
 }
 
 fn asm_escape(text: &str) -> String {

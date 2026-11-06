@@ -30,6 +30,13 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.38 — shift-based stride scaling in the IR (2026-11-06)
+
+Power-of-two struct sizes and vector element sizes now scale with `shl` instead of `imul` in the IR
+emitters (`IndexField`, vector reserve/push). Vecpart improves 203 → 191 ms; particles is unchanged
+(~763 ms) and matmul is within noise (~153 ms). Removing adjacent duplicate truncations was tried as
+a peephole and dropped again: it cost matmul 2 ms without helping anything else.
+
 ## v0.8.37 — peak-memory audit across the three backends (2026-11-06)
 
 Measured maximum RSS (`/usr/bin/time -f %M`) for every supported benchmark:
