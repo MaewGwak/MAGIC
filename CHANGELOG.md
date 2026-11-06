@@ -30,6 +30,21 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v1.0.0 — first stable release (2026-11-07)
+
+Independent audit (Vera) reports COMPLETE on clauses 1–6 after v0.10.18. Evidence at this tag:
+peak RSS of freestanding static builds is below gcc -O3, g++ -O3 and rustc -O on all eight workloads
+(sieve 11.9 MB vs 96.9/99.2/97.1, 8.1x; particles 30.4 vs 32.1/34.3/32.3); compile is fastest cold
+and incremental; runtime panics report `file:line` plus a symbolized (or raw static) stack trace for
+OOB, division, assertions, imports, quoted/backslash paths; seven workloads have a best MAGIC variant
+at/ahead of the fastest baseline (n-body's C-backend AVX2 198 ms is inside 1.25x of Rust 227, while
+native IR is 613 ms); the native `par for` raytracer scales 92→17 ms over 1–16 threads; static ELFs
+are 5–13 KB with no libc/interpreter and cover integer/bool, struct vectors, par, file, TCP, env and
+fixed-point float printing (precision <=9); 171 tests and every gate (fuzz, parity, low-end, static,
+static-memory, scaling) are green. Documented limits: n-body native IR speed, `%g`/`print(f64)` in
+static mode (explicitly rejected), no physical 2 GB/GPU device (2 GiB/1-CPU proxy), and raw static
+frame addresses instead of symbols.
+
 ## v0.10.18 — struct-vector pop on parameters (2026-11-07)
 
 `VecParamPop` and a bare `pop(v)` now return a temporary struct value address for struct element
