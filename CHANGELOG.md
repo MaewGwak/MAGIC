@@ -1,3 +1,10 @@
+## v0.11.3 — vectorised matmul zeroing (2026-11-07)
+
+The matmul interchange now zeroes `c` with a vectorised Fill (plus one bounds check) instead of a
+scalar loop. Official portable matrix: matmul default 6 ms, i-k-j 5 ms (C 10, C++ 11); optimized
+baseline remains a 5-vs-5 tie with gcc -O3 -march=native, so the strict default gate is still not
+met. All gates pass, 171 tests, parity 60/60, static/static-memory/scaling green.
+
 ## v0.11.2 — AVX2 Saxpy with CPUID dispatch (2026-11-07)
 
 The guarded saxpy now has an AVX2 path selected at startup by CPUID/XGETBV, with the existing

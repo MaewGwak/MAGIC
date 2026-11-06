@@ -2178,17 +2178,8 @@ impl Builder {
         let var = |n: &str| mk(ExprKind::Var(n.to_string()));
         let int = |v: i64| mk(ExprKind::Int(v));
         let assign = |name: &str, value: Expr| Stmt { kind: StmtKind::Assign { name: name.to_string(), value }, line };
-        let zname = format!("#mmz{}", line);
         let avname = format!("#mmav{}", line);
         let nn = mk(ExprKind::Bin { op: BinOp::Mul, l: Box::new(end_i.as_ref().clone()), r: Box::new(end_i.as_ref().clone()) });
-        let zero_body = vec![
-            Stmt { kind: StmtKind::IndexAssign { name: cname.clone(), index: var(zname.as_str()), value: int(0) }, line },
-            assign(&zname, mk(ExprKind::Bin { op: BinOp::Add, l: Box::new(var(zname.as_str())), r: Box::new(int(1)) })),
-        ];
-        let zero_loop = vec![
-            Stmt { kind: StmtKind::Let { name: zname.clone(), ty: None, mutable: true, init: int(0) }, line },
-            Stmt { kind: StmtKind::While { cond: mk(ExprKind::Bin { op: BinOp::Lt, l: Box::new(var(zname.as_str())), r: Box::new(nn) }), body: zero_body }, line },
-        ];
         let saxpy_stmt = Stmt {
             kind: StmtKind::IndexAssign {
                 name: cname.clone(),
@@ -2241,7 +2232,24 @@ impl Builder {
         ];
         let mut ibody = kloop;
         ibody.push(assign(&i, mk(ExprKind::Bin { op: BinOp::Add, l: Box::new(var(i.as_str())), r: Box::new(int(1)) })));
-        let mut stmts = zero_loop;
+        // Zero c with a vectorised Fill instead of a scalar loop.
+        let cptr = *self.vars.get(cname).ok_or_else(|| format!("line {}: IR: unknown array `{}`", line, cname))?;
+        let (_, clen) = *self.arrays.get(cname).ok_or_else(|| format!("line {}: IR: unknown array `{}`", line, cname))?;
+        let nn_const = climit.saturating_mul(climit);
+        let fill_len = self.value();
+        self.push(Instr::Const { dst: fill_len, v: nn_const });
+        self.vty[fill_len.0 as usize] = Ty::I64;
+        let fill_zero = self.value();
+        self.push(Instr::Const { dst: fill_zero, v: 0 });
+        self.vty[fill_zero.0 as usize] = Ty::I32;
+        if nn_const > 0 {
+            let last = self.value();
+            self.push(Instr::Const { dst: last, v: nn_const - 1 });
+            self.vty[last.0 as usize] = Ty::I64;
+            self.push(Instr::BoundsCheck { idx: last, len: clen, line });
+        }
+        self.push(Instr::Fill { ptr_var: cptr, elem: Ty::I32, esz: 4, len: fill_len, value: fill_zero });
+        let mut stmts: Vec<Stmt> = Vec::new();
         stmts.push(Stmt {
             kind: StmtKind::While {
                 cond: mk(ExprKind::Bin { op: BinOp::Lt, l: Box::new(var(i.as_str())), r: Box::new(end_i.as_ref().clone()) }),
