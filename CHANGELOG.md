@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.51 — per-block register pools and fast division (2026-11-06)
+
+The register pool is now chosen per basic block: all six caller-saved registers by default, minus
+`%rsi`/`%rdi` in blocks with bit-packed boolean accesses and minus `%rdx` in blocks with division. The
+five callee-saved registers are always saved in the prologue, so the registers not occupied by
+promoted variables become extra temporaries (up to eleven GPRs in simple blocks). `Div`/`Rem` moved
+out of the slot emitter into the register path (`cqo; idiv`, zero-divisor panic, result via
+`%rax`/`%rdx`). The full differential gate passes; btree improves 178 → 158 ms and hashmap 108 → 96 ms
+(−11% each). Other benchmarks stay within the historical run-to-run spread.
+
 ## v0.8.50 — division fast-path attempt reverted (2026-11-06)
 
 Moving `Div`/`Rem` out of the slot emitter and into the register-allocated path (with a per-block

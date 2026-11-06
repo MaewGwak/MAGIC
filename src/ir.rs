@@ -2013,18 +2013,22 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::Assert { .. }
                 | Instr::ArenaBegin { .. }
                 | Instr::ArenaEnd { .. }
-                | Instr::Bin { op: Op::Div | Op::Rem, .. }
         )
     })
 }
 
-const POOL: [(&str, &str, &str); 6] = [
+const POOL: [(&str, &str, &str); 11] = [
     ("%rdx", "%edx", "%dl"),
     ("%rsi", "%esi", "%sil"),
     ("%rdi", "%edi", "%dil"),
     ("%r8", "%r8d", "%r8b"),
     ("%r9", "%r9d", "%r9b"),
     ("%r11", "%r11d", "%r11b"),
+    ("%rbx", "%ebx", "%bl"),
+    ("%r12", "%r12d", "%r12b"),
+    ("%r13", "%r13d", "%r13b"),
+    ("%r14", "%r14d", "%r14b"),
+    ("%r15", "%r15d", "%r15b"),
 ];
 
 struct RegAlloc<'a> {
@@ -2536,6 +2540,20 @@ fn emit_fast_block(
                     (None, Some(i)) => ra.dst_at(*dst, i),
                     (None, None) => ra.dst_excluding(*dst, &[a, b]),
                 };
+                if matches!(op, Op::Div | Op::Rem) {
+                    ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
+                    ra.out.push_str(&format!("    mov {}, %rcx\n", POOL[b].0));
+                    ra.out.push_str("    test %rcx, %rcx\n    jne 1f\n");
+                    ra.out.push_str("    lea .Ldiv0(%rip), %rdi\n    call .Lir_panic\n1:\n");
+                    ra.out.push_str("    cqo\n    idiv %rcx\n");
+                    if matches!(op, Op::Rem) {
+                        ra.out.push_str("    mov %rdx, %rax\n");
+                    }
+                    ra.out.push_str(&format!("    mov %rax, {}\n", POOL[d].0));
+                    ra.def_store(*dst, d);
+                    ra.free_dead(ii);
+                    continue;
+                }
                 let is_cmp = matches!(
                     op,
                     Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge
@@ -3365,14 +3383,6 @@ pub fn emit(prog: &IrProgram) -> String {
             .map(|(i, (var, _))| (var, ["%rbx", "%r12", "%r13", "%r14", "%r15"][i]))
             .collect();
         let var_regs: HashMap<usize, &'static str> = chosen.iter().copied().collect();
-        let has_bool = f.blocks.iter().any(|b| {
-            b.instrs.iter().any(|i| {
-                matches!(
-                    i,
-                    Instr::IndexLoad { elem: Ty::Bool, .. } | Instr::IndexStore { elem: Ty::Bool, .. }
-                )
-            })
-        });
         let mut fn_var_consts: HashMap<usize, i64> = HashMap::new();
         let mut fn_vals: HashMap<Value, i64> = HashMap::new();
         for _ in 0..6 {
@@ -3383,22 +3393,19 @@ pub fn emit(prog: &IrProgram) -> String {
             }
             fn_var_consts = next;
         }
-        let pool: Vec<usize> = if has_bool {
-            vec![0, 3, 4, 5]
-        } else {
-            (0..POOL.len()).collect()
-        };
 
         out.push_str(".p2align 4\n");
         out.push_str(&format!(".globl {}\n.type {}, @function\n{}:\n", f.name, f.name, f.name));
         out.push_str("    push %rbp\n    mov %rsp, %rbp\n");
         let frame = 8 * (f.nvars + f.nvalues);
         let frame = (frame + 15) & !15;
-        let pad = if chosen.len() % 2 == 1 { 8 } else { 0 };
+        // Push all five callee-saved registers: the first `chosen.len()` hold
+        // promoted variables and the rest become extra temporaries.
+        let pad = 8usize;
         if frame + pad > 0 {
             out.push_str(&format!("    sub ${}, %rsp\n", frame + pad));
         }
-        for i in 0..chosen.len() {
+        for i in 0..5 {
             out.push_str(&format!("    push {}\n", ["%rbx", "%r12", "%r13", "%r14", "%r15"][i]));
         }
         let regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
@@ -3477,6 +3484,30 @@ pub fn emit(prog: &IrProgram) -> String {
             out.push_str(".p2align 4\n");
             out.push_str(&format!("{}:\n", lblock(bb)));
             if !slow_block(&b.instrs) {
+                let block_bool = b.instrs.iter().any(|i| {
+                    matches!(
+                        i,
+                        Instr::IndexLoad { elem: Ty::Bool, .. }
+                            | Instr::IndexStore { elem: Ty::Bool, .. }
+                    )
+                });
+                let block_div = b
+                    .instrs
+                    .iter()
+                    .any(|i| matches!(i, Instr::Bin { op: Op::Div | Op::Rem, .. }));
+                let mut block_pool: Vec<usize> = Vec::new();
+                for i in 0..6 {
+                    if block_bool && (i == 1 || i == 2) {
+                        continue;
+                    }
+                    if block_div && i == 0 {
+                        continue;
+                    }
+                    block_pool.push(i);
+                }
+                for i in 6 + chosen.len()..11 {
+                    block_pool.push(i);
+                }
                 let mut last_use: HashMap<Value, usize> = HashMap::new();
                 for (ii, ins) in b.instrs.iter().enumerate() {
                     let mut u = Vec::new();
@@ -3530,7 +3561,7 @@ pub fn emit(prog: &IrProgram) -> String {
                     &live_out[bb],
                     &f.name,
                     &var_regs,
-                    &pool,
+                    &block_pool,
                     &last_use,
                     &fn_vals,
                     &deferred,
@@ -4177,7 +4208,7 @@ pub fn emit(prog: &IrProgram) -> String {
             }
         }
         out.push_str(&format!(".L{}_ret:\n", f.name));
-        for i in (0..chosen.len()).rev() {
+        for i in (0..5).rev() {
             out.push_str(&format!("    pop {}\n", ["%rbx", "%r12", "%r13", "%r14", "%r15"][i]));
         }
         out.push_str("    leave\n    ret\n");
