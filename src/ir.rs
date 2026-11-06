@@ -1921,7 +1921,13 @@ impl Builder {
     }
 
     fn lower_stmt(&mut self, s: &Stmt) -> Result<(), String> {
-        if matches!(s.kind, StmtKind::If { .. } | StmtKind::While { .. }) {
+        if matches!(
+            s.kind,
+            StmtKind::If { .. }
+                | StmtKind::While { .. }
+                | StmtKind::For { par: false, .. }
+                | StmtKind::Arena { .. }
+        ) {
             self.scopes.push(self.save_binds());
         }
         match &s.kind {
@@ -1954,6 +1960,7 @@ impl Builder {
                 }
                 self.arena_depth -= 1;
                 self.push(Instr::ArenaEnd { mark });
+                if let Some(b) = self.scopes.pop() { self.restore_binds(b); }
                 return Ok(());
             }
             StmtKind::Assert { cond } => {
@@ -2374,9 +2381,9 @@ impl Builder {
                 self.cur = end_bb;
             }
             StmtKind::While { cond, body } => {
-                // Blocked on lexical scoping: the IR builder reuses a variable
-                // slot for a shadowing declaration, so a guarded saxpy cannot
-                // distinguish sibling re-declarations from real shadowing yet.
+                if self.try_lower_saxpy(cond, body, s.line)? {
+                    return Ok(());
+                }
                 let head = self.new_block();
                 let body_bb = self.new_block();
                 let end_bb = self.new_block();
@@ -2430,7 +2437,7 @@ impl Builder {
                 }
                 }
                 let sv = self.lower_expr(start)?;
-                let idx = self.var(var);
+                let idx = self.declare_var(var);
                 self.push(Instr::StoreVar { var: idx, src: sv });
                 let head = self.new_block();
                 let body_bb = self.new_block();
@@ -2508,7 +2515,13 @@ impl Builder {
         ) {
             // Constants do not survive a merge or a loop.
             self.var_init_const.clear();
-            if matches!(s.kind, StmtKind::If { .. } | StmtKind::While { .. }) {
+            if matches!(
+                s.kind,
+                StmtKind::If { .. }
+                    | StmtKind::While { .. }
+                    | StmtKind::For { par: false, .. }
+                    | StmtKind::Arena { .. }
+            ) {
                 if let Some(b) = self.scopes.pop() { self.restore_binds(b); }
             }
         }

@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.96 — guarded saxpy re-enabled after scoping fix (2026-11-06)
+
+`for` bodies (fresh loop variable) and `arena` bodies now get the same binding snapshot/restore as
+`if`/`while`, and every declaration allocates a fresh slot. With the scope bug gone, the guarded
+saxpy recogniser is enabled again: local distinct i32 arrays, constant limit in `0..=i32::MAX`, a
+path-sensitive `j=0`, pure/effect-free limit/multiplier/index expressions, 64-bit index bases, and
+the audit repros g1,g2,g3,g13,g14,b1,b2,b5,b6,b7,alias_shift,s_min all match C. Matmul i-k-j is
+8 ms against C's 12 ms; the matrix is back to four outright wins. All gates pass, 168 tests, repo
+parity 60/60.
+
 ## v0.8.95 — lexical scoping for if/while and fresh declarations (2026-11-06)
 
 Every `let`/array declaration now allocates a fresh slot instead of overwriting a same-named outer
