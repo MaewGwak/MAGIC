@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.17 — struct-vector pop (2026-11-07)
+
+`var p: P = pop(v)` on a `[P+]` vector now lowers: a shared pop-prepare does the empty/length
+update, `ElemAddr` computes the last element address, and `CopySlots` copies the struct into the
+let variable's stack slots (registered under the let name, not the vector name). Repro prints
+`1` then `0` for length in IR and static; C already did. Regression covers C/IR output and the
+static gate. All gates pass, 171 tests, parity 60/60.
+
 ## v0.10.16 — local clear and mutable vector lengths (2026-11-07)
 
 Local `clear(v)` is lowered directly through the shared helper (it previously emitted an external

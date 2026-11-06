@@ -1017,4 +1017,10 @@ fn local_pop_and_empty_message() {
     let ci = run(clear_src, &dir, "clear_i", true, &cc_cmd).expect("IR clear");
     assert_eq!(cc.0, ci.0);
     assert_eq!(ci.0, "0\n9\n");
+
+    let ssrc = "struct P { x: i32, y: i32 }\nfn main() {\n    var v: [P+] = [];\n    v.push(P { x: 1, y: 2 });\n    var p: P = pop(v);\n    print(p.x);\n    print(len(v));\n}\n";
+    let sc = run(ssrc, &dir, "spop_c", false, &cc_cmd).expect("C struct pop");
+    let si = run(ssrc, &dir, "spop_i", true, &cc_cmd).expect("IR struct pop");
+    assert_eq!(sc.0, si.0);
+    assert_eq!(si.0, "1\n0\n");
 }

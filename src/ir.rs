@@ -63,6 +63,7 @@ pub enum Instr {
     Fill { ptr_var: usize, elem: Ty, esz: u64, len: Value, value: Value },
     StructInit { var_index: usize, slots: usize, fields: Vec<(u64, Ty, Value)> },
     AddrVar { dst: Value, var_index: usize, slots: usize },
+    ElemAddr { dst_var: usize, ptr_var: usize, idx: Value, size: u64 },
     CopySlots { ptr_var: usize, var_index: usize, slots: usize },
     CopySlotsTo { dst_ptr_var: usize, src: Value, slots: usize },
     Select { dst: Value, cond: Value, a: Value, b: Value, float: bool },
@@ -796,8 +797,8 @@ impl Builder {
         Ok(())
     }
 
-    fn lower_vec_pop(&mut self, name: &str, line: usize) -> Result<Value, String> {
-        let (elem, pv, lv, _, _) = *self
+    fn lower_vec_pop_prepare(&mut self, name: &str, line: usize) -> Result<(Ty, usize, usize, u64, Value), String> {
+        let (elem, pv, lv, _, esz) = *self
             .vecs
             .get(name)
             .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", line, name))?;
@@ -820,12 +821,34 @@ impl Builder {
         self.push(Instr::Bin { dst: newlen, op: Op::Sub, l: lenv, r: one });
         self.vty[newlen.0 as usize] = Ty::I32;
         self.push(Instr::StoreVar { var: lv, src: newlen });
+        Ok((elem, pv, lv, esz, newlen))
+    }
+
+    fn lower_vec_pop(&mut self, name: &str, line: usize) -> Result<Value, String> {
+        let (elem, pv, _lv, _esz, newlen) = self.lower_vec_pop_prepare(name, line)?;
         let dst = self.value();
         self.push(Instr::IndexLoad { dst, ptr_var: pv, idx: newlen, elem });
         self.vty[dst.0 as usize] = elem;
         self.vbool[dst.0 as usize] = elem == Ty::Bool;
         self.narrow[dst.0 as usize] = matches!(elem, Ty::I32 | Ty::U8 | Ty::Bool);
         Ok(dst)
+    }
+
+    fn lower_struct_vec_pop(&mut self, vec_name: &str, let_name: &str, line: usize) -> Result<(), String> {
+        let (elem, pv, _lv, esz, newlen) = self.lower_vec_pop_prepare(vec_name, line)?;
+        let Ty::Struct(id) = elem else {
+            return Err(format!("line {}: IR: pop() value is not a struct", line));
+        };
+        let (size, _) = struct_layout(&self.struct_defs, id);
+        let slots = ((size + 7) / 8) as usize;
+        let var_index = self.nvars;
+        self.nvars += slots;
+        let scratch = self.nvars;
+        self.nvars += 1;
+        self.push(Instr::ElemAddr { dst_var: scratch, ptr_var: pv, idx: newlen, size: esz });
+        self.push(Instr::CopySlots { ptr_var: scratch, var_index, slots });
+        self.struct_vars.insert(let_name.to_string(), (var_index, slots, id));
+        Ok(())
     }
 
     fn lower_vec_clear(&mut self, name: &str, line: usize) -> Result<Value, String> {
@@ -2372,6 +2395,16 @@ impl Builder {
                 if !*mutable {
                     if let Some(c) = self.const_eval(init) {
                         self.ast_consts.insert(name.clone(), c);
+                    }
+                }
+                if let ExprKind::Call { name: cn, args } = &init.kind {
+                    if cn == "pop" && args.len() == 1 {
+                        if let ExprKind::Var(vn) = &args[0].kind {
+                            if let Some((Ty::Struct(_), _, _, _, _)) = self.vecs.get(vn).copied() {
+                                self.lower_struct_vec_pop(vn, name, s.line)?;
+                                return Ok(());
+                            }
+                        }
                     }
                 }
                 if let ExprKind::StructLit { name: sname, fields } = &init.kind {
@@ -4039,6 +4072,7 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
             uses.push(*src);
         }
         Instr::BoundsCheck { idx, .. } => uses.push(*idx),
+        Instr::ElemAddr { idx, .. } => uses.push(*idx),
         Instr::DivZeroCheck { value, .. } => uses.push(*value),
         Instr::IndexLoad { dst, idx, .. } => {
             uses.push(*idx);
@@ -4662,6 +4696,23 @@ fn emit_fast_block(
                 }
                 ra.xdef_store(*dst, xd);
                 ra.xdef_store(*tmp, xv);
+                ra.free_dead(ii);
+                continue;
+            }
+            Instr::ElemAddr { dst_var, ptr_var, idx, size } => {
+                let i = ra.operand(*idx);
+                load_index_reg(&mut ra.out, f, *idx, i);
+                if let Some(reg) = var_regs.get(ptr_var) {
+                    ra.out.push_str(&format!("    mov {}, %r10\n", reg));
+                } else {
+                    ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                }
+                ra.out.push_str(&format!("    imul ${}, %rax\n    add %r10, %rax\n", size));
+                if let Some(reg) = var_regs.get(dst_var) {
+                    ra.out.push_str(&format!("    mov %rax, {}\n", reg));
+                } else {
+                    ra.out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*dst_var)));
+                }
                 ra.free_dead(ii);
                 continue;
             }
@@ -6368,6 +6419,7 @@ fn instr_mentions_var(ins: &Instr, p: usize) -> bool {
         | Instr::VecPushStruct { ptr_var, .. }
         | Instr::Aos2Step { ptr_var, .. }
         | Instr::CopySlots { ptr_var, .. } => *ptr_var == p,
+        Instr::ElemAddr { dst_var, ptr_var, .. } => *dst_var == p || *ptr_var == p,
         Instr::AddrVar { var_index, .. }
         | Instr::StructInit { var_index, .. }
         | Instr::FieldLoad { var_index, .. }
@@ -7323,6 +7375,20 @@ pub fn emit(prog: &IrProgram) -> String {
             for ins in &b.instrs {
                 let ld = |v: Value| format!("    mov -{}(%rbp), %rax\n", voff(f, v));
                 match ins {
+                    Instr::ElemAddr { dst_var, ptr_var, idx, size } => {
+                        out.push_str(&ld(*idx));
+                        out.push_str(&format!("    imul ${}, %rax\n", size));
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    add {}, %rax\n", reg));
+                        } else {
+                            out.push_str(&format!("    add -{}(%rbp), %rax\n", varoff(*ptr_var)));
+                        }
+                        if let Some(reg) = var_regs.get(dst_var) {
+                            out.push_str(&format!("    mov %rax, {}\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*dst_var)));
+                        }
+                    }
                     Instr::DivZeroCheck { value, id, line } => {
                         out.push_str(&ld(*value));
                         out.push_str("    test %rax, %rax\n    jne 1f\n");
