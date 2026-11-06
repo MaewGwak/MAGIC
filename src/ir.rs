@@ -4024,6 +4024,8 @@ struct RegAlloc<'a> {
     free: Vec<usize>,
     pool: &'a [usize],
     last_use: &'a HashMap<Value, usize>,
+    uses_at: &'a HashMap<Value, Vec<usize>>,
+    at: usize,
     consts: &'a HashMap<Value, i64>,
     deferred: &'a HashMap<Value, (Op, Value, Value, usize)>,
     xmap: HashMap<Value, (usize, bool)>,
@@ -4052,15 +4054,26 @@ impl<'a> RegAlloc<'a> {
         idx
     }
 
+    fn next_use(&self, v: Value) -> usize {
+        match self.uses_at.get(&v) {
+            Some(vs) => {
+                let p = vs.partition_point(|x| *x <= self.at);
+                vs.get(p).copied().unwrap_or(usize::MAX)
+            }
+            None => usize::MAX,
+        }
+    }
+
     fn spill_excluding(&mut self, protected: &[usize]) -> usize {
         let victim = self
             .map
             .keys()
             .copied()
-            .find(|v| {
+            .filter(|v| {
                 let idx = self.map[v].0;
                 !protected.contains(&idx)
             })
+            .max_by_key(|v| (self.next_use(*v), u8::from(!self.map[v].1)))
             .expect("a register outside the protected set");
         let (idx, is_def) = self.map.remove(&victim).unwrap();
         if is_def {
@@ -4191,7 +4204,8 @@ impl<'a> RegAlloc<'a> {
             .xmap
             .keys()
             .copied()
-            .find(|v| !protected.contains(&self.xmap[v].0))
+            .filter(|v| !protected.contains(&self.xmap[v].0))
+            .max_by_key(|v| (self.next_use(*v), u8::from(!self.xmap[v].1)))
             .expect("a float register outside the protected set");
         let (idx, is_def) = self.xmap.remove(&victim).unwrap();
         if is_def {
@@ -4300,6 +4314,7 @@ fn emit_fast_block(
     var_regs: &HashMap<usize, &'static str>,
     pool: &[usize],
     last_use: &HashMap<Value, usize>,
+    uses_at: &HashMap<Value, Vec<usize>>,
     consts: &HashMap<Value, i64>,
     deferred: &HashMap<Value, (Op, Value, Value, usize)>,
 ) {
@@ -4311,6 +4326,8 @@ fn emit_fast_block(
         free: pool.iter().rev().copied().collect(),
         pool,
         last_use,
+        uses_at,
+        at: 0,
         consts,
         deferred,
         xmap: HashMap::new(),
@@ -4318,6 +4335,7 @@ fn emit_fast_block(
         scales: HashMap::new(),
     };
     for (ii, ins) in instrs.iter().enumerate() {
+        ra.at = ii;
         match ins {
             Instr::AddrVar { .. }
             | Instr::CopySlots { .. }
@@ -7052,12 +7070,14 @@ pub fn emit(prog: &IrProgram) -> String {
                     block_pool.push(i);
                 }
                 let mut last_use: HashMap<Value, usize> = HashMap::new();
+                let mut uses_at: HashMap<Value, Vec<usize>> = HashMap::new();
                 for (ii, ins) in b.instrs.iter().enumerate() {
                     let mut u = Vec::new();
                     let mut d = Vec::new();
                     instr_uses_defs(ins, &mut u, &mut d);
                     for v in u {
                         last_use.insert(v, ii);
+                        uses_at.entry(v).or_default().push(ii);
                     }
                 }
                 // A comparison whose only use is the block terminator can be
@@ -7106,6 +7126,7 @@ pub fn emit(prog: &IrProgram) -> String {
                     &var_regs,
                     &block_pool,
                     &last_use,
+                    &uses_at,
                     &fn_vals,
                     &deferred,
                 );

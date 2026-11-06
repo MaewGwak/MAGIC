@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.9.5 — next-use spill victims (2026-11-06)
+
+The fast allocator spilled an arbitrary live value (first hash-map key) when the register file was
+full, so hot loops reloaded values that were about to be used. It now records every use position per
+value and evicts the value whose *next* use is farthest away (Belady), preferring values that already
+have a stack copy. N-body drops 811–820 → 761–773 ms; raytrace stays ~102–108 ms; other workloads
+are unchanged within noise. All gates pass, 168 tests, parity 60/60, low-end gate green.
+
 ## v0.9.4 — full sixteen-register float pool (2026-11-06)
 
 The fast emitter reserved `%xmm0`/`%xmm1` as scratch and only pooled fourteen registers, so
