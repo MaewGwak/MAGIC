@@ -2345,9 +2345,9 @@ impl Builder {
                 self.cur = end_bb;
             }
             StmtKind::While { cond, body } => {
-                if self.try_lower_saxpy(cond, body, s.line)? {
-                    return Ok(());
-                }
+                // Disabled (v0.8.93): the second audit found flow-insensitive
+                // j-init tracking, name-shadowed constants and i64 index
+                // truncation. The scalar loop is authoritative until rewritten.
                 let head = self.new_block();
                 let body_bb = self.new_block();
                 let end_bb = self.new_block();
