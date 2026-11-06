@@ -30,6 +30,17 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.60 — loop-invariant hoisting attempt caught by the gate (2026-11-06)
+
+A preheader LICM pass (hoisting constants, loads of variables the loop never stores, and pure
+arithmetic over them, innermost loops first, with a rebuilt definition map per loop) compiled but
+produced wrong indices: matmul and sieve panicked with `index out of bounds` and the IR differential
+gate flagged them immediately (`exit C=0 IR=1`). The bug survived a first fix (stale definition map
+across nested loops), which means the remaining issue is in how moved values are consumed across
+blocks (slot/register invalidation), not in loop selection. The pass was reverted in full; v0.8.59's
+codegen is unchanged and green. Next attempt should hoist through an explicit block-splitting pass
+with a fresh value-versioning step and a per-loop differential test before running the matrix.
+
 ## v0.8.59 — expanded differential fuzz corpus (2026-11-06)
 
 The mutation fuzzer now also exercises signed division/remainder in all sign combinations, `u8`/
