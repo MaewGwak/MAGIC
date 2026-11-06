@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.48 — layout experiments rejected, 1.0 roadmap recorded (2026-11-06)
+
+Two code-layout changes were prototyped and measured: conditional-branch fallthrough for adjacent
+blocks and alignment limited to back-edge targets. Fallthrough regressed matmul (117 → 131 ms) and
+nbody (2.07 → 2.29 s); selective alignment alone was also neutral-to-negative (matmul 123 ms, nbody
+2.14 s) despite helping btree slightly. Both were reverted, keeping v0.8.47's codegen. The new
+`ROADMAP-1.0.md` records the verified state, the measured speed/memory ratios, why the absolute
+3x/5x targets are unreachable by codegen on this matrix, and the milestones (SLP/SIMD, pthread
+`par for`, function-wide allocation, IR default, memory policies) with an acceptance proposal.
+
 ## v0.8.47 — real arena regions in the IR (2026-11-06)
 
 `arena { ... }` blocks now use a region allocator: each array inside the block is an anonymous
