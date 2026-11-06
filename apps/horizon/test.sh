@@ -8,6 +8,10 @@ target/release/magicc build apps/horizon/horizon.magic --backend c --cc "$C -O3 
 grep -q '^2G$' "$TMP/inst/memory"
 grep -q '^1.20.1$' "$TMP/inst/version"
 "$TMP/horizon" doctor "$TMP/inst" | grep -q 'doctor: OK'
+printf '{"id":"1.21","mainClass":"example.Main"}' > "$TMP/version.json"
+"$TMP/horizon" import "$TMP/inst" "$TMP/version.json" | grep -q 'version=1.21'
+grep -q '^1.21$' "$TMP/inst/version"
+grep -q '^example.Main$' "$TMP/inst/main"
 "$TMP/horizon" set "$TMP/inst" memory 4G >/dev/null
 grep -q '^4G$' "$TMP/inst/memory"
 "$TMP/horizon" show "$TMP/inst" | grep -q 'memory: 4G'

@@ -24,9 +24,67 @@ fn write_value(dir: str, name: str, value: str) -> i32 {
     return n as i32;
 }
 
+
+fn json_ws(buf: [u8], len: i32, p0: i32) -> i32 {
+    var p = p0;
+    while p < len {
+        var c = buf[p];
+        if c == 32 || c == 9 || c == 10 || c == 13 { p = p + 1; }
+        else { return p; }
+    }
+    return p;
+}
+
+fn json_key_pos(buf: [u8], len: i32, key: str, from: i32) -> i32 {
+    var klen = str_len(key) as i32;
+    var i = from;
+    while i + klen + 3 < len {
+        if buf[i] == 34 {
+            var j = 0;
+            var ok = true;
+            while j < klen {
+                if buf[i + 1 + j] != str_byte_n(key, j, klen) { ok = false; }
+                j = j + 1;
+            }
+            if ok && buf[i + 1 + klen] == 34 {
+                var p = json_ws(buf, len, i + klen + 2);
+                if p < len && buf[p] == 58 { return json_ws(buf, len, p + 1); }
+            }
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn json_string(buf: [u8], len: i32, p0: i32, out: [u8], cap: i32) -> i32 {
+    var p = json_ws(buf, len, p0);
+    if p >= len || buf[p] != 34 { return -1; }
+    p = p + 1;
+    var n = 0;
+    while p < len && buf[p] != 34 {
+        if n + 1 >= cap { return -1; }
+        if buf[p] == 92 {
+            p = p + 1;
+            if p >= len { return -1; }
+        }
+        out[n] = buf[p];
+        n = n + 1;
+        p = p + 1;
+    }
+    if p >= len { return -1; }
+    out[n] = 0;
+    return n;
+}
+
+fn json_get_string(buf: [u8], len: i32, key: str, out: [u8], cap: i32) -> i32 {
+    var p = json_key_pos(buf, len, key, 0);
+    if p < 0 { return -1; }
+    return json_string(buf, len, p, out, cap);
+}
+
 fn main() {
     if argc() < 3 {
-        print("horizon: usage: horizon init|list|show|set|doctor|launch <dir>");
+        print("horizon: usage: horizon init|list|show|set|doctor|import|launch <dir>");
         return;
     }
     var cmd = arg(1);
@@ -40,6 +98,8 @@ fn main() {
     var jarbuf: [u8] = [0; 512];
     var gabuf: [u8] = [0; 1024];
     var jabuf: [u8] = [0; 1024];
+    var jsonbuf: [u8] = [0; 65536];
+    var outbuf: [u8] = [0; 512];
 
     if str_eq(cmd, "init") {
         if dir_mkdir(dir) != 0 && !path_exists(dir) {
@@ -117,6 +177,29 @@ fn main() {
         }
         if write_value(dir, key, value) < 0 { print("horizon: cannot write config"); return; }
         print("horizon: config updated");
+        return;
+    }
+
+    if str_eq(cmd, "import") {
+        if argc() < 4 { print("horizon: import needs <dir> <version.json>"); return; }
+        if !path_exists(dir) { print("horizon: instance directory does not exist"); return; }
+        var meta = arg(3);
+        var fd = file_open(meta, "r");
+        if fd < 0 { print("horizon: cannot open version json"); return; }
+        var n = file_read(fd, jsonbuf, 65535);
+        file_close(fd);
+        if n < 0 { print("horizon: cannot read version json"); return; }
+        var len = n as i32;
+        var mn = json_get_string(jsonbuf, len, "mainClass", outbuf, 512);
+        if mn >= 0 {
+            write_value(dir, "main", str_from_bytes(outbuf, mn));
+            print(str_cat("horizon: mainClass=", str_from_bytes(outbuf, mn)));
+        } else { print("horizon: WARN mainClass not found"); }
+        var vn = json_get_string(jsonbuf, len, "id", outbuf, 512);
+        if vn >= 0 {
+            write_value(dir, "version", str_from_bytes(outbuf, vn));
+            print(str_cat("horizon: version=", str_from_bytes(outbuf, vn)));
+        } else { print("horizon: WARN id not found"); }
         return;
     }
 
