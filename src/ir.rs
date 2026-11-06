@@ -48,10 +48,11 @@ pub enum Instr {
     Un { dst: Value, neg: bool, a: Value },
     Trunc { dst: Value, ty: Ty, a: Value },
     Call { dst: Option<Value>, name: String, args: Vec<Value> },
-    Print { v: Value, boolean: bool, float: bool },
+    Print { v: Value, boolean: bool, float: bool, string: bool },
     Ret(Option<Value>),
     Br { cond: Value, then_bb: usize, else_bb: usize },
     Jmp(usize),
+    Assert { cond: Value, line: usize },
     Alloc { ptr_var: usize, elem: Ty, esz: u64, len: Value },
     Fill { ptr_var: usize, elem: Ty, esz: u64, len: Value, value: Value },
     StructInit { var_index: usize, slots: usize, fields: Vec<(u64, Ty, Value)> },
@@ -294,6 +295,35 @@ impl Builder {
                 Ok(dst)
             }
             ExprKind::Bin { op, l, r } => {
+                if matches!(op, BinOp::And | BinOp::Or) {
+                    let is_and = *op == BinOp::And;
+                    let tmp = self.nvars;
+                    self.nvars += 1;
+                    let rblock = self.new_block();
+                    let sblock = self.new_block();
+                    let endb = self.new_block();
+                    let lv = self.lower_expr(l)?;
+                    let (then_bb, else_bb) = if is_and {
+                        (rblock, sblock)
+                    } else {
+                        (sblock, rblock)
+                    };
+                    self.push(Instr::Br { cond: lv, then_bb, else_bb });
+                    self.cur = rblock;
+                    let rv = self.lower_expr(r)?;
+                    self.push(Instr::StoreVar { var: tmp, src: rv });
+                    self.push(Instr::Jmp(endb));
+                    self.cur = sblock;
+                    let c = self.value();
+                    self.push(Instr::Const { dst: c, v: if is_and { 0 } else { 1 } });
+                    self.push(Instr::StoreVar { var: tmp, src: c });
+                    self.push(Instr::Jmp(endb));
+                    self.cur = endb;
+                    let dst = self.value();
+                    self.push(Instr::LoadVar { dst, var: tmp });
+                    self.vbool[dst.0 as usize] = true;
+                    return Ok(dst);
+                }
                 let a = self.lower_expr(l)?;
                 let b = self.lower_expr(r)?;
                 let ta = self.vty[a.0 as usize];
@@ -580,6 +610,17 @@ impl Builder {
                     "str_byte" => Some(".Lmf_str_byte"),
                     "str_byte_n" => Some(".Lmf_str_byte_n"),
                     "str_len" => Some(".Lmf_str_len"),
+                    "file_pread_at" | "file_pread" => {
+                        if args.len() != 5 {
+                            return Err(format!(
+                                "line {}: IR: `{}` with {} arguments is not supported yet (only the 5-argument form)",
+                                e.line,
+                                name,
+                                args.len()
+                            ));
+                        }
+                        Some(".Lmf_pread_at")
+                    }
                     _ => None,
                 };
                 if builtin.is_none()
@@ -738,6 +779,17 @@ impl Builder {
                         src,
                     });
                 }
+                return Ok(());
+            }
+            StmtKind::Arena { body } => {
+                for st in body {
+                    self.lower_stmt(st)?;
+                }
+                return Ok(());
+            }
+            StmtKind::Assert { cond } => {
+                let c = self.lower_expr(cond)?;
+                self.push(Instr::Assert { cond: c, line: s.line });
                 return Ok(());
             }
             StmtKind::Let { name, init, .. } => {
@@ -931,8 +983,10 @@ impl Builder {
             StmtKind::Print { value, ty } => {
                 let v = self.lower_expr(value)?;
                 let boolean = self.vbool[v.0 as usize];
-                let float = ty.or(Some(self.vty[v.0 as usize])) == Some(Ty::F64);
-                self.push(Instr::Print { v, boolean, float });
+                let vt = ty.or(Some(self.vty[v.0 as usize]));
+                let float = vt == Some(Ty::F64);
+                let string = vt == Some(Ty::Str);
+                self.push(Instr::Print { v, boolean, float, string });
             }
             StmtKind::Return(e) => {
                 let v = match e {
@@ -1003,9 +1057,7 @@ impl Builder {
                 self.cur = end_bb;
             }
             StmtKind::For { var, start, end, body, par } => {
-                if *par {
-                    return Err(format!("line {}: IR: par for is not supported yet", s.line));
-                }
+                let _ = par;
                 let sv = self.lower_expr(start)?;
                 let idx = self.var(var);
                 self.push(Instr::StoreVar { var: idx, src: sv });
@@ -1630,6 +1682,7 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
         }
         Instr::Br { cond, .. } => uses.push(*cond),
         Instr::Jmp(_) => {}
+        Instr::Assert { cond, .. } => uses.push(*cond),
         Instr::Alloc { len, .. } => uses.push(*len),
         Instr::Str { dst, .. } => defs.push(*dst),
         Instr::FBin { dst, l, r, .. } | Instr::FCmp { dst, l, r, .. } => {
@@ -1724,6 +1777,7 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::Argv { .. }
                 | Instr::InputRead { .. }
                 | Instr::PrintBytes { .. }
+                | Instr::Assert { .. }
                 | Instr::Bin { op: Op::Div | Op::Rem, .. }
         )
     })
@@ -2702,7 +2756,8 @@ fn emit_fast_block(
             | Instr::VecPushStruct { .. }
             | Instr::Argv { .. }
             | Instr::InputRead { .. }
-            | Instr::PrintBytes { .. } => {
+            | Instr::PrintBytes { .. }
+            | Instr::Assert { .. } => {
                 unreachable!("slow block")
             }
         }
@@ -2747,6 +2802,24 @@ pub fn emit(prog: &IrProgram) -> String {
     for line in &lines {
         out.push_str(&format!(
             ".Lmsg{}: .asciz \"line {}: index out of bounds\"\n",
+            line, line
+        ));
+    }
+    let mut assert_lines: Vec<usize> = Vec::new();
+    for f in &prog.funcs {
+        for b in &f.blocks {
+            for i in &b.instrs {
+                if let Instr::Assert { line, .. } = i {
+                    if !assert_lines.contains(line) {
+                        assert_lines.push(*line);
+                    }
+                }
+            }
+        }
+    }
+    for line in &assert_lines {
+        out.push_str(&format!(
+            ".Lamsg{}: .asciz \"line {}: assertion failed\"\n",
             line, line
         ));
     }
@@ -3199,6 +3272,12 @@ pub fn emit(prog: &IrProgram) -> String {
                         }
                         out.push_str(&format!("    incq -{}(%rbp)\n", varoff(*len_var)));
                     }
+                    Instr::Assert { cond, line } => {
+                        out.push_str(&ld(*cond));
+                        out.push_str("    test %rax, %rax\n    jne 7f\n");
+                        out.push_str(&format!("    lea .Lamsg{}(%rip), %rdi\n", line));
+                        out.push_str("    call .Lir_panic\n7:\n");
+                    }
                     Instr::Argv { dst, argv_var, idx } => {
                         out.push_str(&ld(*idx));
                         out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*argv_var)));
@@ -3387,12 +3466,17 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str("    lea .Lfmt_pf(%rip), %rdi\n    mov $1, %eax\n");
                         out.push_str("    call printf@PLT\n");
                     }
-                    Instr::Print { v, boolean: _, float: true } => {
+                    Instr::Print { v, string: true, .. } => {
+                        out.push_str(&ld(*v));
+                        out.push_str("    mov %rax, %rsi\n    lea .Lfmt_s(%rip), %rdi\n");
+                        out.push_str("    xor %eax, %eax\n    call printf@PLT\n");
+                    }
+                    Instr::Print { v, boolean: _, float: true, .. } => {
                         out.push_str(&format!("    movsd -{}(%rbp), %xmm0\n", voff(f, *v)));
                         out.push_str("    lea .Lfmt_g(%rip), %rdi\n    mov $1, %eax\n");
                         out.push_str("    call printf@PLT\n");
                     }
-                    Instr::Print { v, boolean, float: false } => {
+                    Instr::Print { v, boolean, float: false, string: false } => {
                         out.push_str(&ld(*v));
                         if *boolean {
                             out.push_str("    lea .Lfalse(%rip), %rsi\n");
@@ -3594,6 +3678,16 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str("1:\n    test %rsi, %rsi\n    jne 2f\n    xor %eax, %eax\n    ret\n");
     out.push_str("2:\n    sub $8, %rsp\n    call strcmp@PLT\n    add $8, %rsp\n");
     out.push_str("    test %eax, %eax\n    sete %al\n    movzbq %al, %rax\n    ret\n");
+    // pread_at(fd, buf, off_in_buf, len, file_off): seek then read into the
+    // buffer fragment, matching the native backend exactly.
+    out.push_str(".p2align 4\n.Lmf_pread_at:\n");
+    out.push_str("    push %rbx\n    push %r12\n    push %r13\n    sub $8, %rsp\n");
+    out.push_str("    mov %rdi, %rbx\n    lea (%rsi,%rdx), %r12\n    mov %rcx, %r13\n");
+    out.push_str("    mov %r8, %rsi\n    mov %rbx, %rdi\n    xor %edx, %edx\n");
+    out.push_str("    call fseek@PLT\n");
+    out.push_str("    mov %r12, %rdi\n    mov $1, %esi\n    mov %r13, %rdx\n    mov %rbx, %rcx\n");
+    out.push_str("    call fread@PLT\n");
+    out.push_str("    add $8, %rsp\n    pop %r13\n    pop %r12\n    pop %rbx\n    ret\n");
     // file_size: save position, seek to end, tell, restore.
     out.push_str(".p2align 4\n.Lmf_size:\n    push %rbx\n    push %r12\n    push %r13\n    sub $8, %rsp\n    mov %rdi, %rbx\n");
     out.push_str("    call ftell@PLT\n    mov %rax, %r13\n");

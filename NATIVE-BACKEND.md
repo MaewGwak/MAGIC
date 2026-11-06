@@ -184,7 +184,10 @@ and rejected because it helped nbody but cost matmul and sieve more. v0.8.33 add
 file: f64 values live in `%xmm2`–`%xmm15` with `movsd` spills, taking nbody to 2.63 s, vecpart to
 207 ms, raytrace to 363 ms and particles to 766 ms. v0.8.34 folds the `for` increment into the body
 block (one less jump per iteration); unrolling-by-2 was measured and rejected as consistently slower
-or neutral.
+or neutral. v0.8.35 covers the last statement forms (`arena`, `assert`, sequential `par for`,
+string printing, `file_pread_at`), so every program in the repository compiles through the IR, and
+makes `&&`/`||` short-circuit in both backends. Known open issue: `bufpool_magic_fast3` prints a
+wrong checksum on the AST native backend (IR and C agree).
 
 ## Register-allocation experiments## Register-allocation experiments (v0.8.8 → v0.8.9)
 

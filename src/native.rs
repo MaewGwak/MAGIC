@@ -1232,6 +1232,29 @@ impl Emitter {
     }
 
     fn expr(&mut self, e: &Expr) -> Result<(), String> {
+        if let ExprKind::Bin { op, l, r } = &e.kind {
+            if matches!(op, BinOp::And | BinOp::Or) {
+                let is_and = *op == BinOp::And;
+                let short = self.fresh("logic_short");
+                let end = self.fresh("logic_end");
+                self.expr(l)?;
+                self.line("    test %rax, %rax");
+                if is_and {
+                    self.line(&format!("    je {}", short));
+                } else {
+                    self.line(&format!("    jne {}", short));
+                }
+                self.expr(r)?;
+                self.line("    test %rax, %rax");
+                self.line("    setne %al");
+                self.line("    movzbq %al, %rax");
+                self.line(&format!("    jmp {}", end));
+                self.line(&format!("{}:", short));
+                self.line(&format!("    mov ${}, %eax", if is_and { 0 } else { 1 }));
+                self.line(&format!("{}:", end));
+                return Ok(());
+            }
+        }
         match &e.kind {
             ExprKind::Int(v) => {
                 if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {

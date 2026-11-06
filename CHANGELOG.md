@@ -30,6 +30,21 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.35 — IR feature parity for the whole corpus, short-circuit logic (2026-11-06)
+
+The IR now lowers `arena` blocks (as their body), `assert` (panic with `line N: assertion failed`),
+`par for` (sequentially, like the AST backend), printing strings (`%s`), and `file_pread_at`/
+`file_pread` (5-argument form: seek + read into the buffer fragment). With these, **every example,
+benchmark and database program in the repository compiles through `--backend ir`** — the survey is
+empty.
+
+`&&` and `||` are now short-circuiting in both backends, matching the C backend. The AST native
+backend previously evaluated both sides, which made `bench-db/bufpool_magic_fast3` read `fpage[-1]`
+and panic; it now runs. One discrepancy remains: fast3's third value is 0 on the AST backend instead
+of 25510321 (the IR and C backends agree), so a separate native-backend file-read bug is still open
+and recorded here rather than hidden. The IR differential corpus, CLI tests and native differential
+harness pass.
+
 ## v0.8.34 — for-loop increment folded into the body (2026-11-06)
 
 The IR now emits a `for` loop's increment instructions directly at the end of the body block instead
