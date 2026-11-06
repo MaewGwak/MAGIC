@@ -151,6 +151,39 @@ fn check_hashes(dir: str, buf: [u8], len: i32, pathbuf: [u8], shabuf: [u8], hexb
     return bad;
 }
 
+
+fn check_objects(dir: str, buf: [u8], len: i32, out: [u8], first2: [u8]) -> i32 {
+    var pos = 0;
+    var total = 0;
+    var missing = 0;
+    var running = true;
+    while running {
+        var p = json_key_pos(buf, len, "hash", pos);
+        if p < 0 { running = false; }
+        else {
+            var n = json_string(buf, len, p, out, 512);
+            if n >= 0 {
+                total = total + 1;
+                first2[0] = out[0];
+                first2[1] = out[1];
+                first2[2] = 0;
+                var h = str_from_bytes(out, n);
+                var full = str_cat(str_cat(str_cat(str_cat(dir, "/assets/objects/"), str_from_bytes(first2, 2)), "/"), h);
+                if !path_exists(full) {
+                    missing = missing + 1;
+                    print(str_cat("horizon: missing asset ", h));
+                }
+            }
+            pos = p + 1;
+        }
+    }
+    print("horizon: assets total");
+    print(total);
+    print("horizon: assets missing");
+    print(missing);
+    return missing;
+}
+
 fn main() {
     if argc() < 3 {
         print("horizon: usage: horizon init|list|show|set|doctor|import|assets|verify|launch <dir>");
@@ -172,6 +205,7 @@ fn main() {
     var pathbuf: [u8] = [0; 512];
     var shabuf: [u8] = [0; 64];
     var hexbuf: [u8] = [0; 64];
+    var hb2: [u8] = [0; 4];
 
     if str_eq(cmd, "init") {
         if dir_mkdir(dir) != 0 && !path_exists(dir) {
@@ -280,7 +314,22 @@ fn main() {
             if idp >= 0 {
                 var idn = json_string(jsonbuf, n as i32, idp, outbuf, 512);
                 if idn >= 0 {
-                    print(str_cat("horizon: assetIndex=", str_from_bytes(outbuf, idn)));
+                    var id = str_from_bytes(outbuf, idn);
+                    print(str_cat("horizon: assetIndex=", id));
+                    var idxpath = str_cat(str_cat(str_cat(str_cat(dir, "/assets/indexes/"), id), ".json"), "");
+                    if path_exists(idxpath) {
+                        var ifd = file_open(idxpath, "r");
+                        if ifd >= 0 {
+                            var rlen = file_read(ifd, jsonbuf, 65535);
+                            file_close(ifd);
+                            if rlen >= 0 {
+                                var am = check_objects(dir, jsonbuf, rlen as i32, outbuf, hb2);
+                                missing = missing + am;
+                            }
+                        }
+                    } else {
+                        print("horizon: WARN asset index file missing");
+                    }
                 }
             }
         }

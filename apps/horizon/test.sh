@@ -15,6 +15,10 @@ printf '{"id":"1.21","mainClass":"example.Main","libraries":[{"path":"a/b.jar"},
 grep -q '^1.21$' "$TMP/inst/version"
 grep -q '^example.Main$' "$TMP/inst/main"
 "$TMP/horizon" assets "$TMP/inst" "$TMP/version.json" | grep -q 'missing library c/d.jar'
+mkdir -p "$TMP/inst/assets/indexes" "$TMP/inst/assets/objects/aa"
+touch "$TMP/inst/assets/objects/aa/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+printf '{"objects":{"a":{"hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"b":{"hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}' > "$TMP/inst/assets/indexes/5.json"
+"$TMP/horizon" assets "$TMP/inst" "$TMP/version.json" | grep -q 'missing asset bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 H=$(sha1sum "$TMP/inst/libraries/a/b.jar" | cut -d' ' -f1)
 printf '{"libraries":[{"path":"a/b.jar","sha1":"%s"}]}' "$H" > "$TMP/hashes.json"
 "$TMP/horizon" verify "$TMP/inst" "$TMP/hashes.json" | grep -q 'sha1 verification OK'
