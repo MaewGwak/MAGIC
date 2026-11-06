@@ -30,6 +30,17 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.58 — range-analysis deepening reverted (2026-11-06)
+
+Extending the interval pass (array element ranges, accumulator bounds, constant-aware loop bounds,
+truncation-stripping pattern matching) did not pay off: the loop-induction detection still failed on
+most matmul loops because the wraps introduced by the correctness fix nest `Trunc` nodes around the
+increment and initialisation stores, and the partial success only shuffled code layout (matmul 183 →
+210 ms, nbody 1983 → 2155 ms, btree 166 → 168 ms; every benchmark equal or slower). The whole change
+was reverted, keeping v0.8.57's codegen. The diagnosis is recorded for the next attempt: the robust
+route is width-aware 32-bit code generation (emit `addl`/`imull` and sign-extend only at widening
+barriers) rather than trying to delete `movslq` after the fact.
+
 ## v0.8.57 — loop-alignment sweep (2026-11-06)
 
 Five-run medians for four alignment policies (loop headers at 16/32/64 bytes, and a hybrid with
