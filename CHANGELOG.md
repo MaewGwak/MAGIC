@@ -30,6 +30,15 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.95 — lexical scoping for if/while and fresh declarations (2026-11-06)
+
+Every `let`/array declaration now allocates a fresh slot instead of overwriting a same-named outer
+binding, and `if`/`while` bodies are lowered inside a snapshot of the binding maps (vars, types,
+arrays, vectors, structs, constants, shadow bookkeeping) that is restored on exit. This fixes the
+pre-existing shadowing miscompile: the v0.8.94 audit repros g14/g2 now print the C-expected values
+(inner `n=3` visible only inside the branch, outer loop bound 10). Loop-variable shadowing in `for`
+and arena bodies still needs the same wrapping before saxpy can be re-enabled. All gates pass.
+
 ## v0.8.94 — saxpy stays off; lexical-scoping blocker identified (2026-11-06)
 
 Second-round guard fixes (flow-sensitive constant initialisation, shadow-aware constant

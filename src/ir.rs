@@ -175,6 +175,20 @@ fn is_zero_expr(e: &Expr) -> bool {
     }
 }
 
+#[derive(Clone)]
+struct Binds {
+    vars: HashMap<String, usize>,
+    var_ty: HashMap<String, Ty>,
+    var_bool: HashMap<String, bool>,
+    arrays: HashMap<String, (Ty, LenRef)>,
+    vecs: HashMap<String, (Ty, usize, usize, usize, u64)>,
+    struct_vars: HashMap<String, (usize, usize, u16)>,
+    ast_consts: HashMap<String, i64>,
+    seen_lets: std::collections::HashSet<String>,
+    local_arrays: std::collections::HashSet<String>,
+    var_init_const: HashMap<usize, i64>,
+}
+
 struct Builder {
     blocks: Vec<Block>,
     cur: usize,
@@ -213,6 +227,7 @@ struct Builder {
     local_arrays: std::collections::HashSet<String>,
     seen_lets: std::collections::HashSet<String>,
     var_init_const: HashMap<usize, i64>,
+    scopes: Vec<Binds>,
     extra: Vec<IrFunc>,
 }
 
@@ -576,6 +591,7 @@ impl Builder {
             local_arrays: Default::default(),
             seen_lets: Default::default(),
             var_init_const: HashMap::new(),
+            scopes: Vec::new(),
             extra: Vec::new(),
             ret,
         }
@@ -647,6 +663,26 @@ impl Builder {
         }
     }
 
+    fn save_binds(&self) -> Binds {
+        Binds {
+            vars: self.vars.clone(), var_ty: self.var_ty.clone(), var_bool: self.var_bool.clone(),
+            arrays: self.arrays.clone(), vecs: self.vecs.clone(), struct_vars: self.struct_vars.clone(),
+            ast_consts: self.ast_consts.clone(), seen_lets: self.seen_lets.clone(),
+            local_arrays: self.local_arrays.clone(), var_init_const: self.var_init_const.clone(),
+        }
+    }
+    fn restore_binds(&mut self, b: Binds) {
+        self.vars = b.vars; self.var_ty = b.var_ty; self.var_bool = b.var_bool;
+        self.arrays = b.arrays; self.vecs = b.vecs; self.struct_vars = b.struct_vars;
+        self.ast_consts = b.ast_consts; self.seen_lets = b.seen_lets;
+        self.local_arrays = b.local_arrays; self.var_init_const = b.var_init_const;
+    }
+    fn declare_var(&mut self, name: &str) -> usize {
+        let v = self.nvars; self.nvars += 1;
+        self.vars.insert(name.to_string(), v);
+        self.var_ty.insert(name.to_string(), Ty::I64);
+        v
+    }
     fn push(&mut self, i: Instr) {
         if let Instr::StoreVar { var, .. } = &i {
             self.load_cache.remove(var);
@@ -1885,6 +1921,9 @@ impl Builder {
     }
 
     fn lower_stmt(&mut self, s: &Stmt) -> Result<(), String> {
+        if matches!(s.kind, StmtKind::If { .. } | StmtKind::While { .. }) {
+            self.scopes.push(self.save_binds());
+        }
         match &s.kind {
             StmtKind::VecLet { name, elem } => {
                 let esz = crate::ty_size(*elem, &self.struct_defs);
@@ -1967,7 +2006,7 @@ impl Builder {
                 let v = self.lower_expr(init)?;
                 let is_bool = self.vbool[v.0 as usize];
                 let ty = declared.unwrap_or(self.vty[v.0 as usize]);
-                let var = self.var(name);
+                let var = self.declare_var(name);
                 let v = self.coerce_value(v, ty)?;
                 self.push(Instr::StoreVar { var, src: v });
                 self.var_bool.insert(name.clone(), ty == Ty::Bool);
@@ -1988,7 +2027,7 @@ impl Builder {
             StmtKind::ArrayLet { name, elem, value, count } => {
                 self.local_arrays.insert(name.clone());
                 let lenv = self.lower_expr(count)?;
-                let ptr_var = self.var(name);
+                let ptr_var = self.declare_var(name);
                 let byte_bool = *elem == Ty::Bool && self.byte_bool.contains(name);
                 let elem_eff = if byte_bool { Ty::U8 } else { *elem };
                 let esz = if byte_bool { 1 } else { crate::ty_size(*elem, &self.struct_defs) };
@@ -2469,6 +2508,9 @@ impl Builder {
         ) {
             // Constants do not survive a merge or a loop.
             self.var_init_const.clear();
+            if matches!(s.kind, StmtKind::If { .. } | StmtKind::While { .. }) {
+                if let Some(b) = self.scopes.pop() { self.restore_binds(b); }
+            }
         }
         if let StmtKind::Assign { name, value } = &s.kind {
             if let Some(v) = self.vars.get(name).copied() {
