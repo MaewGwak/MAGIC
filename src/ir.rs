@@ -174,6 +174,8 @@ struct Builder {
     vecs: HashMap<String, (Ty, usize, usize, usize, u64)>,
     argc_var: Option<usize>,
     argv_var: Option<usize>,
+    inlinable: HashMap<String, (Vec<String>, Expr)>,
+    subst_stack: Vec<HashMap<String, Value>>,
     ret: Ty,
 }
 
@@ -198,6 +200,8 @@ impl Builder {
             vecs: HashMap::new(),
             argc_var: None,
             argv_var: None,
+            inlinable: HashMap::new(),
+            subst_stack: Vec::new(),
             ret,
         }
     }
@@ -284,6 +288,14 @@ impl Builder {
                 Ok(dst)
             }
             ExprKind::Var(n) => {
+                if let Some(v) = self
+                    .subst_stack
+                    .iter()
+                    .rev()
+                    .find_map(|m| m.get(n).copied())
+                {
+                    return Ok(v);
+                }
                 let var = *self
                     .vars
                     .get(n)
@@ -595,6 +607,20 @@ impl Builder {
                 Ok(dst)
             }
             ExprKind::Call { name, args } => {
+                if let Some((params, body)) = self.inlinable.get(name).cloned() {
+                    if params.len() == args.len() {
+                        let mut vals = Vec::new();
+                        for a in args {
+                            vals.push(self.lower_expr(a)?);
+                        }
+                        let map: HashMap<String, Value> =
+                            params.into_iter().zip(vals).collect();
+                        self.subst_stack.push(map);
+                        let r = self.lower_expr(&body);
+                        self.subst_stack.pop();
+                        return r;
+                    }
+                }
                 let builtin = match name.as_str() {
                     "file_open" => Some(".Lmf_open"),
                     "file_close" => Some(".Lmf_close"),
@@ -1125,20 +1151,58 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
     for f in &prog.funcs {
         sigs.insert(f.name.clone(), f.ret);
     }
+    fn trivial(e: &Expr, params: &std::collections::HashSet<String>) -> bool {
+        match &e.kind {
+            ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) => true,
+            ExprKind::Var(n) => params.contains(n),
+            ExprKind::Bin { l, r, .. } => trivial(l, params) && trivial(r, params),
+            ExprKind::Un { e, .. } => trivial(e, params),
+            ExprKind::Cast { e, .. } => trivial(e, params),
+            _ => false,
+        }
+    }
+    let mut inlinable: HashMap<String, (Vec<String>, Expr)> = HashMap::new();
+    for f in &prog.funcs {
+        if f.body.len() != 1 {
+            continue;
+        }
+        let StmtKind::Return(Some(e)) = &f.body[0].kind else { continue };
+        let params: Vec<String> = f
+            .params
+            .iter()
+            .filter_map(|(n, p)| match p {
+                ParamTy::Scalar(_) => Some(n.clone()),
+                _ => None,
+            })
+            .collect();
+        if params.len() != f.params.len() {
+            continue;
+        }
+        let set: std::collections::HashSet<String> = params.iter().cloned().collect();
+        if trivial(e, &set) {
+            inlinable.insert(f.name.clone(), (params, e.clone()));
+        }
+    }
     let mut funcs = Vec::new();
     for f in &prog.funcs {
-        funcs.push(lower_func(f, &sigs, &prog.structs)?);
+        funcs.push(lower_func(f, &sigs, &prog.structs, &inlinable)?);
     }
     Ok(IrProgram { funcs })
 }
 
-fn lower_func(f: &Func, sigs: &HashMap<String, Ty>, structs: &[StructDef]) -> Result<IrFunc, String> {
+fn lower_func(
+    f: &Func,
+    sigs: &HashMap<String, Ty>,
+    structs: &[StructDef],
+    inlinable: &HashMap<String, (Vec<String>, Expr)>,
+) -> Result<IrFunc, String> {
     if f.ret == Ty::Str {
         return Err(format!("IR: `{}` returns a string, not supported yet", f.name));
     }
     let mut b = Builder::new(f.ret);
     b.sigs = sigs.clone();
     b.struct_defs = structs.to_vec();
+    b.inlinable = inlinable.clone();
     let mut nparams = 0usize;
     for (name, pty) in &f.params {
         match pty {

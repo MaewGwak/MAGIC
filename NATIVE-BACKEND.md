@@ -190,7 +190,8 @@ offsets as displacements: particles 605 ms, raytrace 257 ms, vecpart 158 ms. v0.
 bounds proofs: induction variables must be provably non-negative on every path (unsigned checks), and
 affine arithmetic is overflow-checked; `negative_idx` and `huge_affine` are differential tests.
 v0.8.43 vectorises non-zero fills with SSE2 (`pshufd`/`punpcklqdq` + `movups`), taking a 20M-element
-fill from 35 to 32 ms and the array sum from 58 to 54 ms.
+fill from 35 to 32 ms and the array sum from 58 to 54 ms. v0.8.44 inlines single-return scalar
+functions at IR call sites, taking sqlscan to 34 ms and bufpool to 173 ms.
 
 ## IR vs AST vs C (v0.8.31 medians)## IR vs AST vs C (v0.8.31 medians)
 

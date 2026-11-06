@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.44 — trivial-function inlining in the IR (2026-11-06)
+
+Functions whose body is a single `return` over scalar parameters (arithmetic, comparisons, casts,
+no calls or memory access) are inlined at IR call sites by substituting the argument values into the
+expression, which also lets CSE and branch fusion see through them. SQL scanning drops 41 → 34 ms
+(−20%), bufpool 186 → 173 ms; btree, hashmap, matmul and sieve are unchanged. The differential
+corpus passes, including the float and struct cases.
+
 ## v0.8.43 — SSE2 array fills in the IR (2026-11-06)
 
 Non-zero array initialisers now use packed 16-byte stores: four `i32` or `u32` elements are
