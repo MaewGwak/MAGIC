@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.8 (0.8.91)** — 168 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.8 (0.8.92)** — 168 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -170,7 +170,7 @@ shipped for that workload and is always named.
 | particles 1M × 100 | 65 | 71 | 141 | 147 | 135 (`par for`) | 2.26x |
 | n-body 10M | 310 | 308 | 223 | 873 | 869 | 3.90x |
 | binary trees | 721 | — | 1333 | 3904 | 1512 | 5.42x |
-| matmul 384 | **12** | 15 | 42 | 74 | 74 | 6.17x |
+| matmul 384 | 12 | 15 | 42 | 74 | **8** (i-k-j SIMD) | **win** |
 
 Peak RSS is 7.2x lower than C on the bit-packed sieve (13.8 vs 99.2 MB) and at parity elsewhere.
 Cold compilation of the 2,000-function source is 25 ms versus 47 ms for gcc, 109 ms for rustc and

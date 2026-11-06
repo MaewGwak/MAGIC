@@ -210,6 +210,8 @@ struct Builder {
     suppress_unroll: u32,
     ast_consts: HashMap<String, i64>,
     subst_consts: Vec<HashMap<String, i64>>,
+    local_arrays: std::collections::HashSet<String>,
+    var_init_const: HashMap<usize, i64>,
     extra: Vec<IrFunc>,
 }
 
@@ -447,6 +449,20 @@ fn expr_mentions(e: &Expr, name: &str) -> bool {
     }
 }
 
+fn expr_pure(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Var(_)
+        | ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Str(_)
+        | ExprKind::ArrayLen(_) => true,
+        ExprKind::Bin { l, r, .. } => expr_pure(l) && expr_pure(r),
+        ExprKind::Un { e, .. } | ExprKind::Cast { e, .. } => expr_pure(e),
+        _ => false,
+    }
+}
+
 fn expr_same(a: &Expr, b: &Expr) -> bool {
     match (&a.kind, &b.kind) {
         (ExprKind::Int(x), ExprKind::Int(y)) => x == y,
@@ -556,6 +572,8 @@ impl Builder {
             suppress_unroll: 0,
             ast_consts: HashMap::new(),
             subst_consts: Vec::new(),
+            local_arrays: Default::default(),
+            var_init_const: HashMap::new(),
             extra: Vec::new(),
             ret,
         }
@@ -1753,7 +1771,7 @@ impl Builder {
         Ok(())
     }
 
-    fn try_lower_saxpy(&mut self, cond: &Expr, body: &[Stmt], line: usize) -> Result<bool, String> {
+    fn try_lower_saxpy(&mut self, cond: &Expr, body: &[Stmt], _line: usize) -> Result<bool, String> {
         if body.len() != 2 {
             return Ok(false);
         }
@@ -1764,7 +1782,11 @@ impl Builder {
             },
             _ => return Ok(false),
         };
-        if expr_mentions(limit, &j) {
+        if expr_mentions(limit, &j) || !expr_pure(limit) {
+            return Ok(false);
+        }
+        let Some(c) = self.const_eval(limit) else { return Ok(false) };
+        if !(0..=i32::MAX as i64).contains(&c) {
             return Ok(false);
         }
         match &body[1].kind {
@@ -1787,29 +1809,24 @@ impl Builder {
         };
         let ExprKind::Bin { op: BinOp::Add, l, r } = &value.kind else { return Ok(false) };
         let is_c = |e: &Expr| matches!(&e.kind, ExprKind::Index { name, index } if name == cname && expr_same(index, cidx));
-        let mul = if is_c(l) {
-            r
-        } else if is_c(r) {
-            l
-        } else {
-            return Ok(false);
-        };
+        let mul = if is_c(l) { r } else if is_c(r) { l } else { return Ok(false) };
         let ExprKind::Bin { op: BinOp::Mul, l, r } = &mul.kind else { return Ok(false) };
         let (av, bidx, bname) = match (&l.kind, &r.kind) {
             (_, ExprKind::Index { name, index }) => (l, index, name),
             (ExprKind::Index { name, index }, _) => (r, index, name),
             _ => return Ok(false),
         };
-        if expr_mentions(av, &j) {
+        if bname == cname || expr_mentions(av, &j) || !expr_pure(av) {
             return Ok(false);
         }
-        if bname == cname {
+        if !expr_pure(cidx) || !expr_pure(bidx) {
             return Ok(false);
         }
-        let csplit = split_affine_j(cidx, &j);
-        let bsplit = split_affine_j(bidx, &j);
-        let Some((cc, _)) = csplit else { return Ok(false) };
-        let Some((bc, _)) = bsplit else { return Ok(false) };
+        if !self.local_arrays.contains(cname) || !self.local_arrays.contains(bname) {
+            return Ok(false);
+        }
+        let Some((cc, _)) = split_affine_j(cidx, &j) else { return Ok(false) };
+        let Some((bc, _)) = split_affine_j(bidx, &j) else { return Ok(false) };
         if cc != 1 || bc != 1 {
             return Ok(false);
         }
@@ -1820,6 +1837,14 @@ impl Builder {
         }
         let Some(cptr) = self.vars.get(cname).copied() else { return Ok(false) };
         let Some(bptr) = self.vars.get(bname).copied() else { return Ok(false) };
+        let Some(jv) = self.vars.get(&j).copied() else { return Ok(false) };
+        if self.var_init_const.get(&jv).copied() != Some(0) {
+            return Ok(false);
+        }
+        let c_line = body[0].line;
+        if c == 0 {
+            return Ok(true);
+        }
         let zero = self.value();
         self.push(Instr::Const { dst: zero, v: 0 });
         self.vty[zero.0 as usize] = Ty::I32;
@@ -1829,46 +1854,43 @@ impl Builder {
         let cbase = self.lower_expr(cidx)?;
         let bbase = self.lower_expr(bidx)?;
         self.subst_stack.pop();
-        let start_e = Expr { kind: ExprKind::Var(j.clone()), line };
-        let start = self.lower_expr(&start_e)?;
-        let lm = self.lower_expr(limit)?;
-        let raw = self.value();
-        self.push(Instr::Bin { dst: raw, op: Op::Sub, l: lm, r: start });
-        self.vty[raw.0 as usize] = Ty::I32;
-        let cmp = self.value();
-        self.push(Instr::Bin { dst: cmp, op: Op::Gt, l: raw, r: zero });
-        self.vty[cmp.0 as usize] = Ty::I32;
-        let count = self.value();
-        self.push(Instr::Select { dst: count, cond: cmp, a: raw, b: zero, float: false });
-        self.vty[count.0 as usize] = Ty::I32;
-        let jfinal = self.value();
-        self.push(Instr::Select { dst: jfinal, cond: cmp, a: lm, b: start, float: false });
-        self.vty[jfinal.0 as usize] = Ty::I32;
-        let cidx0 = self.value();
-        self.push(Instr::Bin { dst: cidx0, op: Op::Add, l: start, r: cbase });
-        self.vty[cidx0.0 as usize] = Ty::I32;
-        let bidx0 = self.value();
-        self.push(Instr::Bin { dst: bidx0, op: Op::Add, l: start, r: bbase });
-        self.vty[bidx0.0 as usize] = Ty::I32;
+        let i32v = |b: &mut Builder, v: Value| -> Option<Value> {
+            match b.vty[v.0 as usize] {
+                Ty::I32 => Some(v),
+                Ty::I64 => {
+                    let dst = b.value();
+                    b.push(Instr::Trunc { dst, ty: Ty::I32, a: v });
+                    b.vty[dst.0 as usize] = Ty::I32;
+                    Some(dst)
+                }
+                _ => None,
+            }
+        };
+        let Some(cbase) = i32v(self, cbase) else { return Ok(false) };
+        let Some(bbase) = i32v(self, bbase) else { return Ok(false) };
         let avv = self.lower_expr(av)?;
+        let Some(avv) = i32v(self, avv) else { return Ok(false) };
+        let count = self.value();
+        self.push(Instr::Const { dst: count, v: c });
+        self.vty[count.0 as usize] = Ty::I32;
+        let start = self.value();
+        self.push(Instr::Const { dst: start, v: 0 });
+        self.vty[start.0 as usize] = Ty::I32;
         self.push(Instr::SaxpyI32 {
             c_ptr: cptr,
             c_len: clen,
             b_ptr: bptr,
             b_len: blen,
-            c_idx: cidx0,
-            b_idx: bidx0,
+            c_idx: cbase,
+            b_idx: bbase,
             count,
             av: avv,
             start,
-            limit: lm,
-            line,
+            limit: count,
+            line: c_line,
         });
-        let jv = *self
-            .vars
-            .get(&j)
-            .ok_or_else(|| format!("line {}: unknown loop variable", line))?;
-        self.push(Instr::StoreVar { var: jv, src: jfinal });
+        self.push(Instr::StoreVar { var: jv, src: count });
+        self.var_init_const.insert(jv, c);
         Ok(true)
     }
 
@@ -1974,6 +1996,7 @@ impl Builder {
                 self.var_ty.insert(name.clone(), target);
             }
             StmtKind::ArrayLet { name, elem, value, count } => {
+                self.local_arrays.insert(name.clone());
                 let lenv = self.lower_expr(count)?;
                 let ptr_var = self.var(name);
                 let byte_bool = *elem == Ty::Bool && self.byte_bool.contains(name);
@@ -2322,9 +2345,9 @@ impl Builder {
                 self.cur = end_bb;
             }
             StmtKind::While { cond, body } => {
-                // Disabled after adversarial audit found aliasing, hoisting,
-                // i64-truncation and length-argument defects. Kept for the
-                // follow-up rewrite; the scalar loop is used instead.
+                if self.try_lower_saxpy(cond, body, s.line)? {
+                    return Ok(());
+                }
                 let head = self.new_block();
                 let body_bb = self.new_block();
                 let end_bb = self.new_block();
@@ -2432,6 +2455,25 @@ impl Builder {
                     "line {}: IR: statement not supported yet ({:?})",
                     s.line, other
                 ))
+            }
+        }
+        if let StmtKind::Let { name, init, .. } = &s.kind {
+            if let Some(c) = self.const_eval(init) {
+                if let Some(v) = self.vars.get(name).copied() {
+                    self.var_init_const.insert(v, c);
+                }
+            }
+        }
+        if let StmtKind::Assign { name, value } = &s.kind {
+            if let Some(v) = self.vars.get(name).copied() {
+                match self.const_eval(value) {
+                    Some(c) => {
+                        self.var_init_const.insert(v, c);
+                    }
+                    None => {
+                        self.var_init_const.remove(&v);
+                    }
+                }
             }
         }
         Ok(())
@@ -6352,7 +6394,8 @@ pub fn optimize(prog: &mut IrProgram) {
     propagate_const_array_lens(prog);
     resolve_constant_lengths(prog);
     remove_redundant_bounds(prog);
-    scalarize_const_arrays(prog);
+    // scalarize_const_arrays is disabled: an audit showed it could remove
+    // arrays still referenced by SaxpyI32. The pass stays for a later fix.
     strength_reduce_pow2(prog);
     remove_redundant_truncations(prog);
     narrow_index_chains(prog);

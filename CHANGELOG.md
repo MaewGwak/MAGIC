@@ -30,6 +30,19 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.92 — guarded saxpy is back (2026-11-06)
+
+The saxpy idiom is re-enabled under strict guards that close the six audit findings: only local
+allocations (never array parameters, so no call-site aliasing), distinct c/b arrays, i32 arrays and
+i32 multiplier, a constant limit in `0..=i32::MAX`, a `j` whose last constant initialisation is 0,
+and pure/effect-free limit, multiplier and index-remainder expressions (no calls, loads or array
+reads, so hoisting them once is sound). Length references are rewritten for both arrays, the start
+is 0 so no i64 arithmetic or zero-trip select is involved, and the panic line is the indexing
+statement. `scalarize_const_arrays` is disabled because the audit showed it could free arrays still
+referenced by `SaxpyI32`; the pass remains for a later fix. Audit repros (b1/b2/b5/b6/b7,
+alias_shift, s_min) now match C. Matmul i-k-j is 8 ms against C's 12 ms; all gates pass, 168 tests,
+repo parity 60/60.
+
 ## v0.8.91 — roll back the saxpy idiom after audit (2026-11-06)
 
 The `SaxpyI32` idiom shipped in v0.8.90 was disabled after an adversarial audit produced six
