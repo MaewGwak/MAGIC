@@ -955,6 +955,8 @@ struct RegAlloc<'a> {
     free: Vec<usize>,
     pool: &'a [usize],
     last_use: &'a HashMap<Value, usize>,
+    consts: &'a HashMap<Value, i64>,
+    deferred: &'a HashMap<Value, (Op, Value, Value, usize)>,
 }
 
 impl<'a> RegAlloc<'a> {
@@ -1100,6 +1102,8 @@ fn emit_fast_block(
     var_regs: &HashMap<usize, &'static str>,
     pool: &[usize],
     last_use: &HashMap<Value, usize>,
+    consts: &HashMap<Value, i64>,
+    deferred: &HashMap<Value, (Op, Value, Value, usize)>,
 ) {
     let mut ra = RegAlloc {
         out,
@@ -1109,6 +1113,8 @@ fn emit_fast_block(
         free: pool.iter().rev().copied().collect(),
         pool,
         last_use,
+        consts,
+        deferred,
     };
     for (ii, ins) in instrs.iter().enumerate() {
         match ins {
@@ -1147,7 +1153,136 @@ fn emit_fast_block(
                 }
             }
             Instr::Bin { dst, op, l, r } => {
+                if ra.deferred.contains_key(dst) {
+                    // Emitted together with the branch that consumes it.
+                    continue;
+                }
                 let commutative = matches!(op, Op::Add | Op::Mul | Op::And | Op::Or);
+                let imm_r = ra.consts.get(r).copied().filter(|c| *c >= i32::MIN as i64 && *c <= i32::MAX as i64);
+                let imm_l = ra.consts.get(l).copied().filter(|c| *c >= i32::MIN as i64 && *c <= i32::MAX as i64);
+                if !matches!(op, Op::Div | Op::Rem) {
+                    let is_cmp_op = matches!(
+                        op,
+                        Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge
+                    );
+                    let (imm, reg, swapped) = match (imm_r, imm_l) {
+                        (Some(c), _) => (c, *l, false),
+                        (None, Some(c)) if commutative || is_cmp_op => (c, *r, true),
+                        _ => (0, *l, false),
+                    };
+                    let has_imm = imm_r.is_some() || imm_l.is_some();
+                    if has_imm && imm_r.is_none() && matches!(op, Op::Sub) {
+                        let imm = imm_l.unwrap();
+                        let a = ra.operand(*r);
+                        let d = match ra.dead_reg(*r, ii) {
+                            Some(i) => ra.dst_at(*dst, i),
+                            None => ra.dst_excluding(*dst, &[a]),
+                        };
+                        if d != a {
+                            ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
+                        }
+                        ra.out.push_str(&format!("    mov ${}, %rax\n", imm));
+                        ra.out.push_str(&format!("    sub %rax, {}\n", POOL[d].0));
+                        ra.def_store(*dst, d);
+                        ra.free_dead(ii);
+                        continue;
+                    }
+                    if has_imm {
+                        let a = ra.operand(reg);
+                        let d = match ra.dead_reg(reg, ii) {
+                            Some(i) => ra.dst_at(*dst, i),
+                            None => ra.dst_excluding(*dst, &[a]),
+                        };
+                        if !swapped {
+                            match op {
+                                Op::Add => {
+                                    if d != a {
+                                        ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
+                                    }
+                                    ra.out.push_str(&format!("    add ${}, {}\n", imm, POOL[d].0));
+                                }
+                                Op::Sub => {
+                                    if d != a {
+                                        ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
+                                    }
+                                    ra.out.push_str(&format!("    sub ${}, {}\n", imm, POOL[d].0));
+                                }
+                                Op::Mul => {
+                                    if d == a {
+                                        ra.out.push_str(&format!("    imul ${}, {}\n", imm, POOL[d].0));
+                                    } else {
+                                        ra.out.push_str(&format!("    imul ${}, {}, {}\n", imm, POOL[a].0, POOL[d].0));
+                                    }
+                                }
+                                Op::And => {
+                                    if d != a {
+                                        ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
+                                    }
+                                    ra.out.push_str(&format!("    and ${}, {}\n", imm, POOL[d].0));
+                                }
+                                Op::Or => {
+                                    if d != a {
+                                        ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
+                                    }
+                                    ra.out.push_str(&format!("    or ${}, {}\n", imm, POOL[d].0));
+                                }
+                                Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
+                                    ra.out.push_str(&format!("    cmp ${}, {}\n", imm, POOL[a].0));
+                                    let set = match op {
+                                        Op::Eq => "sete",
+                                        Op::Ne => "setne",
+                                        Op::Lt => "setl",
+                                        Op::Le => "setle",
+                                        Op::Gt => "setg",
+                                        Op::Ge => "setge",
+                                        _ => unreachable!(),
+                                    };
+                                    if d != a {
+                                        ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
+                                    }
+                                    ra.out.push_str(&format!("    {} %al\n    movzbq %al, {}\n", set, POOL[d].0));
+                                }
+                                _ => unreachable!(),
+                            }
+                        } else {
+                            // constant on the left; comparisons need the flipped cond
+                            match op {
+                                Op::Add | Op::Mul | Op::And | Op::Or => {
+                                    if d != a {
+                                        ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
+                                    }
+                                    let m = match op {
+                                        Op::Add => "add",
+                                        Op::Mul => "imul",
+                                        Op::And => "and",
+                                        _ => "or",
+                                    };
+                                    ra.out.push_str(&format!("    {} ${}, {}\n", m, imm, POOL[d].0));
+                                }
+                                Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
+                                    ra.out.push_str(&format!("    cmp ${}, {}\n", imm, POOL[a].0));
+                                    let set = match op {
+                                        Op::Eq => "sete",
+                                        Op::Ne => "setne",
+                                        Op::Lt => "setg",
+                                        Op::Le => "setge",
+                                        Op::Gt => "setl",
+                                        Op::Ge => "setle",
+                                        _ => unreachable!(),
+                                    };
+                                    if d != a {
+                                        ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, POOL[d].0));
+                                    }
+                                    ra.out.push_str(&format!("    {} %al\n    movzbq %al, {}\n", set, POOL[d].0));
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        ra.def_store(*dst, d);
+                        ra.free_dead(ii);
+                        continue;
+                    }
+                }
                 let a = ra.operand(*l);
                 let b = ra.operand_excluding(*r, &[a]);
                 let dead_a = ra.dead_reg(*l, ii);
@@ -1310,12 +1445,31 @@ fn emit_fast_block(
                 }
             }
             Instr::Br { cond, then_bb, else_bb } => {
-                let c = ra.operand(*cond);
-                ra.out.push_str(&format!("    cmp $0, {}\n", POOL[c].0));
-                ra.out.push_str(&format!(
-                    "    jne .L{}_{}\n    jmp .L{}_{}\n",
-                    name, then_bb, name, else_bb
-                ));
+                if let Some((op, l, r, _)) = ra.deferred.get(cond).copied() {
+                    let a = ra.operand(l);
+                    let b = ra.operand_excluding(r, &[a]);
+                    ra.out.push_str(&format!("    cmp {}, {}\n", POOL[b].0, POOL[a].0));
+                    let set = match op {
+                        Op::Eq => "je",
+                        Op::Ne => "jne",
+                        Op::Lt => "jl",
+                        Op::Le => "jle",
+                        Op::Gt => "jg",
+                        Op::Ge => "jge",
+                        _ => "jne",
+                    };
+                    ra.out.push_str(&format!(
+                        "    {} .L{}_{}\n    jmp .L{}_{}\n",
+                        set, name, then_bb, name, else_bb
+                    ));
+                } else {
+                    let c = ra.operand(*cond);
+                    ra.out.push_str(&format!("    cmp $0, {}\n", POOL[c].0));
+                    ra.out.push_str(&format!(
+                        "    jne .L{}_{}\n    jmp .L{}_{}\n",
+                        name, then_bb, name, else_bb
+                    ));
+                }
             }
             Instr::Jmp(bb) => ra
                 .out
@@ -1418,6 +1572,16 @@ pub fn emit(prog: &IrProgram) -> String {
                 )
             })
         });
+        let mut fn_var_consts: HashMap<usize, i64> = HashMap::new();
+        let mut fn_vals: HashMap<Value, i64> = HashMap::new();
+        for _ in 0..6 {
+            fn_vals = compute_value_consts(f, &fn_var_consts);
+            let next = compute_var_consts(f, &fn_vals);
+            if next == fn_var_consts {
+                break;
+            }
+            fn_var_consts = next;
+        }
         let pool: Vec<usize> = if has_bool {
             vec![0, 3, 4, 5]
         } else {
@@ -1507,6 +1671,43 @@ pub fn emit(prog: &IrProgram) -> String {
                         last_use.insert(v, ii);
                     }
                 }
+                // A comparison whose only use is the block terminator can be
+                // emitted as cmp+jcc, skipping the setcc/movzbq/cmp sequence.
+                let mut use_count: HashMap<Value, u32> = HashMap::new();
+                for ins in &b.instrs {
+                    let mut u = Vec::new();
+                    let mut d = Vec::new();
+                    instr_uses_defs(ins, &mut u, &mut d);
+                    for v in u {
+                        *use_count.entry(v).or_insert(0) += 1;
+                    }
+                }
+                let mut deferred: HashMap<Value, (Op, Value, Value, usize)> = HashMap::new();
+                let mut last_bin: HashMap<Value, (Op, Value, Value)> = HashMap::new();
+                for ins in &b.instrs {
+                    if let Instr::Bin { dst, op, l, r } = ins {
+                        if matches!(
+                            op,
+                            Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge
+                        ) {
+                            last_bin.insert(*dst, (*op, *l, *r));
+                        }
+                    }
+                }
+                if let Some(Instr::Br { cond, .. }) = b.instrs.last() {
+                    if use_count.get(cond).copied().unwrap_or(0) == 1 {
+                        if let Some((op, l, r)) = last_bin.get(cond).copied() {
+                            let bi = b.instrs.len() - 1;
+                            deferred.insert(*cond, (op, l, r, bi));
+                            for v in [l, r] {
+                                let e = last_use.entry(v).or_insert(0);
+                                if *e < bi {
+                                    *e = bi;
+                                }
+                            }
+                        }
+                    }
+                }
                 emit_fast_block(
                     &mut out,
                     f,
@@ -1516,6 +1717,8 @@ pub fn emit(prog: &IrProgram) -> String {
                     &var_regs,
                     &pool,
                     &last_use,
+                    &fn_vals,
+                    &deferred,
                 );
                 continue;
             }

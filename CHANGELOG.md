@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.21 — immediate operands and comparison/branch fusion in the IR (2026-11-06)
+
+Binary operations with a constant operand now use immediate forms (`cmp $c`, `add $c`, `imul $c`,
+`and/or $c`), including the reversed `c - reg` and constant-on-the-left comparison cases. More
+importantly, a comparison whose only use is the block terminator is no longer materialised: the
+emitter writes `cmp` + `jcc` directly instead of `setcc` + `movzbq` + `cmp $0`, and keeps the
+operands alive until the branch. Matmul's inner loops shrink by four instructions per iteration:
+matmul 154 → 131 ms, array sum 63 → 58 ms, sieve ~89 ms and the fill-only program ~37 ms. The IR
+backend is now faster than the AST backend on matmul (1.7x), the array sum and the fill loop.
+
 ## v0.8.20 — IR fill loops, destination reuse and better variable ranking (2026-11-06)
 
 Three changes to the IR backend:
