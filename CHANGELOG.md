@@ -30,6 +30,18 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.81 — leaner struct-array field access (2026-11-06)
+
+Four fixes to the address path for struct arrays: constant array lengths are resolved *before* the
+bounds prover (so `IndexField` accesses inside canonical loops are actually marked unchecked),
+field-array pointers are ranked for promotion like `IndexLoad`/`IndexStore` pointers, repeated loads
+of the same variable in one block are CSE'd, and the emitters no longer load the length or
+sign-extend the index for an access whose bounds are already proven. The particles hot loop now has
+one `shl` for the base address and no bounds checks; particles drops 265 → 151 ms (C is 70 ms), par
+135 ms. A latent slow-path bug surfaced in the native gate: an unchecked field access still
+referenced `.Lmsg0` (undefined symbol) in the slow emitter; that path now guards on `line != 0` and
+the native gate is green again. All gates pass, 168 tests, repo parity 60/60.
+
 ## v0.8.80 — struct arrays in `par for`, and three outright wins (2026-11-06)
 
 `par for` bodies can now read and write struct-array fields (`ps[i].x = ...`): the collector accepts

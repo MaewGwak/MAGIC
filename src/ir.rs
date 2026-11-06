@@ -202,6 +202,7 @@ struct Builder {
     par_counter: u32,
     par_body: bool,
     byte_bool: std::collections::HashSet<String>,
+    load_cache: HashMap<usize, (Value, usize)>,
     extra: Vec<IrFunc>,
 }
 
@@ -414,6 +415,7 @@ impl Builder {
             par_counter: 0,
             par_body: false,
             byte_bool: Default::default(),
+            load_cache: HashMap::new(),
             extra: Vec::new(),
             ret,
         }
@@ -439,6 +441,9 @@ impl Builder {
     }
 
     fn push(&mut self, i: Instr) {
+        if let Instr::StoreVar { var, .. } = &i {
+            self.load_cache.remove(var);
+        }
         self.blocks[self.cur].instrs.push(i);
     }
 
@@ -668,8 +673,14 @@ impl Builder {
                     .vars
                     .get(n)
                     .ok_or_else(|| format!("line {}: IR: unknown variable `{}`", e.line, n))?;
+                if let Some((v, b)) = self.load_cache.get(&var).copied() {
+                    if b == self.cur {
+                        return Ok(v);
+                    }
+                }
                 let dst = self.value();
                 self.push(Instr::LoadVar { dst, var });
+                self.load_cache.insert(var, (dst, self.cur));
                 self.vbool[dst.0 as usize] = self.var_bool.get(n).copied().unwrap_or(false);
                 self.vty[dst.0 as usize] = self.var_ty.get(n).copied().unwrap_or(Ty::I32);
                 Ok(dst)
@@ -4113,18 +4124,18 @@ fn emit_fast_block(
             }
             Instr::IndexFieldLoad { dst, ptr_var, idx, size, off, ty, len, line } => {
                 let i = ra.operand(*idx);
-                load_index_reg(&mut ra.out, f, *idx, i);
-                match len {
-                    LenRef::Const(n) => ra.out.push_str(&format!("    mov ${}, %rcx\n", n)),
-                    LenRef::Var(v) => {
-                        if let Some(reg) = var_regs.get(v) {
-                            ra.out.push_str(&format!("    mov {}, %rcx\n", reg));
-                        } else {
-                            ra.out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                if *line != 0 {
+                    load_index_reg(&mut ra.out, f, *idx, i);
+                    match len {
+                        LenRef::Const(n) => ra.out.push_str(&format!("    mov ${}, %rcx\n", n)),
+                        LenRef::Var(v) => {
+                            if let Some(reg) = var_regs.get(v) {
+                                ra.out.push_str(&format!("    mov {}, %rcx\n", reg));
+                            } else {
+                                ra.out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                            }
                         }
                     }
-                }
-                if *line != 0 {
                     ra.out.push_str("    cmp %rcx, %rax\n    jb 1f\n");
                     ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
                     ra.out.push_str("    call .Lir_panic\n1:\n");
@@ -4175,18 +4186,18 @@ fn emit_fast_block(
                     (Some(s), i)
                 };
                 let _ = sreg;
-                load_index_reg(&mut ra.out, f, *idx, i);
-                match len {
-                    LenRef::Const(n) => ra.out.push_str(&format!("    mov ${}, %r10\n", n)),
-                    LenRef::Var(v) => {
-                        if let Some(reg) = var_regs.get(v) {
-                            ra.out.push_str(&format!("    mov {}, %r10\n", reg));
-                        } else {
-                            ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*v)));
+                if *line != 0 {
+                    load_index_reg(&mut ra.out, f, *idx, i);
+                    match len {
+                        LenRef::Const(n) => ra.out.push_str(&format!("    mov ${}, %r10\n", n)),
+                        LenRef::Var(v) => {
+                            if let Some(reg) = var_regs.get(v) {
+                                ra.out.push_str(&format!("    mov {}, %r10\n", reg));
+                            } else {
+                                ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*v)));
+                            }
                         }
                     }
-                }
-                if *line != 0 {
                     ra.out.push_str("    cmp %r10, %rax\n    jb 1f\n");
                     ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
                     ra.out.push_str("    call .Lir_panic\n1:\n");
@@ -5449,9 +5460,9 @@ fn narrow_index_chains(prog: &mut IrProgram) {
 }
 
 pub fn optimize(prog: &mut IrProgram) {
+    resolve_constant_lengths(prog);
     remove_redundant_bounds(prog);
     strength_reduce_pow2(prog);
-    resolve_constant_lengths(prog);
     remove_redundant_truncations(prog);
     narrow_index_chains(prog);
     cse_blocks(prog);
@@ -5556,7 +5567,9 @@ pub fn emit(prog: &IrProgram) -> String {
                     Instr::Alloc { ptr_var, .. }
                     | Instr::Fill { ptr_var, .. }
                     | Instr::IndexLoad { ptr_var, .. }
-                    | Instr::IndexStore { ptr_var, .. } => {
+                    | Instr::IndexStore { ptr_var, .. }
+                    | Instr::IndexFieldLoad { ptr_var, .. }
+                    | Instr::IndexFieldStore { ptr_var, .. } => {
                         *var_counts.entry(*ptr_var).or_insert(0) += 3 * w;
                     }
                     _ => {}
@@ -6294,19 +6307,21 @@ pub fn emit(prog: &IrProgram) -> String {
                     Instr::IndexFieldLoad { dst, ptr_var, idx, size, off, ty, len, line } => {
                         out.push_str(&ld(*idx));
                         out.push_str("    mov %rax, %r11\n");
-                        match len {
-                            LenRef::Const(n) => out.push_str(&format!("    mov ${}, %rcx\n", n)),
-                            LenRef::Var(v) => {
-                                if let Some(reg) = var_regs.get(v) {
-                                    out.push_str(&format!("    mov {}, %rcx\n", reg));
-                                } else {
-                                    out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                        if *line != 0 {
+                            match len {
+                                LenRef::Const(n) => out.push_str(&format!("    mov ${}, %rcx\n", n)),
+                                LenRef::Var(v) => {
+                                    if let Some(reg) = var_regs.get(v) {
+                                        out.push_str(&format!("    mov {}, %rcx\n", reg));
+                                    } else {
+                                        out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                                    }
                                 }
                             }
+                            out.push_str("    cmp %rcx, %r11\n    jb 1f\n");
+                            out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                            out.push_str("    call .Lir_panic\n1:\n");
                         }
-                        out.push_str("    cmp %rcx, %r11\n    jb 1f\n");
-                        out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
-                        out.push_str("    call .Lir_panic\n1:\n");
                         if let Some(reg) = var_regs.get(ptr_var) {
                             out.push_str(&format!("    mov {}, %r10\n", reg));
                         } else {
@@ -6326,19 +6341,21 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str("    mov %rax, %r8\n");
                         out.push_str(&ld(*idx));
                         out.push_str("    mov %rax, %r11\n");
-                        match len {
-                            LenRef::Const(n) => out.push_str(&format!("    mov ${}, %rcx\n", n)),
-                            LenRef::Var(v) => {
-                                if let Some(reg) = var_regs.get(v) {
-                                    out.push_str(&format!("    mov {}, %rcx\n", reg));
-                                } else {
-                                    out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                        if *line != 0 {
+                            match len {
+                                LenRef::Const(n) => out.push_str(&format!("    mov ${}, %rcx\n", n)),
+                                LenRef::Var(v) => {
+                                    if let Some(reg) = var_regs.get(v) {
+                                        out.push_str(&format!("    mov {}, %rcx\n", reg));
+                                    } else {
+                                        out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                                    }
                                 }
                             }
+                            out.push_str("    cmp %rcx, %r11\n    jb 1f\n");
+                            out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                            out.push_str("    call .Lir_panic\n1:\n");
                         }
-                        out.push_str("    cmp %rcx, %r11\n    jb 1f\n");
-                        out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
-                        out.push_str("    call .Lir_panic\n1:\n");
                         if let Some(reg) = var_regs.get(ptr_var) {
                             out.push_str(&format!("    mov {}, %r10\n", reg));
                         } else {
