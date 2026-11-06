@@ -30,6 +30,29 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.89 — scalar-replace small constant-index arrays (2026-11-06)
+
+An array of at most 16 scalar elements whose every access uses a compile-time constant index, is
+never passed to a call or otherwise referenced, and is not in an arena is now replaced by individual
+scalar slots; the allocation and fill disappear. Initialisation is emitted at the `Fill` site (or as
+an explicit zero constant when there is no fill), which a regression caught: placing the stores at
+the `Alloc` site made them read the fill constant before its definition and printed zeros. Full
+unrolling of nested constant loops was tried together with scalarisation but n-body stayed at
+~890 ms (full unroll alone 1041 ms, leaf unroll 869–945 ms depending on machine load), so the
+leaf-only unroll stays. No benchmark moved; this is a general small-array optimisation with its own
+differential case. All gates pass, 168 tests, repo parity 60/60.
+
+## v0.8.88 — refresh benchmark evidence and fix the compile harness (2026-11-06)
+
+The compile-speed harness was still measuring the C backend while labelling it "MAGIC". It now
+measures the default IR backend on the same 2,000-function source: cold 25 ms, one-function edit
+10 ms, no-op 6 ms, versus gcc 47/–/–, rustc 109/110/– and Goose 69/64/69; binary 22,048 bytes versus
+Rust 4,538,288 and Goose 72,024. `BENCHMARKS.md` and the README performance section were rewritten
+from the current gate logs: three outright wins (sieve, fannkuch `par for`, raytracer `par for`),
+hash `par for` inside 1.25x, and honest losses for matmul (6.2x), binary trees (5.4x), n-body (3.9x)
+and particles (2.3x). Peak RSS is 7.2x lower than C on the bit-packed sieve and at parity elsewhere;
+"lowest on most workloads" is not claimed. All gates pass.
+
 ## v0.8.87 — vectorise checked struct-array pairs (2026-11-06)
 
 `Aos2Step` now carries the length reference and panic line, so the pair vectoriser also fires on
