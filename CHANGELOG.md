@@ -30,6 +30,13 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.4 — static TCP networking (2026-11-06)
+
+The freestanding runtime now implements `socket/bind/listen/accept/connect/getsockname/inet_addr`,
+`read/write/close`, `strcmp` and a null `getenv` with raw syscalls. A static binary can listen on
+port 0, connect to itself over 127.0.0.1, accept, write and read three bytes; `verify-static.sh`
+checks the `3 65` output. All gates pass, 169 tests, parity 60/60, static-memory green.
+
 ## v0.10.3 — static file I/O (2026-11-06)
 
 The freestanding runtime gained syscall-backed `fopen/fclose/fread/fwrite/fseek/ftell/fflush`, so

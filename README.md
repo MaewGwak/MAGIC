@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.10 (0.10.3)** — 169 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.10 (0.10.4)** — 169 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -177,7 +177,7 @@ Cold compilation of the 2,000-function source is 25 ms versus 47 ms for gcc, 109
 69 ms for Goose; incremental rebuild after one edit is 10 ms.
 
 The speed goal is **partially met**: three outright wins and hash inside 1.25x, but matmul, binary
-trees and n-body still trail (particles is now inside 1.25x). The memory win is proven on all eight workloads. The static runtime also implements syscall-backed file I/O (`file_open/read/write/seek/tell/size`). It formats `print_prec` via fixed-point (precision <= 9, overflow and larger precisions exit with an error) and rejects `%g`/`print` of floats explicitly.
+trees and n-body still trail (particles is now inside 1.25x). The memory win is proven on all eight workloads. The static runtime also implements syscall-backed file I/O and TCP (`net_listen/port/connect/accept/read/write/close`). It formats `print_prec` via fixed-point (precision <= 9, overflow and larger precisions exit with an error) and rejects `%g`/`print` of floats explicitly.
 Full tables, methodology and honest gaps: [`BENCHMARKS.md`](BENCHMARKS.md).
 
 ```bash

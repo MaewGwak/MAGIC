@@ -56,6 +56,31 @@ else
   echo "file_io: build FAIL"; FAIL=1
 fi
 
+NETSRC="$OUT/net.magic"
+cat > "$NETSRC" <<'EOF'
+fn main() {
+    var s = net_listen(0);
+    var p = net_port(s);
+    var c = net_connect("127.0.0.1", p);
+    var a = net_accept(s);
+    var buf: [u8] = [65; 3];
+    net_write(c, buf, 3);
+    var r: [u8] = [0; 3];
+    var n = net_read(a, r, 3);
+    print(n);
+    print(r[0]);
+    net_close(c);
+    net_close(a);
+    net_close(s);
+}
+EOF
+if "$M" build "$NETSRC" --static -o "$OUT/net" >/dev/null 2>&1; then
+  got=$(timeout 20 "$OUT/net" 2>/dev/null | tr '\n' ' ')
+  if [ "$got" = "3 65 " ]; then echo "net_loopback: ok static"; else echo "net_loopback: FAIL got=$got"; FAIL=1; fi
+else
+  echo "net_loopback: build FAIL"; FAIL=1
+fi
+
 printf 'fn main() { let x = 1.5; print(x); }\n' > "$OUT/g.magic"
 if "$M" build "$OUT/g.magic" --static -o "$OUT/g" >/dev/null 2>&1; then
   echo "%%g program unexpectedly accepted"; FAIL=1
