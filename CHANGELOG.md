@@ -30,6 +30,28 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.52 — post-refactor matrix measurement (2026-11-06)
+
+Five-run medians after the per-block pool and division work:
+
+| Program | IR | AST native | C |
+|---|---:|---:|---:|
+| matmul | 125 ms | 221 ms | 31 ms |
+| particles | 545 ms | 1013 ms | 153 ms |
+| vecpart | 160 ms | 289 ms | 35 ms |
+| raytrace | 270 ms | 484 ms | 91 ms |
+| nbody | 2243 ms | 4207 ms | 738 ms |
+| sieve | 86 ms | 89 ms | 40 ms |
+| btree | 154 ms | 167 ms | 103 ms |
+| hashmap | 96 ms | 89 ms | 41 ms |
+| sqlscan | 35 ms | 32 ms | 10 ms |
+| bufpool | 178 ms | 178 ms | 130 ms |
+
+The IR backend now wins seven of ten programs against the AST backend (up to 1.9x on particles and
+nbody), and is within 1.4–4.6x of the C backend depending on the program. Peak memory remains at
+parity with C. These numbers replace the v0.8.31 table in `NATIVE-BACKEND.md` and set the baseline for
+the SLP/SIMD, `par for` and global-allocation milestones.
+
 ## v0.8.51 — per-block register pools and fast division (2026-11-06)
 
 The register pool is now chosen per basic block: all six caller-saved registers by default, minus
