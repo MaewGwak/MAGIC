@@ -81,6 +81,20 @@ else
   echo "net_loopback: build FAIL"; FAIL=1
 fi
 
+ENVSRC="$OUT/env.magic"
+cat > "$ENVSRC" <<'EOF'
+fn main() {
+    let v = env("MAGIC_STATIC_TEST");
+    if str_eq(v, "yes") { print(1); } else { print(0); }
+}
+EOF
+if "$M" build "$ENVSRC" --static -o "$OUT/envtest" >/dev/null 2>&1; then
+  got=$(MAGIC_STATIC_TEST=yes "$OUT/envtest" 2>/dev/null | tail -1)
+  if [ "$got" = "1" ]; then echo "env: ok static"; else echo "env: FAIL got=$got"; FAIL=1; fi
+else
+  echo "env: build FAIL"; FAIL=1
+fi
+
 printf 'fn main() { let x = 1.5; print(x); }\n' > "$OUT/g.magic"
 if "$M" build "$OUT/g.magic" --static -o "$OUT/g" >/dev/null 2>&1; then
   echo "%%g program unexpectedly accepted"; FAIL=1

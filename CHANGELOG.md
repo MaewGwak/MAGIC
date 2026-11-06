@@ -30,6 +30,13 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.8 — static env() (2026-11-06)
+
+`_start` saves the initial `envp` and the freestanding `getenv` walks it, so `env("NAME")` works in
+static binaries instead of silently returning null. `verify-static.sh` sets `MAGIC_STATIC_TEST=yes`
+and requires the program to print 1. All gates pass, 169 tests, parity 60/60, static and
+static-memory green.
+
 ## v0.10.7 — thread scaling evidence (2026-11-06)
 
 `par for` now honours `MAGIC_THREADS` as a cap for measurement/tuning. On this 16-thread host the
