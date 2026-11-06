@@ -69,6 +69,7 @@ pub enum Instr {
     IndexStoreBoolAtomic { ptr_var: usize, idx: Value, src: Value },
     FastDivPow2 { dst: Value, a: Value, k: u32, d: i64, rem: bool },
     Aos2Step { dst: Value, tmp: Value, ptr_var: usize, idx: Value, size: u64, off: u64, k: Value, len: LenRef, line: usize },
+    SaxpyI32 { c_ptr: usize, c_len: LenRef, b_ptr: usize, b_len: LenRef, c_idx: Value, b_idx: Value, count: Value, av: Value, start: Value, limit: Value, line: usize },
     StoreVec { src_ptr_var: usize, ptr_var: usize, len_var: usize, cap_var: usize },
     LoadPtr { dst_var: usize, src_var: usize },
     StorePtr { dst_ptr_var: usize, src_var: usize },
@@ -426,6 +427,96 @@ fn stmt_has_continue(st: &Stmt) -> bool {
         StmtKind::Arena { body } => body.iter().any(stmt_has_continue),
         StmtKind::While { .. } | StmtKind::For { .. } => false,
         _ => false,
+    }
+}
+
+fn expr_mentions(e: &Expr, name: &str) -> bool {
+    match &e.kind {
+        ExprKind::Var(n) => n == name,
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) => false,
+        ExprKind::Bin { l, r, .. } => expr_mentions(l, name) || expr_mentions(r, name),
+        ExprKind::Un { e, .. } | ExprKind::Cast { e, .. } => expr_mentions(e, name),
+        ExprKind::Index { index, .. } => expr_mentions(index, name),
+        ExprKind::Field { .. } | ExprKind::FieldPath { .. } | ExprKind::ArrayLen(_) => false,
+        ExprKind::IndexField { index, .. } | ExprKind::IndexFieldPath { index, .. } => {
+            expr_mentions(index, name)
+        }
+        ExprKind::Call { args, .. } => args.iter().any(|a| expr_mentions(a, name)),
+        ExprKind::StructLit { fields, .. } => fields.iter().any(|(_, v)| expr_mentions(v, name)),
+        _ => false,
+    }
+}
+
+fn expr_same(a: &Expr, b: &Expr) -> bool {
+    match (&a.kind, &b.kind) {
+        (ExprKind::Int(x), ExprKind::Int(y)) => x == y,
+        (ExprKind::Float(x), ExprKind::Float(y)) => x == y,
+        (ExprKind::Bool(x), ExprKind::Bool(y)) => x == y,
+        (ExprKind::Str(x), ExprKind::Str(y)) => x == y,
+        (ExprKind::Var(x), ExprKind::Var(y)) => x == y,
+        (ExprKind::Bin { op: o1, l: l1, r: r1 }, ExprKind::Bin { op: o2, l: l2, r: r2 }) => {
+            o1 == o2 && expr_same(l1, l2) && expr_same(r1, r2)
+        }
+        (ExprKind::Un { op: o1, e: e1 }, ExprKind::Un { op: o2, e: e2 }) => {
+            o1 == o2 && expr_same(e1, e2)
+        }
+        (ExprKind::Cast { e: e1, ty: t1 }, ExprKind::Cast { e: e2, ty: t2 }) => {
+            t1 == t2 && expr_same(e1, e2)
+        }
+        (ExprKind::Index { name: n1, index: i1 }, ExprKind::Index { name: n2, index: i2 }) => {
+            n1 == n2 && expr_same(i1, i2)
+        }
+        _ => false,
+    }
+}
+
+/// Split an index expression into `coeff * j + rest`; `rest` is cloned and
+/// must be loop-invariant. Only integer literals and casts appear on the
+/// coefficient path, so the result is linear.
+fn split_affine_j(e: &Expr, j: &str) -> Option<(i64, Expr)> {
+    match &e.kind {
+        ExprKind::Var(n) if n == j => Some((1, Expr { kind: ExprKind::Int(0), line: e.line })),
+        ExprKind::Int(k) => Some((0, Expr { kind: ExprKind::Int(*k), line: e.line })),
+        ExprKind::Var(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) => {
+            if expr_mentions(e, j) { None } else { Some((0, e.clone())) }
+        }
+        ExprKind::Un { op: UnOp::Neg, e: inner } => {
+            let (c, r) = split_affine_j(inner, j)?;
+            Some((-c, Expr { kind: ExprKind::Un { op: UnOp::Neg, e: Box::new(r) }, line: e.line }))
+        }
+        ExprKind::Cast { e: inner, ty } => {
+            let (c, r) = split_affine_j(inner, j)?;
+            Some((c, Expr { kind: ExprKind::Cast { e: Box::new(r), ty: *ty }, line: e.line }))
+        }
+        ExprKind::Bin { op: BinOp::Add, l, r } => {
+            let (a, ra) = split_affine_j(l, j)?;
+            let (b, rb) = split_affine_j(r, j)?;
+            Some((a + b, Expr { kind: ExprKind::Bin { op: BinOp::Add, l: Box::new(ra), r: Box::new(rb) }, line: e.line }))
+        }
+        ExprKind::Bin { op: BinOp::Sub, l, r } => {
+            let (a, ra) = split_affine_j(l, j)?;
+            let (b, rb) = split_affine_j(r, j)?;
+            Some((a - b, Expr { kind: ExprKind::Bin { op: BinOp::Sub, l: Box::new(ra), r: Box::new(rb) }, line: e.line }))
+        }
+        ExprKind::Bin { op: BinOp::Mul, l, r } => {
+            let (lc, lr) = split_affine_j(l, j)?;
+            let (rc, rr) = split_affine_j(r, j)?;
+            if lc == 0 && rc == 0 {
+                if expr_mentions(e, j) { return None; }
+                return Some((0, e.clone()));
+            }
+            if lc == 0 {
+                let k = match lr.kind { ExprKind::Int(k) => k, _ => return None };
+                Some((rc * k, Expr { kind: ExprKind::Bin { op: BinOp::Mul, l: Box::new(rr), r: Box::new(Expr { kind: ExprKind::Int(k), line: e.line }) }, line: e.line }))
+            } else if rc == 0 {
+                let k = match rr.kind { ExprKind::Int(k) => k, _ => return None };
+                Some((lc * k, Expr { kind: ExprKind::Bin { op: BinOp::Mul, l: Box::new(lr), r: Box::new(Expr { kind: ExprKind::Int(k), line: e.line }) }, line: e.line }))
+            } else {
+                None
+            }
+        }
+        _ if !expr_mentions(e, j) => Some((0, e.clone())),
+        _ => None,
     }
 }
 
@@ -1662,6 +1753,125 @@ impl Builder {
         Ok(())
     }
 
+    fn try_lower_saxpy(&mut self, cond: &Expr, body: &[Stmt], line: usize) -> Result<bool, String> {
+        if body.len() != 2 {
+            return Ok(false);
+        }
+        let (j, limit) = match &cond.kind {
+            ExprKind::Bin { op: BinOp::Lt, l, r } => match &l.kind {
+                ExprKind::Var(j) => (j.clone(), r),
+                _ => return Ok(false),
+            },
+            _ => return Ok(false),
+        };
+        if expr_mentions(limit, &j) {
+            return Ok(false);
+        }
+        match &body[1].kind {
+            StmtKind::Assign { name, value } if *name == j => match &value.kind {
+                ExprKind::Bin { op: BinOp::Add, l, r } => {
+                    let ok = (matches!(&l.kind, ExprKind::Var(n) if *n == j)
+                        && matches!(&r.kind, ExprKind::Int(1)))
+                        || (matches!(&r.kind, ExprKind::Var(n) if *n == j)
+                            && matches!(&l.kind, ExprKind::Int(1)));
+                    if !ok {
+                        return Ok(false);
+                    }
+                }
+                _ => return Ok(false),
+            },
+            _ => return Ok(false),
+        }
+        let StmtKind::IndexAssign { name: cname, index: cidx, value } = &body[0].kind else {
+            return Ok(false);
+        };
+        let ExprKind::Bin { op: BinOp::Add, l, r } = &value.kind else { return Ok(false) };
+        let is_c = |e: &Expr| matches!(&e.kind, ExprKind::Index { name, index } if name == cname && expr_same(index, cidx));
+        let mul = if is_c(l) {
+            r
+        } else if is_c(r) {
+            l
+        } else {
+            return Ok(false);
+        };
+        let ExprKind::Bin { op: BinOp::Mul, l, r } = &mul.kind else { return Ok(false) };
+        let (av, bidx, bname) = match (&l.kind, &r.kind) {
+            (_, ExprKind::Index { name, index }) => (l, index, name),
+            (ExprKind::Index { name, index }, _) => (r, index, name),
+            _ => return Ok(false),
+        };
+        if expr_mentions(av, &j) {
+            return Ok(false);
+        }
+        if bname == cname {
+            return Ok(false);
+        }
+        let csplit = split_affine_j(cidx, &j);
+        let bsplit = split_affine_j(bidx, &j);
+        let Some((cc, _)) = csplit else { return Ok(false) };
+        let Some((bc, _)) = bsplit else { return Ok(false) };
+        if cc != 1 || bc != 1 {
+            return Ok(false);
+        }
+        let Some((celem, clen)) = self.arrays.get(cname).copied() else { return Ok(false) };
+        let Some((belem, blen)) = self.arrays.get(bname).copied() else { return Ok(false) };
+        if celem != Ty::I32 || belem != Ty::I32 {
+            return Ok(false);
+        }
+        let Some(cptr) = self.vars.get(cname).copied() else { return Ok(false) };
+        let Some(bptr) = self.vars.get(bname).copied() else { return Ok(false) };
+        let zero = self.value();
+        self.push(Instr::Const { dst: zero, v: 0 });
+        self.vty[zero.0 as usize] = Ty::I32;
+        let mut sm = HashMap::new();
+        sm.insert(j.clone(), zero);
+        self.subst_stack.push(sm);
+        let cbase = self.lower_expr(cidx)?;
+        let bbase = self.lower_expr(bidx)?;
+        self.subst_stack.pop();
+        let start_e = Expr { kind: ExprKind::Var(j.clone()), line };
+        let start = self.lower_expr(&start_e)?;
+        let lm = self.lower_expr(limit)?;
+        let raw = self.value();
+        self.push(Instr::Bin { dst: raw, op: Op::Sub, l: lm, r: start });
+        self.vty[raw.0 as usize] = Ty::I32;
+        let cmp = self.value();
+        self.push(Instr::Bin { dst: cmp, op: Op::Gt, l: raw, r: zero });
+        self.vty[cmp.0 as usize] = Ty::I32;
+        let count = self.value();
+        self.push(Instr::Select { dst: count, cond: cmp, a: raw, b: zero, float: false });
+        self.vty[count.0 as usize] = Ty::I32;
+        let jfinal = self.value();
+        self.push(Instr::Select { dst: jfinal, cond: cmp, a: lm, b: start, float: false });
+        self.vty[jfinal.0 as usize] = Ty::I32;
+        let cidx0 = self.value();
+        self.push(Instr::Bin { dst: cidx0, op: Op::Add, l: start, r: cbase });
+        self.vty[cidx0.0 as usize] = Ty::I32;
+        let bidx0 = self.value();
+        self.push(Instr::Bin { dst: bidx0, op: Op::Add, l: start, r: bbase });
+        self.vty[bidx0.0 as usize] = Ty::I32;
+        let avv = self.lower_expr(av)?;
+        self.push(Instr::SaxpyI32 {
+            c_ptr: cptr,
+            c_len: clen,
+            b_ptr: bptr,
+            b_len: blen,
+            c_idx: cidx0,
+            b_idx: bidx0,
+            count,
+            av: avv,
+            start,
+            limit: lm,
+            line,
+        });
+        let jv = *self
+            .vars
+            .get(&j)
+            .ok_or_else(|| format!("line {}: unknown loop variable", line))?;
+        self.push(Instr::StoreVar { var: jv, src: jfinal });
+        Ok(true)
+    }
+
     fn lower_stmt(&mut self, s: &Stmt) -> Result<(), String> {
         match &s.kind {
             StmtKind::VecLet { name, elem } => {
@@ -2112,6 +2322,9 @@ impl Builder {
                 self.cur = end_bb;
             }
             StmtKind::While { cond, body } => {
+                if self.try_lower_saxpy(cond, body, s.line)? {
+                    return Ok(());
+                }
                 let head = self.new_block();
                 let body_bb = self.new_block();
                 let end_bb = self.new_block();
@@ -3264,6 +3477,14 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
             defs.push(*dst);
             defs.push(*tmp);
         }
+        Instr::SaxpyI32 { c_idx, b_idx, count, av, start, limit, .. } => {
+            uses.push(*c_idx);
+            uses.push(*b_idx);
+            uses.push(*count);
+            uses.push(*av);
+            uses.push(*start);
+            uses.push(*limit);
+        }
         Instr::Select { dst, cond, a, b, .. } => {
             uses.push(*cond);
             uses.push(*a);
@@ -3348,6 +3569,7 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::LoadCtx { .. }
                 | Instr::FuncAddr { .. }
                 | Instr::IndexStoreBoolAtomic { .. }
+                | Instr::SaxpyI32 { .. }
         | Instr::AddrVar { .. }
                 | Instr::VecNew { .. }
                 | Instr::VecReserve { .. }
@@ -3855,6 +4077,9 @@ fn emit_fast_block(
                 ra.def_store(*dst, dr);
                 ra.free_dead(ii);
                 continue;
+            }
+            Instr::SaxpyI32 { .. } => {
+                unreachable!("SaxpyI32 must be lowered in a slow block");
             }
             Instr::Aos2Step { dst, tmp, ptr_var, idx, size, off, k, len, line } => {
                 let i = ra.operand(*idx);
@@ -4818,6 +5043,14 @@ fn rewrite_operands(ins: &mut Instr, f: &dyn Fn(Value) -> Value) {
             rw(tmp);
             rw(idx);
             rw(k);
+        }
+        Instr::SaxpyI32 { c_idx, b_idx, count, av, start, limit, .. } => {
+            rw(c_idx);
+            rw(b_idx);
+            rw(count);
+            rw(av);
+            rw(start);
+            rw(limit);
         }
         Instr::Select { cond, a, b, .. } => {
             rw(cond);
@@ -6145,6 +6378,7 @@ pub fn emit(prog: &IrProgram) -> String {
                     Instr::IndexFieldLoad { line, .. } => Some(*line),
                     Instr::IndexFieldStore { line, .. } => Some(*line),
                     Instr::Aos2Step { line, .. } => Some(*line),
+                    Instr::SaxpyI32 { line, .. } => Some(*line),
                     _ => None,
                 };
                 if let Some(line) = line {
@@ -6488,6 +6722,63 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str("    test %rdx, %rdx\n    je 2f\n");
                         out.push_str("    lock or %rsi, (%r10,%r11,8)\n    jmp 3f\n");
                         out.push_str("2:\n    not %rsi\n    lock and %rsi, (%r10,%r11,8)\n3:\n");
+                    }
+                    Instr::SaxpyI32 { c_ptr, c_len, b_ptr, b_len, c_idx, b_idx, count, av, start, limit, line } => {
+                        out.push_str(&format!("    movslq -{}(%rbp), %r10\n", voff(f, *c_idx)));
+                        out.push_str(&format!("    movslq -{}(%rbp), %r11\n", voff(f, *b_idx)));
+                        out.push_str(&format!("    movslq -{}(%rbp), %rcx\n", voff(f, *count)));
+                        out.push_str(&format!("    movslq -{}(%rbp), %rdi\n", voff(f, *start)));
+                        out.push_str(&format!("    movslq -{}(%rbp), %rsi\n", voff(f, *limit)));
+                        out.push_str("    cmp %rsi, %rdi\n    jge 7f\n");
+                        out.push_str("    test %rcx, %rcx\n    jz 9f\n7:\n");
+                        out.push_str("    test %r10, %r10\n    js 9f\n");
+                        out.push_str("    test %r11, %r11\n    js 9f\n");
+                        out.push_str("    test %rcx, %rcx\n    js 9f\n");
+                        for (len, idx) in [(c_len, "%r10"), (b_len, "%r11")] {
+                            match len {
+                                LenRef::Const(n) => {
+                                    if *n >= i32::MIN as i64 && *n <= i32::MAX as i64 {
+                                        out.push_str(&format!("    mov ${}, %rax\n", n));
+                                    } else {
+                                        out.push_str(&format!("    movabs ${}, %rax\n", n));
+                                    }
+                                }
+                                LenRef::Var(v) => {
+                                    if let Some(reg) = var_regs.get(v) {
+                                        out.push_str(&format!("    mov {}, %rax\n", reg));
+                                    } else {
+                                        out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*v)));
+                                    }
+                                }
+                            }
+                            out.push_str(&format!("    lea ({},%rcx), %rdx\n    cmp %rax, %rdx\n    ja 9f\n", idx));
+                        }
+                        if let Some(reg) = var_regs.get(c_ptr) {
+                            out.push_str(&format!("    mov {}, %r8\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r8\n", varoff(*c_ptr)));
+                        }
+                        if let Some(reg) = var_regs.get(b_ptr) {
+                            out.push_str(&format!("    mov {}, %r9\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r9\n", varoff(*b_ptr)));
+                        }
+                        out.push_str("    lea (%r8,%r10,4), %r8\n    lea (%r9,%r11,4), %r9\n");
+                        out.push_str(&format!("    movslq -{}(%rbp), %rax\n", voff(f, *av)));
+                        out.push_str("    movd %eax, %xmm0\n    pshufd $0, %xmm0, %xmm0\n");
+                        out.push_str("    xor %edx, %edx\n");
+                        out.push_str("1:\n    lea 4(%rdx), %rax\n    cmp %rcx, %rax\n    ja 2f\n");
+                        out.push_str("    movdqu (%r8,%rdx,4), %xmm1\n    movdqu (%r9,%rdx,4), %xmm2\n");
+                        out.push_str("    movdqa %xmm2, %xmm3\n    psrlq $32, %xmm3\n");
+                        out.push_str("    pmuludq %xmm0, %xmm2\n    pmuludq %xmm0, %xmm3\n");
+                        out.push_str("    pshufd $8, %xmm2, %xmm2\n    pshufd $8, %xmm3, %xmm3\n");
+                        out.push_str("    punpckldq %xmm3, %xmm2\n    paddd %xmm2, %xmm1\n");
+                        out.push_str("    movdqu %xmm1, (%r8,%rdx,4)\n    add $4, %rdx\n    jmp 1b\n");
+                        out.push_str("2:\n    movd %xmm0, %esi\n    cmp %rcx, %rdx\n    jae 8f\n");
+                        out.push_str("3:\n    movslq (%r9,%rdx,4), %rax\n    imul %esi, %eax\n");
+                        out.push_str("    add %eax, (%r8,%rdx,4)\n    inc %rdx\n    cmp %rcx, %rdx\n    jb 3b\n");
+                        out.push_str("    jmp 8f\n9:\n");
+                        out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n    call .Lir_panic\n8:\n", line));
                     }
                     Instr::Aos2Step { ptr_var, idx, size, off, k, len, line, .. } => {
                         out.push_str(&ld(*idx));

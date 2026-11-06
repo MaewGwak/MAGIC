@@ -30,6 +30,19 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.90 — SSE2 saxpy at the IR idiom level (2026-11-06)
+
+The lowerer recognises the canonical contiguous update
+`while j < n { c[base+j] = c[base+j] + av * b[base2+j]; j = j + 1 }` (both indexes affine in `j`
+with coefficient one, distinct `i32` arrays) and emits one `SaxpyI32` instruction instead of a
+scalar loop. The instruction checks `0 <= c_idx`, `0 <= b_idx`, `count >= 0` and
+`idx + count <= len` for both arrays once, guards the `limit - start` arithmetic against i32
+overflow, then runs a 4-wide SSE2 loop (`pmuludq`-based i32 multiply, `paddd`) with scalar tail. The
+loop variable is updated with a select so zero-trip loops still leave `j` unchanged. Matmul in i-k-j
+order drops 78 → **10 ms** against C's 12 ms, a fourth outright win; the default i-j-k form is
+unchanged at 72 ms (strided inner loop). Differential cases cover the normal path, a tail of two,
+and an out-of-bounds count that must panic. All gates pass, 168 tests, repo parity 60/60.
+
 ## v0.8.89 — scalar-replace small constant-index arrays (2026-11-06)
 
 An array of at most 16 scalar elements whose every access uses a compile-time constant index, is

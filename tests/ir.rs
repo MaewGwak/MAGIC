@@ -387,6 +387,45 @@ fn main() {
 "#,
         ),
         (
+            "saxpy_idiom",
+            r#"
+fn main() {
+    var c: [i32] = [0; 10];
+    var b: [i32] = [0; 10];
+    for i in 0..10 { b[i] = i + 1; }
+    var av = 3;
+    var j = 0;
+    while j < 10 {
+        c[j] = c[j] + av * b[j];
+        j = j + 1;
+    }
+    for i in 0..10 { print(c[i]); }
+    print(j);
+    var k = 7;
+    while k < 5 {
+        c[k] = c[k] + av * b[k];
+        k = k + 1;
+    }
+    print(k);
+}
+"#,
+        ),
+        (
+            "saxpy_idiom_oob",
+            r#"
+fn main() {
+    var c: [i32] = [0; 4];
+    var b: [i32] = [0; 4];
+    var j = 0;
+    while j < 8 {
+        c[j] = c[j] + 2 * b[j];
+        j = j + 1;
+    }
+    print(c[0]);
+}
+"#,
+        ),
+        (
             "scalarize_const_arrays",
             r#"
 fn main() {

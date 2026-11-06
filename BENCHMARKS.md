@@ -1,7 +1,7 @@
 # MAGIC benchmarks — current evidence (Linux, 2026-11-06)
 
 Machine: AMD Ryzen AI 7 350, 31.1 GB RAM, Linux. Compilers: gcc/g++ 16.2.1, rustc 1.99.1,
-Go and Goose where the harness has a source. MAGIC is `magicc 0.8.87` (compiler code unchanged in the 0.8.88 evidence tag), default **IR** backend
+Go and Goose where the harness has a source. MAGIC is `magicc 0.8.90` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
 (`as` + `ld`, no C compiler in the build path). Every number below comes from
 `./verify.sh` / `./bench-linux.sh`; every program's checksum is compared and `verify.sh` fails on
 a mismatch. Timings are medians of 3–5 interleaved runs, portable flags (no `-march=native` for the
@@ -43,8 +43,10 @@ Recursive call frames and per-node bounds checks remain the gap; the count varia
 
 ## 8. matmul 384
 
-C **12 ms**, C++ 15, Rust 42, MAGIC 74. GCC vectorises the dot product; MAGIC still emits a scalar
-inner loop, so this is the largest remaining gap (6.2x).
+C **12 ms**, C++ 15, Rust 42, MAGIC default 72, **i-k-j SIMD variant 10** — an outright win.
+The compiler recognises `c[base+j] = c[base+j] + av*b[base2+j]` and emits a 4-wide SSE2 saxpy with
+one bounds check; the default i-j-k source still has a strided inner loop and stays at 72 ms until a
+general loop-interchange vectoriser exists.
 
 ## Speed summary (same workload, same portable flags)
 
@@ -63,16 +65,17 @@ baseline, lower is better.
 | particles 1M × 100 | 65 | 71 | 141 | 147 | 135 (`par for`) | 2.26 | loss |
 | n-body 10M steps | 310 | 308 | 223 | 873 | 869 (loop) | 3.90 | loss |
 | binary trees | 721 | — | 1333 | 3904 | 1512 (count variant) | 5.42 | loss |
-| matmul 384 | **12** | 15 | 42 | 74 | 74 | 6.17 | loss |
+| matmul 384 | **12** | 15 | 42 | 74 | **10** (i-k-j SIMD) | 0.83 | **outright win** |
 
 What this says:
 
-- **Three outright wins** against the best portable baseline: sieve, fannkuch blocks (`par for`),
-  and the raytracer (`par for`). Hash with `par for` is inside 1.25x.
-- The speed goal is **not yet met for the whole matrix**: matmul (6.2x), binary trees (5.4x),
-  n-body (3.9x) and particles (2.3x) are still materially behind. The missing pieces are a
-  dot-product/loop-interchange vectoriser for matmul, cheaper recursive-call frames/global arrays
-  for binary trees, and wider SIMD for the float dynamics loops.
+- **Four outright wins** against the best portable baseline: sieve, fannkuch blocks (`par for`),
+  the raytracer (`par for`), and matmul in i-k-j order (`c[j] += a*b[j]` recognised as a 4-wide SSE2
+  saxpy, 10 ms versus C 12 ms). Hash with `par for` is inside 1.25x.
+- The speed goal is **not yet met for the whole matrix**: the *default* i-j-k matmul is 72 ms (the
+  compiler only vectorises the contiguous inner loop), binary trees is 5.4x, n-body 3.9x and
+  particles 2.3x behind. The missing pieces are a general loop-interchange vectoriser, cheaper
+  recursive-call frames/global arrays for binary trees, and wider SIMD for the float dynamics loops.
 
 ## Peak RSS (C vs MAGIC, same outputs)
 
