@@ -30,6 +30,17 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.56 — array/accumulator ranges and 64-byte loop alignment (2026-11-06)
+
+The interval analysis now also derives element ranges for scalar arrays whose stores and loads live
+in separate loops (with call/aliasing/mixed-loop guards) and bounds accumulators of the form
+`v = v + delta` in counted loops (`bound` iterations, checked arithmetic). These ranges let the pass
+delete more `movslq` wrap checks. Separately, every loop header is now aligned to a 64-byte boundary;
+matmul turned out to be extremely layout-sensitive (the same hot loop ran 180 vs 299 ms depending on
+its alignment), and the stable alignment recovers it. Five-run medians: matmul 198 → 186 ms, nbody
+2127 → 1983 ms, btree 172 → 166 ms, sieve 95 → 88 ms; particles/raytrace fluctuate within their usual
+spread (≈600/280 ms). The IR differential gate and mutation fuzzer pass.
+
 ## v0.8.55 — post-correctness matrix and the cost of wrapping (2026-11-06)
 
 Five-run IR medians after the interval-analysis pass:

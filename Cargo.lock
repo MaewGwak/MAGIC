@@ -4,4 +4,4 @@ version = 4
 
 [[package]]
 name = "magic"
-version = "0.8.55"
+version = "0.8.56"

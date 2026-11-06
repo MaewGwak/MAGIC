@@ -3307,9 +3307,183 @@ fn rewrite_operands(ins: &mut Instr, f: &dyn Fn(Value) -> Value) {
 /// analysis shows the operand already fits in i32, the wrap cannot happen.
 /// Loop induction variables with a constant zero start, unit step and a
 /// constant upper bound contribute intervals; arithmetic over them is exact.
+fn collect_loops(
+    f: &IrFunc,
+    defs: &HashMap<Value, (DefKind, usize)>,
+    var_consts: &HashMap<usize, i64>,
+) -> Vec<(usize, std::collections::HashSet<usize>, Option<(usize, i64)>)> {
+    let n = f.blocks.len();
+    let mut out = Vec::new();
+    for h in 0..n {
+        let Some(Instr::Br { then_bb, else_bb, .. }) = f.blocks[h].instrs.last() else {
+            continue;
+        };
+        let mut region = std::collections::HashSet::new();
+        let mut stack = vec![*then_bb];
+        let mut reaches = false;
+        while let Some(bb) = stack.pop() {
+            if bb == h {
+                reaches = true;
+                continue;
+            }
+            if bb == *else_bb || !region.insert(bb) {
+                continue;
+            }
+            for succ in block_successors(&f.blocks[bb].instrs) {
+                if succ < n {
+                    stack.push(succ);
+                }
+            }
+        }
+        if !reaches {
+            continue;
+        }
+        let mut iv_c: Option<(usize, i64)> = None;
+        for ins in &f.blocks[h].instrs {
+            if let Instr::Bin { op: Op::Lt, l, r, .. } = ins {
+                if let Some((DefKind::LoadVar(v), hb)) = defs.get(l).copied() {
+                    if hb != h {
+                        continue;
+                    }
+                    let bound = match defs.get(r).copied() {
+                        Some((DefKind::Const(c), rb)) if rb == h => Some(c),
+                        Some((DefKind::LoadVar(w), rb)) if rb == h => var_consts.get(&w).copied(),
+                        _ => None,
+                    };
+                    if let Some(c) = bound {
+                        if c > 0 {
+                            iv_c = Some((v, c));
+                        }
+                    }
+                }
+            }
+        }
+        out.push((h, region, iv_c));
+    }
+    out
+}
+
+fn value_ranges(
+    f: &IrFunc,
+    defs: &HashMap<Value, (DefKind, usize)>,
+    var_range: &HashMap<usize, (i64, i64)>,
+    array_range: &HashMap<usize, (i64, i64)>,
+    with_loads: bool,
+) -> HashMap<Value, (i64, i64)> {
+    let mut range: HashMap<Value, (i64, i64)> = HashMap::new();
+    for _ in 0..4 {
+        let mut changed = false;
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                let r = match ins {
+                    Instr::Const { v, .. } => Some((*v, *v)),
+                    Instr::LoadVar { var, .. } => var_range.get(var).copied(),
+                    Instr::Bin { op, l, r, .. } => {
+                        match (range.get(l).copied(), range.get(r).copied()) {
+                            (Some((a0, a1)), Some((b0, b1))) => match op {
+                                Op::Add => a0.checked_add(b0).zip(a1.checked_add(b1)),
+                                Op::Sub => a0.checked_sub(b1).zip(a1.checked_sub(b0)),
+                                Op::Mul => {
+                                    let mut lo = i64::MAX;
+                                    let mut hi = i64::MIN;
+                                    let mut good = true;
+                                    for (x, y) in [(a0, b0), (a0, b1), (a1, b0), (a1, b1)] {
+                                        match x.checked_mul(y) {
+                                            Some(p) => {
+                                                lo = lo.min(p);
+                                                hi = hi.max(p);
+                                            }
+                                            None => good = false,
+                                        }
+                                    }
+                                    if good { Some((lo, hi)) } else { None }
+                                }
+                                Op::Div | Op::Rem => {
+                                    if b0 == b1 && b0 > 0 {
+                                        if *op == Op::Div && a0 >= 0 {
+                                            Some((a0 / b0, a1 / b0))
+                                        } else if *op == Op::Rem {
+                                            if a0 >= 0 {
+                                                Some((0, b0 - 1))
+                                            } else if a1 <= 0 {
+                                                Some((-(b0 - 1), 0))
+                                            } else {
+                                                Some((-(b0 - 1), b0 - 1))
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                    }
+                    Instr::Un { neg: true, a, .. } => range.get(a).and_then(|(lo, hi)| {
+                        lo.checked_neg()
+                            .zip(hi.checked_neg())
+                            .map(|(x, y)| (y.min(x), y.max(x)))
+                    }),
+                    Instr::Trunc { ty, a, .. } => range.get(a).map(|(lo, hi)| match ty {
+                        Ty::I32 => {
+                            if *lo >= i32::MIN as i64 && *hi <= i32::MAX as i64 {
+                                (*lo, *hi)
+                            } else {
+                                (i32::MIN as i64, i32::MAX as i64)
+                            }
+                        }
+                        Ty::U8 => (0, 255),
+                        Ty::Bool => (0, 1),
+                        _ => (*lo, *hi),
+                    }),
+                    Instr::IndexLoad { ptr_var, elem, .. } if with_loads => {
+                        if matches!(elem, Ty::I32 | Ty::U8 | Ty::I64) {
+                            array_range.get(ptr_var).copied()
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some((lo, hi)) = r {
+                    if let Some(dst) = dst_of(ins) {
+                        if range.get(&dst) != Some(&(lo, hi)) {
+                            range.insert(dst, (lo, hi));
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    range
+}
+
+fn value_uses_var(f: &IrFunc, defs: &HashMap<Value, (DefKind, usize)>, var: usize, v: Value, depth: usize) -> bool {
+    if depth > 24 {
+        return true;
+    }
+    let Some((kind, _)) = defs.get(&v).copied() else { return false };
+    if let DefKind::LoadVar(x) = kind {
+        return x == var;
+    }
+    let Some(ins) = f.blocks.iter().flat_map(|b| b.instrs.iter()).find(|i| dst_of(i) == Some(v)) else {
+        return false;
+    };
+    let mut uses = Vec::new();
+    let mut defs_v = Vec::new();
+    instr_uses_defs(ins, &mut uses, &mut defs_v);
+    uses.into_iter().any(|u| value_uses_var(f, defs, var, u, depth + 1))
+}
+
 fn remove_redundant_truncations(prog: &mut IrProgram) {
     for f in &mut prog.funcs {
-        let n = f.blocks.len();
         let mut defs: HashMap<Value, (DefKind, usize)> = HashMap::new();
         for (bi, b) in f.blocks.iter().enumerate() {
             for ins in &b.instrs {
@@ -3328,59 +3502,25 @@ fn remove_redundant_truncations(prog: &mut IrProgram) {
             }
             var_consts = next;
         }
-        // Loop induction-variable ranges [0, bound).
+        let has_vec = f.blocks.iter().any(|b| {
+            b.instrs.iter().any(|i| {
+                matches!(
+                    i,
+                    Instr::VecNew { .. }
+                        | Instr::VecReserve { .. }
+                        | Instr::VecPushScalar { .. }
+                        | Instr::VecPushStruct { .. }
+                )
+            })
+        });
+        let loops = collect_loops(f, &defs, &var_consts);
+        // Base variable ranges: canonical loop induction variables.
         let mut var_range: HashMap<usize, (i64, i64)> = HashMap::new();
-        for h in 0..n {
-            let Some(Instr::Br { then_bb, else_bb, .. }) = f.blocks[h].instrs.last() else {
-                continue;
-            };
-            let mut region = std::collections::HashSet::new();
-            let mut stack = vec![*then_bb];
-            let mut reaches = false;
-            while let Some(bb) = stack.pop() {
-                if bb == h {
-                    reaches = true;
-                    continue;
-                }
-                if bb == *else_bb || !region.insert(bb) {
-                    continue;
-                }
-                for succ in block_successors(&f.blocks[bb].instrs) {
-                    if succ < n {
-                        stack.push(succ);
-                    }
-                }
-            }
-            if !reaches {
-                continue;
-            }
-            let mut iv = None;
-            let mut upper = None;
-            for ins in &f.blocks[h].instrs {
-                if let Instr::Bin { op: Op::Lt, l, r, .. } = ins {
-                    if let Some((DefKind::LoadVar(v), hb)) = defs.get(l).copied() {
-                        if hb != h {
-                            continue;
-                        }
-                        let bound = match defs.get(r).copied() {
-                            Some((DefKind::Const(c), rb)) if rb == h => Some(c),
-                            Some((DefKind::LoadVar(w), rb)) if rb == h => var_consts.get(&w).copied(),
-                            _ => None,
-                        };
-                        if let Some(c) = bound {
-                            if c > 0 {
-                                iv = Some(v);
-                                upper = Some(c);
-                            }
-                        }
-                    }
-                }
-            }
-            let (Some(iv), Some(upper)) = (iv, upper) else { continue };
-            // Every store to the index must be `0` or `iv + 1`.
+        for (_, region, ivc) in &loops {
+            let Some((iv, upper)) = *ivc else { continue };
             let mut ok = true;
             let mut saw_zero = false;
-            for bb in &region {
+            for bb in region {
                 for ins in &f.blocks[*bb].instrs {
                     let Instr::StoreVar { var, src } = ins else { continue };
                     if *var != iv {
@@ -3415,69 +3555,185 @@ fn remove_redundant_truncations(prog: &mut IrProgram) {
                 var_range.insert(iv, (0, upper));
             }
         }
-        // Interval fixpoint over values.
-        let mut range: HashMap<Value, (i64, i64)> = HashMap::new();
-        for _ in 0..4 {
-            let mut changed = false;
+        // Arrays: conservative element ranges from store-only loops.
+        let mut array_range: HashMap<usize, (i64, i64)> = HashMap::new();
+        if !has_vec {
+            let mut ptr_vars: std::collections::HashSet<usize> = Default::default();
+            let mut passed: std::collections::HashSet<usize> = Default::default();
             for b in &f.blocks {
                 for ins in &b.instrs {
-                    let r = match ins {
-                        Instr::Const { v, .. } => Some((*v, *v)),
-                        Instr::LoadVar { var, .. } => var_range
-                            .get(var)
-                            .copied()
-                            .or_else(|| var_consts.get(var).map(|c| (*c, *c))),
-                        Instr::Bin { op, l, r, .. } => {
-                            match (range.get(l).copied(), range.get(r).copied()) {
-                                (Some((a0, a1)), Some((b0, b1))) => match op {
-                                    Op::Add => a0.checked_add(b0).zip(a1.checked_add(b1)),
-                                    Op::Sub => a0.checked_sub(b1).zip(a1.checked_sub(b0)),
-                                    Op::Mul => {
-                                        let mut lo = i64::MAX;
-                                        let mut hi = i64::MIN;
-                                        let mut good = true;
-                                        for (x, y) in [(a0, b0), (a0, b1), (a1, b0), (a1, b1)] {
-                                            match x.checked_mul(y) {
-                                                Some(p) => {
-                                                    lo = lo.min(p);
-                                                    hi = hi.max(p);
-                                                }
-                                                None => good = false,
-                                            }
-                                        }
-                                        if good {
-                                            Some((lo, hi))
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                    _ => None,
-                                },
-                                _ => None,
+                    match ins {
+                        Instr::IndexLoad { ptr_var, .. } | Instr::IndexStore { ptr_var, .. } => {
+                            ptr_vars.insert(*ptr_var);
+                        }
+                        Instr::Call { args, .. } => {
+                            for a in args {
+                                if let Some((DefKind::LoadVar(v), _)) = defs.get(a).copied() {
+                                    passed.insert(v);
+                                }
                             }
                         }
-                        Instr::Un { neg: true, a, .. } => {
-                            range.get(a).and_then(|(lo, hi)| {
-                                lo.checked_neg().zip(hi.checked_neg()).map(|(x, y)| (y.min(x), y.max(x)))
-                            })
-                        }
-                        _ => None,
-                    };
-                    if let Some((lo, hi)) = r {
-                        if let Some(dst) = dst_of(ins) {
-                            if range.get(&dst) != Some(&(lo, hi)) {
-                                range.insert(dst, (lo, hi));
-                                changed = true;
+                        _ => {}
+                    }
+                }
+            }
+            let mut mixed: std::collections::HashSet<usize> = Default::default();
+            for (_, region, _) in &loops {
+                let mut stored: std::collections::HashSet<usize> = Default::default();
+                let mut loaded: std::collections::HashSet<usize> = Default::default();
+                for bb in region {
+                    for ins in &f.blocks[*bb].instrs {
+                        match ins {
+                            Instr::IndexStore { ptr_var, .. } => {
+                                stored.insert(*ptr_var);
                             }
+                            Instr::IndexLoad { ptr_var, .. } => {
+                                loaded.insert(*ptr_var);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                for p in stored.intersection(&loaded) {
+                    mixed.insert(*p);
+                }
+            }
+            let base = value_ranges(f, &defs, &var_range, &array_range, false);
+            for p in ptr_vars {
+                if passed.contains(&p) || mixed.contains(&p) {
+                    continue;
+                }
+                let mut lo = 0i64.min(0);
+                let mut hi = 0i64;
+                let mut ok = true;
+                for b in &f.blocks {
+                    for ins in &b.instrs {
+                        match ins {
+                            Instr::IndexStore { ptr_var, src, elem, .. } if *ptr_var == p => {
+                                if matches!(elem, Ty::F64 | Ty::Bool | Ty::Struct(_)) {
+                                    ok = false;
+                                } else if let Some((a, b2)) = base.get(src).copied() {
+                                    lo = lo.min(a);
+                                    hi = hi.max(b2);
+                                } else {
+                                    ok = false;
+                                }
+                            }
+                            Instr::Fill { ptr_var, value, elem, .. } if *ptr_var == p => {
+                                if matches!(elem, Ty::F64 | Ty::Bool | Ty::Struct(_)) {
+                                    ok = false;
+                                } else if let Some((a, b2)) = base.get(value).copied() {
+                                    lo = lo.min(a);
+                                    hi = hi.max(b2);
+                                } else {
+                                    ok = false;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if ok {
+                    array_range.insert(p, (lo, hi));
+                }
+            }
+        }
+        // Accumulator variables: v += delta with a counted loop bound.
+        let with_arrays = value_ranges(f, &defs, &var_range, &array_range, true);
+        for (h, region, ivc) in &loops {
+            let Some((iv, upper)) = *ivc else { continue };
+            let nested = region.iter().any(|bb| {
+                block_successors(&f.blocks[*bb].instrs)
+                    .iter()
+                    .any(|s| *s != *h && region.contains(s) && *s <= *bb)
+            });
+            if nested {
+                continue;
+            }
+            let mut vars: std::collections::HashSet<usize> = Default::default();
+            for bb in region {
+                for ins in &f.blocks[*bb].instrs {
+                    if let Instr::StoreVar { var, .. } = ins {
+                        if *var != iv {
+                            vars.insert(*var);
                         }
                     }
                 }
             }
-            if !changed {
-                break;
+            for v in vars {
+                let mut store_in = None;
+                let mut count = 0;
+                for bb in region {
+                    for ins in &f.blocks[*bb].instrs {
+                        if let Instr::StoreVar { var, src } = ins {
+                            if *var == v {
+                                count += 1;
+                                store_in = Some(*src);
+                            }
+                        }
+                    }
+                }
+                if count != 1 {
+                    continue;
+                }
+                let Some(src) = store_in else { continue };
+                let Some(Instr::Bin { op: Op::Add, l, r, .. }) = f
+                    .blocks
+                    .iter()
+                    .flat_map(|b| b.instrs.iter())
+                    .find(|i| dst_of(i) == Some(src))
+                else {
+                    continue;
+                };
+                let is_v = |x: &Value| matches!(defs.get(x), Some((DefKind::LoadVar(w), _)) if *w == v);
+                let delta = if is_v(l) && !is_v(r) {
+                    *r
+                } else if is_v(r) && !is_v(l) {
+                    *l
+                } else {
+                    continue;
+                };
+                if value_uses_var(f, &defs, v, delta, 0) {
+                    continue;
+                }
+                let Some((dlo, dhi)) = with_arrays.get(&delta).copied() else { continue };
+                let iterations = upper.max(0);
+                let lo_inc = iterations.checked_mul(dlo.min(0));
+                let hi_inc = iterations.checked_mul(dhi.max(0));
+                let (Some(lo_inc), Some(hi_inc)) = (lo_inc, hi_inc) else { continue };
+                let mut base_ok = true;
+                let mut found_any = false;
+                let mut c0 = 0i64;
+                for (bi, b) in f.blocks.iter().enumerate() {
+                    if region.contains(&bi) {
+                        continue;
+                    }
+                    for ins in &b.instrs {
+                        if let Instr::StoreVar { var, src } = ins {
+                            if *var == v {
+                                match defs.get(src).copied() {
+                                    Some((DefKind::Const(c), _)) => {
+                                        found_any = true;
+                                        c0 = c;
+                                    }
+                                    _ => base_ok = false,
+                                }
+                            }
+                        }
+                    }
+                }
+                if !base_ok || !found_any {
+                    continue;
+                }
+                let lo = c0.checked_add(lo_inc);
+                let hi = c0.checked_add(hi_inc);
+                if let (Some(lo), Some(hi)) = (lo, hi) {
+                    var_range.insert(v, (lo.min(hi), lo.max(hi)));
+                }
             }
         }
-        // Substitute truncations whose operand is known to fit in i32.
+        // Final ranges and truncation removal.
+        let range = value_ranges(f, &defs, &var_range, &array_range, true);
         let mut subst: HashMap<Value, Value> = HashMap::new();
         for b in &f.blocks {
             for ins in &b.instrs {
@@ -3730,8 +3986,20 @@ pub fn emit(prog: &IrProgram) -> String {
                 break;
             }
         }
+        let mut loop_heads = vec![false; f.blocks.len()];
+        for (bi, b) in f.blocks.iter().enumerate() {
+            for succ in block_successors(&b.instrs) {
+                if succ <= bi && succ < f.blocks.len() {
+                    loop_heads[succ] = true;
+                }
+            }
+        }
         for (bb, b) in f.blocks.iter().enumerate() {
-            out.push_str(".p2align 4\n");
+            if bb == 0 || loop_heads[bb] {
+                out.push_str(".p2align 6\n");
+            } else {
+                out.push_str(".p2align 4\n");
+            }
             out.push_str(&format!("{}:\n", lblock(bb)));
             if !slow_block(&b.instrs) {
                 let block_bool = b.instrs.iter().any(|i| {
