@@ -30,6 +30,7 @@ if [ "${1:-}" != "-Fast" ]; then
   ./verify-static.sh || fail=1
   ./bench-static-memory.sh || fail=1
   ./bench-scaling.sh || fail=1
+  ./bench-parity-gate.sh || fail=1
 fi
 if [ "$fail" -eq 0 ]; then
   echo "ALL GATES PASSED"

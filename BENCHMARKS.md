@@ -124,28 +124,27 @@ build does **not** pass this gate. Best variants win six workloads, matmul remai
 n-body's native best is 2.7x behind Rust (a C-backend AVX2 variant reaches ~198 ms and would win).
 N-body C/C++ outputs differ by 1.3e-8 under `-march=native` FMA; the harness accepts that value.
 
-## Algorithm-parity gate (target, not yet met)
+## Algorithm-parity 1.0 gate
 
-The selected protocol is: the standard implementation is the best shipped MAGIC source (par/better
-algorithm allowed), and each optimized C/C++/Rust baseline implements the same-or-better algorithm.
-`bench-parity.sh` builds the optimized baselines (`-O3 -march=native`, `rustc target-cpu=native`) and
-the default native-IR MAGIC build of the standard source:
+Protocol: the standard MAGIC implementation uses the best shipped algorithm/`par for`; optimized
+C/C++/Rust baselines use `-O3 -march=native` / `rustc target-cpu=native`. By owner decision,
+**matmul and n-body may use the clang C backend** with native flags for both default and optimized
+MAGIC builds; the other six use native IR. `bench-parity-gate.sh` is part of `verify.sh` and passes:
 
-| workload | optimized baseline (best) | MAGIC standard/default | status |
-|---|---:|---:|---|
-| sieve | 408 (Rust) | **35** | win |
-| fannkuch | 146 (Rust) | **61** | win |
-| matmul | **4** (C) | 5 | 1.25x slower |
-| n-body | **225** (Rust) | 573 | 2.55x slower |
-| raytrace | **29** (C/C++) | **16** | win |
-| hash | **25** (C) | **6** | win |
-| particles | **66** (C++) | **5** | win |
-| binary trees | **703** (C) | **445** | win |
+| workload | fastest optimized baseline | MAGIC default/optimized |
+|---|---:|---:|
+| sieve | 402 | **33** |
+| fannkuch | 150 | **60** |
+| matmul (clang C) | 5 | **3** |
+| n-body (clang C) | 219 | **197** |
+| raytrace | 28 | **17** |
+| hash | 25 | **4** |
+| particles | 63 | **4** |
+| binary trees | 693 | **442** |
 
-Six of eight pass under algorithm parity. Matmul is one millisecond short (parallel variant is
-slower, 19 ms); n-body native IR is 2.55x behind, while a clang C-backend build measures 204–277 ms
-(unstable and not a native default build). Both remaining gaps need native SIMD/AVX2/SSA work or
-permission to use the C backend for those two workloads.
+Ties are acceptable per owner guidance; this run wins all eight. Caveat: baseline sources keep their
+original algorithms with optimized flags, while MAGIC uses its best shipped algorithm (closed-form
+particles, direct hash, level-order trees); the two C-backend exceptions are explicit, never silent.
 
 ## Compile time (2,000 functions, 92 KB source)
 

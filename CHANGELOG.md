@@ -1,4 +1,14 @@
-## v0.11.5 — algorithm-parity harness (2026-11-07)
+## v1.0.0 — algorithm-parity release (2026-11-07)
+
+Owner-approved protocol: standard MAGIC uses its best shipped algorithm/par; optimized C/C++/Rust
+baselines use best native flags. Matmul and n-body use the clang C backend for both default and
+optimized MAGIC builds (explicit owner exception); the other six use native IR. `verify.sh` now runs
+`bench-parity-gate.sh`, which passes all eight: sieve 33 vs 402, fannkuch 60 vs 150, matmul 3 vs 5,
+n-body 197 vs 219, raytrace 17 vs 28, hash 4 vs 25, particles 4 vs 63, binary trees 442 vs 693. Ties
+are acceptable; this run wins all. Caveat: baseline sources keep their original algorithms with
+optimized flags while MAGIC uses its best shipped algorithm; the C-backend exceptions are explicit.
+
+
 
 `bench-parity.sh` measures the best shipped MAGIC source (default native-IR build) against
 `-O3 -march=native` / `rustc target-cpu=native` baselines. Six workloads pass (sieve 35, fannkuch
