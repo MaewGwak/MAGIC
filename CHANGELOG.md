@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.82 — SSE2 pair operations for struct-array updates (2026-11-06)
+
+A new pass recognises `x += vx; y += vy; vx *= k; vy *= k` on an array of structs and replaces the
+four scalar statements with two SSE2 pair operations (`movupd`/`addpd`/`mulpd`). It only fires when
+every access has a proven bounds check (`line == 0`) and every intermediate value has a single use,
+so it is a pure replacement. The pass initially swallowed the `Const` that defines the multiplier,
+which made the broadcast zero; the constant is now preserved and a differential case covers the exact
+shape. Particles runs 151 → 139 ms (265 ms two rounds ago; C is 70 ms), par 135 ms, checksum
+unchanged. All gates pass, 168 tests, repo parity 60/60.
+
 ## v0.8.81 — leaner struct-array field access (2026-11-06)
 
 Four fixes to the address path for struct arrays: constant array lengths are resolved *before* the

@@ -387,6 +387,31 @@ fn main() {
 "#,
         ),
         (
+            "aos_pair_simd",
+            r#"
+struct P { x: f64, y: f64, vx: f64, vy: f64 }
+fn main() {
+    var ps: [P] = [P { x: 0.0, y: 0.0, vx: 0.0, vy: 0.0 }; 4];
+    for i in 0..4 {
+        ps[i].x = i as f64;
+        ps[i].y = i as f64 * 0.5;
+        ps[i].vx = 1.0;
+        ps[i].vy = 0.25;
+    }
+    for s in 0..3 {
+        for i in 0..4 {
+            ps[i].x = ps[i].x + ps[i].vx;
+            ps[i].y = ps[i].y + ps[i].vy;
+            ps[i].vx = ps[i].vx * 0.5;
+            ps[i].vy = ps[i].vy * 0.5;
+        }
+        print_prec(ps[0].x, 3); print_prec(ps[0].y, 3);
+        print_prec(ps[0].vx, 3); print_prec(ps[0].vy, 3);
+    }
+}
+"#,
+        ),
+        (
             "par_for_struct_fields",
             r#"
 struct P { x: f64, y: f64 }

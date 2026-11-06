@@ -68,6 +68,7 @@ pub enum Instr {
     FuncAddr { dst: Value, name: String },
     IndexStoreBoolAtomic { ptr_var: usize, idx: Value, src: Value },
     FastDivPow2 { dst: Value, a: Value, k: u32, d: i64, rem: bool },
+    Aos2 { dst: Value, tmp: Option<Value>, ptr_var: usize, idx: Value, size: u64, off: u64, src_off: u64, add: bool, k: Option<Value> },
     StoreVec { src_ptr_var: usize, ptr_var: usize, len_var: usize, cap_var: usize },
     LoadPtr { dst_var: usize, src_var: usize },
     StorePtr { dst_ptr_var: usize, src_var: usize },
@@ -3119,6 +3120,12 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
             uses.push(*a);
             defs.push(*dst);
         }
+        Instr::Aos2 { dst, tmp, idx, ptr_var: _, size: _, off: _, src_off: _, add: _, k } => {
+            uses.push(*idx);
+            if let Some(k) = k { uses.push(*k); }
+            defs.push(*dst);
+            if let Some(t) = tmp { defs.push(*t); }
+        }
         Instr::Select { dst, cond, a, b, .. } => {
             uses.push(*cond);
             uses.push(*a);
@@ -3708,6 +3715,36 @@ fn emit_fast_block(
                 }
                 ra.out.push_str("3:\n");
                 ra.def_store(*dst, dr);
+                ra.free_dead(ii);
+                continue;
+            }
+            Instr::Aos2 { dst, tmp, ptr_var, idx, size, off, src_off, add, k } => {
+                let i = ra.operand(*idx);
+                let (base, temp_ptr) = match var_regs.get(ptr_var).copied() {
+                    Some(reg) => (reg.to_string(), None),
+                    None => {
+                        let p = ra.alloc_excluding(&[i]);
+                        ra.out.push_str(&format!("    mov -{}(%rbp), {}\n", varoff(*ptr_var), POOL[p].0));
+                        (POOL[p].0.to_string(), Some(p))
+                    }
+                };
+                let t = ra.scaled_index(*idx, *size, i);
+                let xd = ra.xdst(*dst);
+                ra.out.push_str(&format!("    movupd {}({},{}), {}\n", off, base, POOL[t].0, XMM[xd]));
+                if *add {
+                    ra.out.push_str(&format!("    addpd {}({},{}), {}\n", src_off, base, POOL[t].0, XMM[xd]));
+                } else {
+                    let kx = ra.xoperand(k.unwrap());
+                    let xt = ra.xdst(tmp.unwrap());
+                    ra.out.push_str(&format!("    movapd {}, {}\n", XMM[kx], XMM[xt]));
+                    ra.out.push_str(&format!("    unpcklpd {}, {}\n", XMM[xt], XMM[xt]));
+                    ra.out.push_str(&format!("    mulpd {}, {}\n", XMM[xt], XMM[xd]));
+                }
+                ra.out.push_str(&format!("    movupd {}, {}({},{})\n", XMM[xd], off, base, POOL[t].0));
+                if let Some(p) = temp_ptr {
+                    ra.free.push(p);
+                }
+                ra.xdef_store(*dst, xd);
                 ra.free_dead(ii);
                 continue;
             }
@@ -4623,6 +4660,12 @@ fn rewrite_operands(ins: &mut Instr, f: &dyn Fn(Value) -> Value) {
             rw(dst);
             rw(a);
         }
+        Instr::Aos2 { dst, tmp, idx, k, .. } => {
+            rw(dst);
+            if let Some(t) = tmp { rw(t); }
+            rw(idx);
+            if let Some(k) = k { rw(k); }
+        }
         Instr::Select { cond, a, b, .. } => {
             rw(cond);
             rw(a);
@@ -5285,6 +5328,175 @@ fn strength_reduce_pow2(prog: &mut IrProgram) {
     }
 }
 
+/// Fuse the `x += vx; y += vy; vx *= k; vy *= k` shape on an array of
+/// structs into two SSE2 pair operations. Only accesses whose bounds check was
+/// already proven (`line == 0`) are vectorised, and every intermediate value
+/// must have exactly one use, so the transformation is a pure replacement.
+fn vectorize_aos_pairs(prog: &mut IrProgram) {
+    for f in &mut prog.funcs {
+        let mut uses: HashMap<Value, usize> = HashMap::new();
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                let mut u = Vec::new();
+                let mut d = Vec::new();
+                instr_uses_defs(ins, &mut u, &mut d);
+                for v in u {
+                    *uses.entry(v).or_insert(0) += 1;
+                }
+            }
+        }
+        for b in f.blocks.iter_mut() {
+            let old = std::mem::take(&mut b.instrs);
+            let mut out = Vec::with_capacity(old.len());
+            let mut i = 0usize;
+            while i < old.len() {
+                let trial = try_aos_window(&old, i, &uses);
+                if let Some((len, first, second)) = trial {
+                    // The window includes the scalar constant that the pair
+                    // multiply broadcasts; keep its definition.
+                    if let Some(c @ Instr::Const { .. }) = old.get(i + 9) {
+                        out.push(c.clone());
+                    }
+                    out.push(first);
+                    out.push(second);
+                    i += len;
+                } else {
+                    out.push(old[i].clone());
+                    i += 1;
+                }
+            }
+            b.instrs = out;
+        }
+    }
+}
+
+fn try_aos_window(
+    ins: &[Instr],
+    at: usize,
+    uses: &HashMap<Value, usize>,
+) -> Option<(usize, Instr, Instr)> {
+    if at + 15 > ins.len() {
+        return None;
+    }
+    let load = |x: &Instr| -> Option<(Value, usize, Value, u64, u64, usize, usize)> {
+        match x {
+            Instr::IndexFieldLoad { dst, ptr_var, idx, size, off, ty: Ty::F64, line, .. } => {
+                Some((*dst, *ptr_var, *idx, *size, *off, 0, *line))
+            }
+            _ => None,
+        }
+    };
+    let store = |x: &Instr| -> Option<(usize, Value, u64, usize)> {
+        match x {
+            Instr::IndexFieldStore { ptr_var, off, ty: Ty::F64, src, line, .. } => {
+                Some((*ptr_var, *src, *off, *line))
+            }
+            _ => None,
+        }
+    };
+    let (a0, p0, idx0, size0, off0, _, line0) = load(&ins[at])?;
+    let (a1, p1, idx1, size1, off1, _, line1) = load(&ins[at + 1])?;
+    if p0 != p1 || idx0 != idx1 || size0 != size1 || off1 != off0 + 16 {
+        return None;
+    }
+    let (r0, l0, r0b) = match &ins[at + 2] {
+        Instr::FBin { dst, op: Op::Add, l, r } => (*dst, *l, *r),
+        _ => return None,
+    };
+    if l0 != a0 || r0b != a1 {
+        return None;
+    }
+    let (p2, s0, so0, sl0) = store(&ins[at + 3])?;
+    if p2 != p0 || s0 != r0 || so0 != off0 || sl0 != 0 {
+        return None;
+    }
+    let (a2, p3, idx2, size2, off2, _, line2) = load(&ins[at + 4])?;
+    let (a3, p4, idx3, size3, off3, _, line3) = load(&ins[at + 5])?;
+    if p3 != p0 || p4 != p0 || idx2 != idx0 || idx3 != idx0 || size2 != size0 || size3 != size0 {
+        return None;
+    }
+    if off2 != off0 + 8 || off3 != off0 + 24 {
+        return None;
+    }
+    let (r1, l1, r1b) = match &ins[at + 6] {
+        Instr::FBin { dst, op: Op::Add, l, r } => (*dst, *l, *r),
+        _ => return None,
+    };
+    if l1 != a2 || r1b != a3 {
+        return None;
+    }
+    let (p5, s1, so1, sl1) = store(&ins[at + 7])?;
+    if p5 != p0 || s1 != r1 || so1 != off0 + 8 || sl1 != 0 {
+        return None;
+    }
+    let (a4, p6, idx4, size4, off4, _, line4) = load(&ins[at + 8])?;
+    if p6 != p0 || idx4 != idx0 || size4 != size0 || off4 != off0 + 16 {
+        return None;
+    }
+    let k = match &ins[at + 9] {
+        Instr::Const { v, .. } => *v,
+        _ => return None,
+    };
+    let (r2, fa, fk) = match &ins[at + 10] {
+        Instr::FBin { dst, op: Op::Mul, l, r } => (*dst, *l, *r),
+        _ => return None,
+    };
+    if fa != a4 {
+        return None;
+    }
+    let (p7, s2, so2, sl2) = store(&ins[at + 11])?;
+    if p7 != p0 || s2 != r2 || so2 != off0 + 16 || sl2 != 0 {
+        return None;
+    }
+    let (a5, p8, idx5, size5, off5, _, line5) = load(&ins[at + 12])?;
+    if p8 != p0 || idx5 != idx0 || size5 != size0 || off5 != off0 + 24 {
+        return None;
+    }
+    let (r3, fb, fk2) = match &ins[at + 13] {
+        Instr::FBin { dst, op: Op::Mul, l, r } => (*dst, *l, *r),
+        _ => return None,
+    };
+    if fb != a5 || fk2 != fk {
+        return None;
+    }
+    let (p9, s3, so3, sl3) = store(&ins[at + 14])?;
+    if p9 != p0 || s3 != r3 || so3 != off0 + 24 || sl3 != 0 {
+        return None;
+    }
+    if [line0, line1, line2, line3, line4, line5].iter().any(|l| *l != 0) {
+        return None;
+    }
+    for v in [a0, a1, r0, a2, a3, r1, a4, r2, a5, r3] {
+        if uses.get(&v).copied().unwrap_or(0) != 1 {
+            return None;
+        }
+    }
+    let first = Instr::Aos2 {
+        dst: r0,
+        tmp: None,
+        ptr_var: p0,
+        idx: idx0,
+        size: size0,
+        off: off0,
+        src_off: off0 + 16,
+        add: true,
+        k: None,
+    };
+    let second = Instr::Aos2 {
+        dst: r2,
+        tmp: Some(r3),
+        ptr_var: p0,
+        idx: idx0,
+        size: size0,
+        off: off0 + 16,
+        src_off: off0 + 16,
+        add: false,
+        k: Some(fk),
+    };
+    let _ = k;
+    Some((15, first, second))
+}
+
 fn resolve_constant_lengths(prog: &mut IrProgram) {
     for f in &mut prog.funcs {
         let mut var_consts: HashMap<usize, i64> = HashMap::new();
@@ -5467,6 +5679,7 @@ pub fn optimize(prog: &mut IrProgram) {
     narrow_index_chains(prog);
     cse_blocks(prog);
     compress_i32_variable_traffic(prog);
+    vectorize_aos_pairs(prog);
 }
 
 pub fn emit(prog: &IrProgram) -> String {
@@ -5833,6 +6046,25 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str("    test %rdx, %rdx\n    je 2f\n");
                         out.push_str("    lock or %rsi, (%r10,%r11,8)\n    jmp 3f\n");
                         out.push_str("2:\n    not %rsi\n    lock and %rsi, (%r10,%r11,8)\n3:\n");
+                    }
+                    Instr::Aos2 { ptr_var, idx, size, off, src_off, add, k, .. } => {
+                        out.push_str(&ld(*idx));
+                        out.push_str("    mov %rax, %r11\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %r10\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        }
+                        out.push_str(&scale_insn(*size, "%r11"));
+                        out.push_str(&format!("    movupd {}(%r10,%r11), %xmm0\n", off));
+                        if *add {
+                            out.push_str(&format!("    addpd {}(%r10,%r11), %xmm0\n", src_off));
+                        } else {
+                            out.push_str(&format!("    movsd -{}(%rbp), %xmm1\n", voff(f, k.unwrap())));
+                            out.push_str("    unpcklpd %xmm1, %xmm1\n");
+                            out.push_str("    mulpd %xmm1, %xmm0\n");
+                        }
+                        out.push_str(&format!("    movupd %xmm0, {}(%r10,%r11)\n", off));
                     }
                     Instr::Select { dst, cond, a, b, float } => {
                         if *float {
