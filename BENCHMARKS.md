@@ -159,18 +159,19 @@ One `bench-linux.sh` run on the Ryzen AI 7 350 host, medians of the harness:
 
 | workload | C | C++ | Rust | Goose | MAGIC default | MAGIC best |
 |---|---:|---:|---:|---:|---:|---:|
-| sieve 100M | 431 | 437 | 433 | 450 | **385** | 33 (block odd) |
-| fannkuch 10 | **160** (Rust) | 186 | 160 | 175 | 263 | **69** (blocks) |
-| matmul 384 | **12** | 12 | 40 | 39 | **9** | 9 |
-| n-body 5M | 309 | 312 | **224** | 308 | **613** (loop) | 613 |
-| raytrace 64³ | 37 | 42 | **35** | 38 | 104 | **20** (par) |
-| hash 1M | **27** (Rust) | 31 | 27 | 28 | 42 | 30 (par) |
-| particles 1M×100 | **72** | 72 | 143 | 143 | 148 | 6 (closed) |
-| binary trees 20 | 725 | – | 1333 | 813 | 3892 | **467** (native loop) |
+| sieve 100M | 432 | 423 | 431 | 439 | **397** | 37 (block odd) |
+| fannkuch 10 | 168 | 167 | **157** | 179 | 266 | **75** (blocks) |
+| matmul 384 | **12** | 12 | 43 | 38 | **11** | 9 (i-k-j) |
+| n-body 5M | 315 | 310 | **227** | 311 | **613** (loop) | 613 (native, C-backend 198) |
+| raytrace 64³ | 39 | 41 | 39 | 38 | 81 | **18** (par) |
+| hash 1M | **26** | 30 | 26 | 27 | 42 | **5** (direct) |
+| particles 1M×100 | **67** | 73 | 148 | 139 | 84 | **5** (closed) |
+| binary trees 20 | 720 | – | 1329 | 848 | 4036 | **507** (native loop) |
 
-This run confirms the four compiler-driven wins (sieve, fannkuch blocks, matmul, ray par) and
-hash par inside 1.25x; n-body/particles/bt remain behind. C values move a few percent between runs
-(particles 65→72, sieve 409→431), so treat single-digit differences as noise.
+This run leaves seven workloads with a MAGIC best at or ahead of the fastest baseline: sieve,
+fannkuch blocks, matmul, raytrace par, hash direct, particles closed and binary-trees loop. N-body's
+native loop is 613 ms (2.7x Rust 227); its C-backend AVX2 build is 198 ms, inside 1.25x. C values
+move a few percent between runs, so single-digit differences are noise.
 
 ## High-end scaling (`bench-scaling.sh`)
 

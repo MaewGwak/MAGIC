@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.10 — refreshed best-variant matrix (2026-11-06)
+
+A fresh bench-linux run records the current best variants: sieve 397 (C 432), fannkuch blocks 75
+(Rust 157), matmul 11 (C 12), raytrace par 18 (Rust 39), hash direct 5 (C 26), particles closed 5
+(C 67), binary-trees native loop 507 (C 720); n-body native 613 (Rust 227) with its C-backend AVX2
+at 198, inside 1.25x. Seven workloads now have a MAGIC best at or ahead of the fastest baseline.
+No code change; all gates remain green.
+
 ## v0.10.9 — static panic stack traces (2026-11-06)
 
 The freestanding panic handler now writes the `line N: ...` message and a frame-pointer walk of
