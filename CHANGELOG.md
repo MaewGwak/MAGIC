@@ -30,6 +30,22 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.64 — growable-array parameters in the IR (2026-11-06)
+
+Vector parameters now work in the IR with the same reference semantics as the C backend: a vector
+parameter is passed as three pointers (`ptr**`, `len*`, `cap*`), the callee copies the descriptor at
+entry, operates on local `ptr/len/cap` variables for `v[i]`, `len(v)`, `push`, `pop`, `clear`,
+`reserve`, and writes the descriptor back before every return (including implicit returns) so a push
+inside a callee is visible to the caller and across nested calls. Forwarding a vector parameter to
+another function emits `v, v_len, v_cap` instead of the local `&v, &v_len, &v_cap` forms, which also
+fixes a C-backend compile error for nested forwarding.
+
+Two real bugs were caught by the new tests: address-taken vector variables were still register-
+promoted (the callee read stale stack slots, causing a segfault), and descriptor write-back was
+missing when a function ended without an explicit `return`. Both fixed. Three differential cases cover
+read-only use, push from `main`, and nested forwarding. The AST native backend still rejects vector
+parameters explicitly. All gates green.
+
 ## v0.8.63 — struct parameters in the IR backend (2026-11-06)
 
 Functions taking structs by value now work in the IR: the caller takes the address of its own struct

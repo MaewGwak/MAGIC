@@ -60,6 +60,9 @@ pub enum Instr {
     StructInit { var_index: usize, slots: usize, fields: Vec<(u64, Ty, Value)> },
     AddrVar { dst: Value, var_index: usize, slots: usize },
     CopySlots { ptr_var: usize, var_index: usize, slots: usize },
+    StoreVec { src_ptr_var: usize, ptr_var: usize, len_var: usize, cap_var: usize },
+    LoadPtr { dst_var: usize, src_var: usize },
+    StorePtr { dst_ptr_var: usize, src_var: usize },
     FieldLoad { dst: Value, var_index: usize, slots: usize, off: u64, ty: Ty },
     FieldStore { var_index: usize, slots: usize, off: u64, ty: Ty, src: Value },
     IndexFieldLoad { dst: Value, ptr_var: usize, idx: Value, size: u64, off: u64, ty: Ty, len: LenRef, line: usize },
@@ -299,7 +302,133 @@ impl Builder {
                 self.vbool[dst.0 as usize] = true;
                 Ok(dst)
             }
+            ExprKind::VecArgPtr(n) | ExprKind::VecParamArgPtr(n) => {
+                let (_, pv, _, _, _) = *self
+                    .vecs
+                    .get(n)
+                    .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", e.line, n))?;
+                let dst = self.value();
+                self.push(Instr::AddrVar { dst, var_index: pv, slots: 1 });
+                self.vty[dst.0 as usize] = Ty::I64;
+                Ok(dst)
+            }
+            ExprKind::VecArgLen(n) | ExprKind::VecParamArgLen(n) => {
+                let (_, _, lv, _, _) = *self
+                    .vecs
+                    .get(n)
+                    .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", e.line, n))?;
+                let dst = self.value();
+                self.push(Instr::AddrVar { dst, var_index: lv, slots: 1 });
+                self.vty[dst.0 as usize] = Ty::I64;
+                Ok(dst)
+            }
+            ExprKind::VecArgCap(n) | ExprKind::VecParamArgCap(n) => {
+                let (_, _, _, cv, _) = *self
+                    .vecs
+                    .get(n)
+                    .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", e.line, n))?;
+                let dst = self.value();
+                self.push(Instr::AddrVar { dst, var_index: cv, slots: 1 });
+                self.vty[dst.0 as usize] = Ty::I64;
+                Ok(dst)
+            }
+            ExprKind::VecParamLen(n) => {
+                let (_, _, lv, _, _) = *self
+                    .vecs
+                    .get(n)
+                    .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", e.line, n))?;
+                let dst = self.value();
+                self.push(Instr::LoadVar { dst, var: lv });
+                self.vty[dst.0 as usize] = Ty::I32;
+                self.narrow[dst.0 as usize] = true;
+                Ok(dst)
+            }
+            ExprKind::VecParamIndex { name, index } => {
+                let (elem, pv, lv, _, _) = *self
+                    .vecs
+                    .get(name)
+                    .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", e.line, name))?;
+                let idx = self.lower_expr(index)?;
+                self.push(Instr::BoundsCheck { idx, len: LenRef::Var(lv), line: e.line });
+                let dst = self.value();
+                self.push(Instr::IndexLoad { dst, ptr_var: pv, idx, elem });
+                self.vty[dst.0 as usize] = elem;
+                self.vbool[dst.0 as usize] = elem == Ty::Bool;
+                self.narrow[dst.0 as usize] = matches!(elem, Ty::I32 | Ty::U8 | Ty::Bool);
+                Ok(dst)
+            }
+            ExprKind::VecParamPop(n) => {
+                let (elem, pv, lv, _, _) = *self
+                    .vecs
+                    .get(n)
+                    .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", e.line, n))?;
+                let lenv = self.value();
+                self.push(Instr::LoadVar { dst: lenv, var: lv });
+                self.vty[lenv.0 as usize] = Ty::I32;
+                let zero = self.value();
+                self.push(Instr::Const { dst: zero, v: 0 });
+                self.vty[zero.0 as usize] = Ty::I32;
+                let cond = self.value();
+                self.push(Instr::Bin { dst: cond, op: Op::Gt, l: lenv, r: zero });
+                self.vty[cond.0 as usize] = Ty::Bool;
+                self.vbool[cond.0 as usize] = true;
+                self.narrow[cond.0 as usize] = true;
+                self.push(Instr::Assert { cond, line: e.line });
+                let one = self.value();
+                self.push(Instr::Const { dst: one, v: 1 });
+                self.vty[one.0 as usize] = Ty::I32;
+                let newlen = self.value();
+                self.push(Instr::Bin { dst: newlen, op: Op::Sub, l: lenv, r: one });
+                self.vty[newlen.0 as usize] = Ty::I32;
+                self.push(Instr::StoreVar { var: lv, src: newlen });
+                let dst = self.value();
+                self.push(Instr::IndexLoad { dst, ptr_var: pv, idx: newlen, elem });
+                self.vty[dst.0 as usize] = elem;
+                self.vbool[dst.0 as usize] = elem == Ty::Bool;
+                self.narrow[dst.0 as usize] = matches!(elem, Ty::I32 | Ty::U8 | Ty::Bool);
+                Ok(dst)
+            }
+            ExprKind::VecParamClear(n) => {
+                let (_, _, lv, _, _) = *self
+                    .vecs
+                    .get(n)
+                    .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", e.line, n))?;
+                let zero = self.value();
+                self.push(Instr::Const { dst: zero, v: 0 });
+                self.vty[zero.0 as usize] = Ty::I32;
+                self.push(Instr::StoreVar { var: lv, src: zero });
+                let dst = self.value();
+                self.push(Instr::Const { dst, v: 0 });
+                self.vty[dst.0 as usize] = Ty::I32;
+                self.narrow[dst.0 as usize] = true;
+                Ok(dst)
+            }
+            ExprKind::VecParamReserve { name, value } => {
+                let (_, pv, lv, cv, esz) = *self
+                    .vecs
+                    .get(name)
+                    .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", e.line, name))?;
+                let need = self.lower_expr(value)?;
+                self.push(Instr::VecReserve {
+                    ptr_var: pv,
+                    len_var: lv,
+                    cap_var: cv,
+                    esz,
+                    need,
+                });
+                let dst = self.value();
+                self.push(Instr::Const { dst, v: 0 });
+                self.vty[dst.0 as usize] = Ty::I32;
+                self.narrow[dst.0 as usize] = true;
+                Ok(dst)
+            }
             ExprKind::Var(n) => {
+                if let Some((_, pv, _, _, _)) = self.vecs.get(n).copied() {
+                    let dst = self.value();
+                    self.push(Instr::AddrVar { dst, var_index: pv, slots: 3 });
+                    self.vty[dst.0 as usize] = Ty::I64;
+                    return Ok(dst);
+                }
                 if let Some((var_index, slots, _)) = self.struct_vars.get(n).copied() {
                     let dst = self.value();
                     self.push(Instr::AddrVar { dst, var_index, slots });
@@ -839,6 +968,59 @@ impl Builder {
         Ok(dst)
     }
 
+    fn lower_vec_push(&mut self, name: &str, value: &Expr, line: usize) -> Result<(), String> {
+        let _ = line;
+        let Some((elem, ptr_var, len_var, cap_var, esz)) = self.vecs.get(name).copied() else {
+            return Err(format!("line {}: IR: unknown vector `{}`", line, name));
+        };
+                let Some((elem, ptr_var, len_var, cap_var, esz)) =
+        self.vecs.get(name).copied()
+                else {
+        return Err(format!("line {}: IR: unknown vector `{}`", line, name));
+                };
+                if let Ty::Struct(id) = elem {
+        let (size, _) = struct_layout(&self.struct_defs, id);
+        let slots = ((size + 7) / 8) as usize;
+        let tmp_var = self.nvars;
+        self.nvars += slots;
+        let mut inits = Vec::new();
+        if let ExprKind::StructLit { fields, .. } = &value.kind {
+            self.lower_struct_into(id, 0, fields, &mut inits)?;
+        } else {
+            return Err(format!(
+                "line {}: IR: vector push of a non-literal struct is not supported yet",
+                line
+            ));
+        }
+        self.push(Instr::StructInit {
+            var_index: tmp_var,
+            slots,
+            fields: inits,
+        });
+        self.push(Instr::VecPushStruct {
+            ptr_var,
+            len_var,
+            cap_var,
+            esz,
+            size,
+            tmp_var,
+            tmp_slots: slots,
+        });
+                } else {
+        let src = self.lower_expr(value)?;
+        self.push(Instr::VecPushScalar {
+            ptr_var,
+            len_var,
+            cap_var,
+            esz,
+            ty: elem,
+            src,
+        });
+                }
+                return Ok(());
+        Ok(())
+    }
+
     fn lower_stmt(&mut self, s: &Stmt) -> Result<(), String> {
         match &s.kind {
             StmtKind::VecLet { name, elem } => {
@@ -856,51 +1038,10 @@ impl Builder {
                 return Ok(());
             }
             StmtKind::Push { name, value } => {
-                let Some((elem, ptr_var, len_var, cap_var, esz)) =
-                    self.vecs.get(name).copied()
-                else {
-                    return Err(format!("line {}: IR: unknown vector `{}`", s.line, name));
-                };
-                if let Ty::Struct(id) = elem {
-                    let (size, _) = struct_layout(&self.struct_defs, id);
-                    let slots = ((size + 7) / 8) as usize;
-                    let tmp_var = self.nvars;
-                    self.nvars += slots;
-                    let mut inits = Vec::new();
-                    if let ExprKind::StructLit { fields, .. } = &value.kind {
-                        self.lower_struct_into(id, 0, fields, &mut inits)?;
-                    } else {
-                        return Err(format!(
-                            "line {}: IR: vector push of a non-literal struct is not supported yet",
-                            s.line
-                        ));
-                    }
-                    self.push(Instr::StructInit {
-                        var_index: tmp_var,
-                        slots,
-                        fields: inits,
-                    });
-                    self.push(Instr::VecPushStruct {
-                        ptr_var,
-                        len_var,
-                        cap_var,
-                        esz,
-                        size,
-                        tmp_var,
-                        tmp_slots: slots,
-                    });
-                } else {
-                    let src = self.lower_expr(value)?;
-                    self.push(Instr::VecPushScalar {
-                        ptr_var,
-                        len_var,
-                        cap_var,
-                        esz,
-                        ty: elem,
-                        src,
-                    });
-                }
-                return Ok(());
+                return self.lower_vec_push(name, value, s.line);
+            }
+            StmtKind::VecParamPush { name, value } => {
+                return self.lower_vec_push(name, value, s.line);
             }
             StmtKind::Arena { body } => {
                 let mark = self.value();
@@ -1312,6 +1453,7 @@ fn lower_func(
     b.inlinable = inlinable.clone();
     let mut nparams = 0usize;
     let mut struct_params: Vec<(String, u16, usize)> = Vec::new();
+    let mut vec_params: Vec<(String, Ty, usize, usize, usize, u64)> = Vec::new();
     for (name, pty) in &f.params {
         match pty {
             ParamTy::Scalar(ty) => {
@@ -1341,11 +1483,19 @@ fn lower_func(
                 let _ = pv;
                 nparams += 2;
             }
-            ParamTy::Vec(_) => {
-                return Err(format!(
-                    "IR: `{}` takes vec parameters, not supported yet",
-                    f.name
-                ))
+            ParamTy::Vec(elem) => {
+                let esz = crate::ty_size(*elem, &b.struct_defs);
+                let pn = format!("{}#vp", name);
+                let ln = format!("{}#vl", name);
+                let cn = format!("{}#vc", name);
+                let p = b.var(&pn);
+                b.var_ty.insert(pn, Ty::I64);
+                let l = b.var(&ln);
+                b.var_ty.insert(ln, Ty::I64);
+                let c = b.var(&cn);
+                b.var_ty.insert(cn, Ty::I64);
+                vec_params.push((name.clone(), *elem, p, l, c, esz));
+                nparams += 3;
             }
         }
     }
@@ -1356,6 +1506,15 @@ fn lower_func(
         b.nvars += slots;
         b.struct_vars.insert(name, (var_index, slots, id));
         b.push(Instr::CopySlots { ptr_var, var_index, slots });
+    }
+    for (name, elem, p_addr, l_addr, c_addr, esz) in &vec_params {
+        let pv = b.nvars;
+        b.nvars += 3;
+        b.vecs
+            .insert(name.clone(), (*elem, pv, pv + 1, pv + 2, *esz));
+        b.push(Instr::LoadPtr { dst_var: pv, src_var: *p_addr });
+        b.push(Instr::LoadPtr { dst_var: pv + 1, src_var: *l_addr });
+        b.push(Instr::LoadPtr { dst_var: pv + 2, src_var: *c_addr });
     }
     let (argc_var, argv_var) = if f.name == "main" {
         let a = b.nvars;
@@ -1371,6 +1530,24 @@ fn lower_func(
     }
     if !matches!(b.blocks[b.cur].instrs.last(), Some(Instr::Ret(_))) {
         b.push(Instr::Ret(None));
+    }
+    if !vec_params.is_empty() {
+        for bi in 0..b.blocks.len() {
+            if matches!(b.blocks[bi].instrs.last(), Some(Instr::Ret(_))) {
+                let mut stores = Vec::new();
+                for (name, _, p_addr, l_addr, c_addr, _) in &vec_params {
+                    if let Some((_, pv, lv, cv, _)) = b.vecs.get(name).copied() {
+                        stores.push(Instr::StorePtr { dst_ptr_var: *p_addr, src_var: pv });
+                        stores.push(Instr::StorePtr { dst_ptr_var: *l_addr, src_var: lv });
+                        stores.push(Instr::StorePtr { dst_ptr_var: *c_addr, src_var: cv });
+                    }
+                }
+                let at = b.blocks[bi].instrs.len() - 1;
+                for (k, ins) in stores.into_iter().enumerate() {
+                    b.blocks[bi].instrs.insert(at + k, ins);
+                }
+            }
+        }
     }
     let mut out = b.finish();
     out.name = f.name.clone();
@@ -2004,7 +2181,11 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
             uses.push(*len);
             uses.push(*value);
         }
-        Instr::AddrVar { .. } | Instr::CopySlots { .. } => {}
+        Instr::AddrVar { .. }
+        | Instr::CopySlots { .. }
+        | Instr::StoreVec { .. }
+        | Instr::LoadPtr { .. }
+        | Instr::StorePtr { .. } => {}
         Instr::StructInit { fields, .. } => {
             for (_, _, v) in fields {
                 uses.push(*v);
@@ -2074,6 +2255,9 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::StructInit { .. }
                 | Instr::AddrVar { .. }
                 | Instr::CopySlots { .. }
+                | Instr::StoreVec { .. }
+                | Instr::LoadPtr { .. }
+                | Instr::StorePtr { .. }
         | Instr::AddrVar { .. }
                 | Instr::VecNew { .. }
                 | Instr::VecReserve { .. }
@@ -2407,7 +2591,11 @@ fn emit_fast_block(
     };
     for (ii, ins) in instrs.iter().enumerate() {
         match ins {
-            Instr::AddrVar { .. } | Instr::CopySlots { .. } => {}
+            Instr::AddrVar { .. }
+        | Instr::CopySlots { .. }
+        | Instr::StoreVec { .. }
+        | Instr::LoadPtr { .. }
+        | Instr::StorePtr { .. } => {}
             Instr::Const { dst, v } => {
                 if ra.is_float(*dst) {
                     let d = ra.xdst(*dst);
@@ -3321,7 +3509,11 @@ fn rewrite_operands(ins: &mut Instr, f: &dyn Fn(Value) -> Value) {
             rw(idx);
             rw(src);
         }
-        Instr::AddrVar { .. } | Instr::CopySlots { .. } => {}
+        Instr::AddrVar { .. }
+        | Instr::CopySlots { .. }
+        | Instr::StoreVec { .. }
+        | Instr::LoadPtr { .. }
+        | Instr::StorePtr { .. } => {}
         Instr::StructInit { fields, .. } => {
             for (_, _, v) in fields {
                 rw(v);
@@ -3958,7 +4150,18 @@ pub fn emit(prog: &IrProgram) -> String {
                 }
             }
         }
+        let mut addr_taken: std::collections::HashSet<usize> = Default::default();
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                if let Instr::AddrVar { var_index, slots, .. } = ins {
+                    for k in 0..*slots {
+                        addr_taken.insert(*var_index + k);
+                    }
+                }
+            }
+        }
         let mut ranked: Vec<(usize, u32)> = var_counts.into_iter().collect();
+        ranked.retain(|(v, _)| !addr_taken.contains(v));
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         let chosen: Vec<(usize, &'static str)> = ranked
             .into_iter()
@@ -4480,6 +4683,47 @@ pub fn emit(prog: &IrProgram) -> String {
                                 "    mov %rdx, -{}(%rbp)\n",
                                 varoff(var_index + i)
                             ));
+                        }
+                    }
+                    Instr::LoadPtr { dst_var, src_var } => {
+                        if let Some(reg) = var_regs.get(src_var) {
+                            out.push_str(&format!("    mov {}, %rax\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*src_var)));
+                        }
+                        out.push_str("    mov (%rax), %rdx\n");
+                        if let Some(reg) = var_regs.get(dst_var) {
+                            out.push_str(&format!("    mov %rdx, {}\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov %rdx, -{}(%rbp)\n", varoff(*dst_var)));
+                        }
+                    }
+                    Instr::StorePtr { dst_ptr_var, src_var } => {
+                        if let Some(reg) = var_regs.get(dst_ptr_var) {
+                            out.push_str(&format!("    mov {}, %rax\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*dst_ptr_var)));
+                        }
+                        if let Some(reg) = var_regs.get(src_var) {
+                            out.push_str(&format!("    mov {}, %rdx\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %rdx\n", varoff(*src_var)));
+                        }
+                        out.push_str("    mov %rdx, (%rax)\n");
+                    }
+                    Instr::StoreVec { src_ptr_var, ptr_var, len_var, cap_var } => {
+                        if let Some(reg) = var_regs.get(src_ptr_var) {
+                            out.push_str(&format!("    mov {}, %rax\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*src_ptr_var)));
+                        }
+                        for (i, v) in [ptr_var, len_var, cap_var].iter().enumerate() {
+                            if let Some(reg) = var_regs.get(v) {
+                                out.push_str(&format!("    mov {}, %rdx\n", reg));
+                            } else {
+                                out.push_str(&format!("    mov -{}(%rbp), %rdx\n", varoff(**v)));
+                            }
+                            out.push_str(&format!("    mov %rdx, -{}(%rax)\n", i * 8));
                         }
                     }
                     Instr::StructInit { var_index, slots, fields } => {

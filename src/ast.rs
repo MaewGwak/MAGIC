@@ -82,6 +82,9 @@ pub enum ExprKind {
     VecArgPtr(String),
     VecArgLen(String),
     VecArgCap(String),
+    VecParamArgPtr(String),
+    VecParamArgLen(String),
+    VecParamArgCap(String),
     VecParamPop(String),
     VecParamClear(String),
     VecParamReserve {

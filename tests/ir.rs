@@ -66,6 +66,53 @@ fn ir_matches_c_on_small_integer_programs() {
     std::fs::create_dir_all(&dir).unwrap();
     let cases: &[(&str, &str)] = &[
         (
+            "vec_param_read",
+            r#"
+fn sum(v: [i32+]) -> i32 {
+    var i = 0; var t = 0;
+    while i < len(v) { t = t + v[i]; i = i + 1; }
+    return t;
+}
+fn main() {
+    var v: [i32+] = [];
+    v.push(1); v.push(2); v.push(3);
+    print(sum(v));
+    print(len(v));
+}
+"#,
+        ),
+        (
+            "vec_param_push",
+            r#"
+fn grow(v: [i32+], x: i32) { v.push(x); v.push(x + 1); }
+fn main() {
+    var v: [i32+] = [];
+    v.push(1); v.push(2);
+    grow(v, 10);
+    print(len(v));
+    print(v[2]); print(v[3]);
+}
+"#,
+        ),
+        (
+            "vec_param_nested",
+            r#"
+fn grow(v: [i32+], x: i32) { v.push(x); v.push(x + 1); }
+fn outer(v: [i32+], x: i32) -> i32 {
+    grow(v, x);
+    var n = len(v);
+    return v[n - 3] + v[n - 2] + v[n - 1];
+}
+fn main() {
+    var v: [i32+] = [];
+    v.push(1); v.push(2);
+    print(outer(v, 10));
+    print(len(v));
+    print(v[2]); print(v[3]);
+}
+"#,
+        ),
+        (
             "struct_params_read_only",
             r#"
 struct P { x: i32, y: i32, z: i64 }

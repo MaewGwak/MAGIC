@@ -1281,6 +1281,9 @@ impl Checker {
             | ExprKind::VecArgPtr(_)
             | ExprKind::VecArgLen(_)
             | ExprKind::VecArgCap(_)
+            | ExprKind::VecParamArgPtr(_)
+            | ExprKind::VecParamArgLen(_)
+            | ExprKind::VecParamArgCap(_)
             | ExprKind::VecParamPop(_)
             | ExprKind::VecParamClear(_)
             | ExprKind::VecParamReserve { .. } => Err(format!(
@@ -1353,7 +1356,9 @@ pub fn lower_calls(prog: &mut Program) {
         if !vec_params.is_empty() {
             rewrite_vec_names(&mut f.body, &vec_params);
         }
+        VEC_PARAM_NAMES.with(|c| *c.borrow_mut() = vec_params.clone());
         lower_stmts(&mut f.body, &sigs);
+        VEC_PARAM_NAMES.with(|c| c.borrow_mut().clear());
     }
 }
 
@@ -1554,6 +1559,11 @@ fn lower_stmts(stmts: &mut [Stmt], sigs: &HashMap<String, Vec<ParamTy>>) {
     }
 }
 
+thread_local! {
+    static VEC_PARAM_NAMES: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
 fn lower_expr(e: &mut Expr, sigs: &HashMap<String, Vec<ParamTy>>) {
     match &mut e.kind {
         ExprKind::Call { name, args } => {
@@ -1572,18 +1582,23 @@ fn lower_expr(e: &mut Expr, sigs: &HashMap<String, Vec<ParamTy>>) {
                     if let ExprKind::Var(n) = &a.kind {
                         let n = n.clone();
                         let line = a.line;
-                        new_args.push(Expr {
-                            kind: ExprKind::VecArgPtr(n.clone()),
-                            line,
-                        });
-                        new_args.push(Expr {
-                            kind: ExprKind::VecArgLen(n.clone()),
-                            line,
-                        });
-                        new_args.push(Expr {
-                            kind: ExprKind::VecArgCap(n),
-                            line,
-                        });
+                        let is_param = VEC_PARAM_NAMES.with(|c| c.borrow().contains(&n));
+                        let (ptr_kind, len_kind, cap_kind) = if is_param {
+                            (
+                                ExprKind::VecParamArgPtr(n.clone()),
+                                ExprKind::VecParamArgLen(n.clone()),
+                                ExprKind::VecParamArgCap(n),
+                            )
+                        } else {
+                            (
+                                ExprKind::VecArgPtr(n.clone()),
+                                ExprKind::VecArgLen(n.clone()),
+                                ExprKind::VecArgCap(n),
+                            )
+                        };
+                        new_args.push(Expr { kind: ptr_kind, line });
+                        new_args.push(Expr { kind: len_kind, line });
+                        new_args.push(Expr { kind: cap_kind, line });
                         continue;
                     }
                 }

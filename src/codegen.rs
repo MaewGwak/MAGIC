@@ -1521,6 +1521,9 @@ fn expr(e: &Expr) -> String {
         ExprKind::VecArgPtr(name) => format!("&{}", name),
         ExprKind::VecArgLen(name) => format!("&{}_len", name),
         ExprKind::VecArgCap(name) => format!("&{}_cap", name),
+        ExprKind::VecParamArgPtr(name) => name.clone(),
+        ExprKind::VecParamArgLen(name) => format!("{}_len", name),
+        ExprKind::VecParamArgCap(name) => format!("{}_cap", name),
         ExprKind::VecParamPop(name) => format!(
             "(*{})[magic_pop({}_len, \"line {}: pop from empty vec\")]",
             name, name, e.line
