@@ -1,3 +1,10 @@
+## v1.0.2 — remove stale strict-gate section (2026-11-07)
+
+Removed the superseded "optimized-baseline gate (target, not yet met)" block, which was still
+reporting the withdrawn strict default-source target and contradicted the owner-approved parity
+gate. Historical matrix tables are labelled as historical; "best" columns are now "optimized
+variant". No code change.
+
 ## v1.0.1 — benchmark terminology clarified (2026-11-07)
 
 README now labels the two MAGIC columns explicitly: "default (naive source)" and "optimized variant
