@@ -38,7 +38,7 @@ rustc -C opt-level=3 -o bench-db/hashmap_rs bench-db/hashmap_rs.rs
 "$M" build bench-db/bufpool_magic_fast3.magic -o bench-db/bufpool_magic_fast3 >/dev/null
 "$M" build bench-db/btree_magic_fast.magic -o bench-db/btree_magic_fast >/dev/null
 if [ -n "$CLANG" ]; then
-  "$M" build bench-db/btree_magic_fast.magic --cc "$CLANG -march=native" -o bench-db/btree_magic_fast_clang >/dev/null
+  "$M" build bench-db/btree_magic_fast.magic --backend c --cc "$CLANG -march=native" -o bench-db/btree_magic_fast_clang >/dev/null
 fi
 
 median() { # label expected binary

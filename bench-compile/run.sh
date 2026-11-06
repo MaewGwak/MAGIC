@@ -47,10 +47,10 @@ median() { # label runs cmd...
   printf '%-26s %6s ms\n' "$label" "$(printf '%s\n' "${vals[@]}" | sort -n | sed -n '2p')"
 }
 
-cold_magic_gcc() { rm -f big.c big.bin big.flags; "$M" build big.magic --cc gcc; }
-cold_magic_clang() { rm -f big.c big.bin big.flags; "$M" build big.magic --cc clang; }
-edit_magic_gcc() { sed -i 's/return x + 0;/return x + 5;/' big.magic; "$M" build big.magic --cc gcc; }
-edit_magic_clang() { sed -i 's/return x + 5;/return x + 9;/' big.magic; "$M" build big.magic --cc clang; }
+cold_magic_gcc() { rm -f big.c big.bin big.flags; "$M" build big.magic --backend c --cc gcc; }
+cold_magic_clang() { rm -f big.c big.bin big.flags; "$M" build big.magic --backend c --cc clang; }
+edit_magic_gcc() { sed -i 's/return x + 0;/return x + 5;/' big.magic; "$M" build big.magic --backend c --cc gcc; }
+edit_magic_clang() { sed -i 's/return x + 5;/return x + 9;/' big.magic; "$M" build big.magic --backend c --cc clang; }
 cold_rust() { rm -f big_r; rustc -O big.rs -o big_r; }
 edit_rust() { sed -i 's/x + 0 }/x + 7 }/' big.rs; rustc -O big.rs -o big_r; }
 
@@ -68,5 +68,5 @@ if [ -n "$GOOSE" ]; then
   median "goose build" 3 edit_goose
 fi
 echo "== no-op =="
-median "MAGIC gcc" 3 "$M" build big.magic --cc gcc
+median "MAGIC gcc" 3 "$M" build big.magic --backend c --cc gcc
 if [ -n "$GOOSE" ]; then median "goose build" 3 "$GOOSE" build big.goose -o big_g; fi

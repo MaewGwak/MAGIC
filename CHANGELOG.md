@@ -42,7 +42,9 @@ mapper as the C backend. `check` and `emit` follow the chosen backend (`emit` pr
 with `--backend c`; a long-standing bug where `emit --backend native` printed C is fixed). Flags that
 only make sense for the C path (`--unroll`, `--dev`, `--cc`, gcc `--native`) are rejected instead of
 being silently ignored. C-specific CLI tests are now explicit about `--backend c`; three new tests
-cover the default IR build/run, assembly emission and symlinked-assembly refusal. 168 tests.
+cover the default IR build/run, assembly emission and symlinked-assembly refusal. The benchmark
+scripts that pass `--cc` (clang/gcc `-march=native` variants, the compile-speed harness and the DB
+comparison) now also pass `--backend c`, since `--cc` is only meaningful on the C path. 168 tests.
 
 ## v0.8.72 — final IR parity pass (2026-11-06)
 

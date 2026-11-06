@@ -19,7 +19,7 @@ check → C11 → native binary.
 - **Native x86-64 backend (default)**: `magicc build app.magic` now emits the optimized typed IR to GNU
   assembler directly and links with `ld` — no C compiler in the path. It builds `sieve`, `hashmap`, the PostgreSQL wire-protocol server and the
   2,000-function test in 41 ms, with sockets, file I/O and process arguments wired to libc against the C backend's 96 ms, Goose's 120 ms and
-  rustc's 223 ms. Arrays, structs, floats and sockets still use the C backend.
+  rustc's 223 ms. Arrays, structs, floats and sockets are supported by the IR backend as well.
 - **Flat data is the easy path**: arrays and structs are contiguous and pointers are explicit, so
   pointer-heavy code stays predictable.
 - **Compiles fast**: on a 2,000-function project a cold build is ~94 ms (gcc) or ~98 ms (clang),
@@ -82,7 +82,7 @@ magicc build examples\hello.magic            # write hello.c, compile
 magicc run   examples\fib.magic              # build and run
 magicc build big.magic --native              # -march=native (not portable)
 magicc build big.magic --dev                 # -O0 for fast iteration
-magicc build big.magic --cc "zig cc"         # pick the C compiler (may carry arguments)
+magicc build big.magic --backend c --cc "zig cc"  # C path: pick the compiler (may carry arguments)
 magicc build big.magic --unroll              # unroll small constant for-loops (clang/zig)
 magicc build main.magic lib.magic             # several files compile as one program, in order
 ```

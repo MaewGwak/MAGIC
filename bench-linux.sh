@@ -105,7 +105,7 @@ median "$OUT/m_m" 326316140 'matmul MAGIC'
 median "$OUT/m_k" 326316140 'matmul MAGIC i-k-j'
 
 if [ -n "$CLANG" ]; then
-  "$M" build matmul_magic_ikj.magic --cc "$CLANG -march=native" -o "$OUT/m_clang.bin" >/dev/null 2>&1 || true
+  "$M" build matmul_magic_ikj.magic --backend c --cc "$CLANG -march=native" -o "$OUT/m_clang.bin" >/dev/null 2>&1 || true
   [ -x "$OUT/m_clang.bin" ] && median "$OUT/m_clang.bin" 326316140 'matmul MAGIC clang native'
 fi
 
@@ -120,7 +120,7 @@ if [ -n "$GOOSE" ]; then build_goose nbody_goose.goose n_goose; median "$OUT/n_g
 median "$OUT/n_u" 11211.531383831 'n-body MAGIC unrolled'
 build_magic nbody_magic.magic n_loop; median "$OUT/n_loop" 11211.531383831 'n-body MAGIC loop'
 if [ -n "$CLANG" ]; then
-  "$M" build nbody_unrolled.magic --cc "$CLANG -march=x86-64-v3" -o "$OUT/n_clang.bin" >/dev/null 2>&1 || true
+  "$M" build nbody_unrolled.magic --backend c --cc "$CLANG -march=x86-64-v3" -o "$OUT/n_clang.bin" >/dev/null 2>&1 || true
   [ -x "$OUT/n_clang.bin" ] && median "$OUT/n_clang.bin" 11211.531383844 'n-body MAGIC clang AVX2'
 fi
 
@@ -167,7 +167,7 @@ cd "$ROOT/bench-bt" || exit 2
 build_c bt_c.c b_c; build_rust bt_rust_flat.rs b_rs
 build_magic bt_magic.magic b_m; build_magic bt_magic_count.magic b_x
 # gcc -march=native vectorises the level-order stores (4.5x over the default build)
-"$M" build bt_magic_loop.magic --cc "gcc -march=native" -o "$OUT/b_l" >/dev/null 2>&1 || { echo "build failed: bt_magic_loop"; FAIL=$((FAIL + 1)); }
+"$M" build bt_magic_loop.magic --backend c --cc "gcc -march=native" -o "$OUT/b_l" >/dev/null 2>&1 || { echo "build failed: bt_magic_loop"; FAIL=$((FAIL + 1)); }
 median "$OUT/b_c" 568328208 'binary trees C'
 median "$OUT/b_rs" 568328208 'binary trees Rust'
 median "$OUT/b_m" 568328208 'binary trees MAGIC'
