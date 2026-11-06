@@ -180,7 +180,9 @@ All three backends are within noise: these programs are payload-dominated and ev
 bit-packs booleans and zero-fills allocations. A structural 5x memory advantage over the best C
 baseline is not available from codegen alone; it requires runtime memory policies (arena/region
 allocation, compressed containers). This audit gates the 1.0 memory claim. v0.8.38 additionally uses
-`shl` for power-of-two struct/vector strides (vecpart 203 → 191 ms).
+`shl` for power-of-two struct/vector strides (vecpart 203 → 191 ms). v0.8.39 adds a deterministic
+fuzz harness and parser recursion limits (512 chained operators, 256 statement/unary/block depth)
+after the fuzzer found compiler stack overflows on pathological inputs.
 
 ## IR vs AST vs C (v0.8.31 medians)## IR vs AST vs C (v0.8.31 medians)
 

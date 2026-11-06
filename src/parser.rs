@@ -224,6 +224,17 @@ impl Parser {
     }
 
     fn parse_block(&mut self) -> Result<Vec<Stmt>, String> {
+        self.depth += 1;
+        if self.depth > 256 {
+            self.depth -= 1;
+            return Err("block nesting is too deep (limit 256)".to_string());
+        }
+        let r = self.parse_block_inner();
+        self.depth -= 1;
+        r
+    }
+
+    fn parse_block_inner(&mut self) -> Result<Vec<Stmt>, String> {
         self.expect(Tok::LBrace, "'{'")?;
         let mut stmts = Vec::new();
         while !self.at(&Tok::RBrace) && !self.at(&Tok::Eof) {
@@ -234,6 +245,17 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt, String> {
+        self.depth += 1;
+        if self.depth > 256 {
+            self.depth -= 1;
+            return Err("statement nesting is too deep (limit 256)".to_string());
+        }
+        let r = self.parse_stmt_inner();
+        self.depth -= 1;
+        r
+    }
+
+    fn parse_stmt_inner(&mut self) -> Result<Stmt, String> {
         let line = self.cur_line();
         let tok = self.peek().clone();
 
@@ -587,7 +609,12 @@ impl Parser {
 
     fn parse_or(&mut self) -> Result<Expr, String> {
         let mut e = self.parse_and()?;
+        let mut chain = 0usize;
         while self.eat(&Tok::OrOr) {
+            chain += 1;
+            if chain > 512 {
+                return Err("expression has too many chained operators (limit 512)".to_string());
+            }
             let line = self.cur_line();
             let r = self.parse_and()?;
             e = Expr {
@@ -604,7 +631,12 @@ impl Parser {
 
     fn parse_and(&mut self) -> Result<Expr, String> {
         let mut e = self.parse_eq()?;
+        let mut chain = 0usize;
         while self.eat(&Tok::AndAnd) {
+            chain += 1;
+            if chain > 512 {
+                return Err("expression has too many chained operators (limit 512)".to_string());
+            }
             let line = self.cur_line();
             let r = self.parse_eq()?;
             e = Expr {
@@ -645,7 +677,12 @@ impl Parser {
 
     fn parse_cmp(&mut self) -> Result<Expr, String> {
         let mut e = self.parse_add()?;
+        let mut chain = 0usize;
         loop {
+            chain += 1;
+            if chain > 512 {
+                return Err("expression has too many chained operators (limit 512)".to_string());
+            }
             let op = if self.eat(&Tok::Lt) {
                 BinOp::Lt
             } else if self.eat(&Tok::Le) {
@@ -673,7 +710,12 @@ impl Parser {
 
     fn parse_add(&mut self) -> Result<Expr, String> {
         let mut e = self.parse_mul()?;
+        let mut chain = 0usize;
         loop {
+            chain += 1;
+            if chain > 512 {
+                return Err("expression has too many chained operators (limit 512)".to_string());
+            }
             let op = if self.eat(&Tok::Plus) {
                 BinOp::Add
             } else if self.eat(&Tok::Minus) {
@@ -697,7 +739,12 @@ impl Parser {
 
     fn parse_mul(&mut self) -> Result<Expr, String> {
         let mut e = self.parse_unary()?;
+        let mut chain = 0usize;
         loop {
+            chain += 1;
+            if chain > 512 {
+                return Err("expression has too many chained operators (limit 512)".to_string());
+            }
             let op = if self.eat(&Tok::Star) {
                 BinOp::Mul
             } else if self.eat(&Tok::Slash) {
@@ -722,6 +769,17 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, String> {
+        self.depth += 1;
+        if self.depth > 256 {
+            self.depth -= 1;
+            return Err("expression nesting is too deep (limit 256)".to_string());
+        }
+        let r = self.parse_unary_inner();
+        self.depth -= 1;
+        r
+    }
+
+    fn parse_unary_inner(&mut self) -> Result<Expr, String> {
         let line = self.cur_line();
         if self.eat(&Tok::Minus) {
             let e = self.parse_unary()?;

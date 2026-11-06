@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.39 — parser recursion limits and a fuzz harness (2026-11-06)
+
+A deterministic fuzz test (`tests/fuzz.rs`) now feeds 2000 random token soups through `compile_to_c`,
+`compile_to_asm` and `compile_to_asm_ir` and requires diagnostics rather than panics, and it also
+checks pathological nesting. It immediately found stack overflows: a 20 000-term operator chain built
+a left-deep AST that overflowed during compilation, and recursive `else if`/unary chains were
+unguarded. The parser now limits binary operator chains to 512, statement/unary/block nesting to 256,
+and reports `block nesting is too deep`, `statement nesting is too deep` or `expression has too many
+chained operators` instead of crashing. This is a compiler-side denial-of-service fix.
+
 ## v0.8.38 — shift-based stride scaling in the IR (2026-11-06)
 
 Power-of-two struct sizes and vector element sizes now scale with `shl` instead of `imul` in the IR
