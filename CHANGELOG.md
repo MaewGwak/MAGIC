@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.9.3 — low-end proxy gate (2026-11-06)
+
+`bench-lowend.sh` runs all eight default workloads with a 2 GiB address-space limit and one CPU,
+verifying checksums and peak RSS; `verify.sh` now includes it. All workloads fit (peak 2–34 MB) and
+complete on one core (matmul 9 ms, hash 39 ms, ray 123 ms, particles 141 ms, sieve 368 ms, fannkuch
+263 ms, n-body 879 ms, binary trees 3825 ms). This is a memory/CPU-class proxy, not a physical 2 GB
+machine; GPU and storage are not covered. All gates pass, 168 tests, parity 60/60.
+
 ## v0.9.2 — pair matcher accepts shared multiplier constants (2026-11-06)
 
 The AoS pair matcher required the multiplier `Const` to sit inside every window; a duplicated body

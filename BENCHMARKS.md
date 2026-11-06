@@ -1,7 +1,7 @@
 # MAGIC benchmarks — current evidence (Linux, 2026-11-06)
 
 Machine: AMD Ryzen AI 7 350, 31.1 GB RAM, Linux. Compilers: gcc/g++ 16.2.1, rustc 1.99.1,
-Go and Goose where the harness has a source. MAGIC is `magicc 0.9.2` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
+Go and Goose where the harness has a source. MAGIC is `magicc 0.9.3` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
 (`as` + `ld`, no C compiler in the build path). Every number below comes from
 `./verify.sh` / `./bench-linux.sh`; every program's checksum is compared and `verify.sh` fails on
 a mismatch. Timings are medians of 3–5 interleaved runs, portable flags (no `-march=native` for the
@@ -140,6 +140,15 @@ dynamically**; they are not fully static ELF yet.
   audit rounds found and closed 4 + 2 + 1 miscompiles; every counterexample is a regression test.
 - A range-based pass was prototyped and **rejected** after the audit found four silent
   out-of-bounds cases; it is not shipped.
+
+## Low-end proxy gate
+
+`./bench-lowend.sh` rebuilds all eight default workloads and runs each under a **2 GiB
+address-space limit** (`prlimit --as=2147483648`) pinned to **one CPU** (`taskset -c 0`), checking
+the same checksums as the main matrix. All eight pass: peak RSS 2–34 MB, matmul 9 ms, hash 39 ms,
+ray 123 ms, particles 141 ms, sieve 368 ms, fannkuch 263 ms, n-body 879 ms, binary trees 3825 ms.
+This is a proxy for a 2 GB low-end machine, not a physical one: it bounds the memory class and the
+single-core time, but does not test GPU or very slow storage.
 
 ## Honest gaps
 

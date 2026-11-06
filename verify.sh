@@ -26,6 +26,7 @@ if [ "${1:-}" != "-Fast" ]; then
   echo "== bench-linux =="
   ./bench-linux.sh || fail=1
   ./bench-memory.sh || fail=1
+  ./bench-lowend.sh || fail=1
 fi
 if [ "$fail" -eq 0 ]; then
   echo "ALL GATES PASSED"
