@@ -82,9 +82,40 @@ fn json_get_string(buf: [u8], len: i32, key: str, out: [u8], cap: i32) -> i32 {
     return json_string(buf, len, p, out, cap);
 }
 
+
+fn check_libraries(dir: str, buf: [u8], len: i32, out: [u8], cap: i32) -> i32 {
+    var libdir = str_cat(dir, "/libraries");
+    var pos = 0;
+    var total = 0;
+    var missing = 0;
+    var running = true;
+    while running {
+        var p = json_key_pos(buf, len, "path", pos);
+        if p < 0 { running = false; }
+        else {
+            var n = json_string(buf, len, p, out, cap);
+            if n >= 0 {
+                total = total + 1;
+                var rel = str_from_bytes(out, n);
+                var full = str_cat(str_cat(libdir, "/"), rel);
+                if !path_exists(full) {
+                    missing = missing + 1;
+                    print(str_cat("horizon: missing library ", rel));
+                }
+            }
+            pos = p + 1;
+        }
+    }
+    print("horizon: libraries total");
+    print(total);
+    print("horizon: libraries missing");
+    print(missing);
+    return missing;
+}
+
 fn main() {
     if argc() < 3 {
-        print("horizon: usage: horizon init|list|show|set|doctor|import|launch <dir>");
+        print("horizon: usage: horizon init|list|show|set|doctor|import|assets|launch <dir>");
         return;
     }
     var cmd = arg(1);
@@ -177,6 +208,29 @@ fn main() {
         }
         if write_value(dir, key, value) < 0 { print("horizon: cannot write config"); return; }
         print("horizon: config updated");
+        return;
+    }
+
+    if str_eq(cmd, "assets") {
+        if argc() < 4 { print("horizon: assets needs <dir> <version.json>"); return; }
+        if !path_exists(dir) { print("horizon: instance directory does not exist"); return; }
+        var fd = file_open(arg(3), "r");
+        if fd < 0 { print("horizon: cannot open version json"); return; }
+        var n = file_read(fd, jsonbuf, 65535);
+        file_close(fd);
+        if n < 0 { print("horizon: cannot read version json"); return; }
+        var missing = check_libraries(dir, jsonbuf, n as i32, outbuf, 512);
+        var ai = json_key_pos(jsonbuf, n as i32, "assetIndex", 0);
+        if ai >= 0 {
+            var idp = json_key_pos(jsonbuf, n as i32, "id", ai);
+            if idp >= 0 {
+                var idn = json_string(jsonbuf, n as i32, idp, outbuf, 512);
+                if idn >= 0 {
+                    print(str_cat("horizon: assetIndex=", str_from_bytes(outbuf, idn)));
+                }
+            }
+        }
+        if missing == 0 { print("horizon: assets/libraries OK"); }
         return;
     }
 
