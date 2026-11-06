@@ -128,6 +128,9 @@ the block ends, which takes matmul to ~186 ms. v0.8.20 adds a dedicated unrolled
 matmul 154 ms, array sum 63 ms, sieve 90 ms, fill-only 35 ms — all at or ahead of the AST backend.
 v0.8.21 adds immediate arithmetic/comparison forms and fuses comparison results into branches
 (`cmp`+`jcc` instead of `setcc`+`movzbq`+`cmp $0`): matmul 131 ms, array sum 58 ms, sieve ~89 ms.
+v0.8.22 implements stack arguments, so functions with more than six parameters (including expanded
+array parameters) lower: btree (180 ms vs C 103) and hashmap (108 ms vs C 39) now run through the IR
+with identical output.
 Affine indexes like
 `a[i * n + j]` are proved in v0.8.15 after constant propagation makes `n` and `n * n` literal: the
 maximum `(n-1)*n + (n-1)` is compared with the array length, so matmul's inner checks disappear

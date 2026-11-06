@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.22 — stack arguments in the IR, btree and hashmap run natively (2026-11-06)
+
+Calls may now take more than six arguments: the IR emitter pushes the extra arguments (with the
+required padding to keep the stack aligned), cleans them up after the call, and the callee reads
+them from `16(%rbp)+`. Array parameters expand to two arguments, so functions such as
+`bisect(node, key, cnt, keys, maxk)` (seven expanded arguments) and `map_put(keys, vals, cap, k, v)`
+now lower. `bench-db/btree_magic` (300002416362516 / 4213) and `bench-db/hashmap_magic`
+(1500001500000) produce identical output through the IR backend in 180 ms and 108 ms (C: 103 ms and
+39 ms); both join the differential corpus.
+
 ## v0.8.21 — immediate operands and comparison/branch fusion in the IR (2026-11-06)
 
 Binary operations with a constant operand now use immediate forms (`cmp $c`, `add $c`, `imul $c`,

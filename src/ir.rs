@@ -233,12 +233,6 @@ impl Builder {
                 Ok(dst)
             }
             ExprKind::Call { name, args } => {
-                if args.len() > 6 {
-                    return Err(format!(
-                        "line {}: IR: calls with more than 6 arguments are not supported yet",
-                        e.line
-                    ));
-                }
                 let mut vals = Vec::new();
                 for a in args {
                     vals.push(self.lower_expr(a)?);
@@ -1601,11 +1595,20 @@ pub fn emit(prog: &IrProgram) -> String {
             out.push_str(&format!("    push {}\n", ["%rbx", "%r12", "%r13", "%r14", "%r15"][i]));
         }
         let regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
-        for i in 0..f.nparams.min(6) {
-            if let Some(reg) = var_regs.get(&i) {
-                out.push_str(&format!("    mov {}, {}\n", regs[i], reg));
+        for i in 0..f.nparams {
+            let src = if i < 6 {
+                regs[i].to_string()
             } else {
-                out.push_str(&format!("    mov {}, -{}(%rbp)\n", regs[i], varoff(i)));
+                out.push_str(&format!(
+                    "    mov {}(%rbp), %rax\n",
+                    16 + 8 * (i - 6)
+                ));
+                "%rax".to_string()
+            };
+            if let Some(reg) = var_regs.get(&i) {
+                out.push_str(&format!("    mov {}, {}\n", src, reg));
+            } else {
+                out.push_str(&format!("    mov {}, -{}(%rbp)\n", src, varoff(i)));
             }
         }
         let lblock = |bb: usize| format!(".L{}_{}", f.name, bb);
@@ -1805,10 +1808,26 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
                     Instr::Call { dst, name, args } => {
-                        for (i, a) in args.iter().enumerate() {
+                        let nstack = args.len().saturating_sub(6);
+                        let mut cleanup = 0usize;
+                        if nstack > 0 {
+                            let pad = if nstack % 2 == 1 { 8 } else { 0 };
+                            if pad > 0 {
+                                out.push_str("    sub $8, %rsp\n");
+                                cleanup += 8;
+                            }
+                            for a in args.iter().skip(6).rev() {
+                                out.push_str(&format!("    push -{}(%rbp)\n", voff(f, *a)));
+                                cleanup += 8;
+                            }
+                        }
+                        for (i, a) in args.iter().take(6).enumerate() {
                             out.push_str(&format!("    mov -{}(%rbp), {}\n", voff(f, *a), regs[i]));
                         }
                         out.push_str(&format!("    call {}\n", name));
+                        if cleanup > 0 {
+                            out.push_str(&format!("    add ${}, %rsp\n", cleanup));
+                        }
                         if let Some(d) = dst {
                             out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *d)));
                         }
