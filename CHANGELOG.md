@@ -1,3 +1,11 @@
+## v0.11.5 — algorithm-parity harness (2026-11-07)
+
+`bench-parity.sh` measures the best shipped MAGIC source (default native-IR build) against
+`-O3 -march=native` / `rustc target-cpu=native` baselines. Six workloads pass (sieve 35, fannkuch
+61, raytrace 16, hash 6, particles 5, bt 445); matmul is 5 vs optimized C 4, and n-body is 573 vs
+Rust 225 (clang C backend 204–277, not stable/native). The parity gate is therefore not met; no
+1.0.0 tag. No compiler change.
+
 ## v0.11.4 — trusted matmul Saxpy checks (2026-11-07)
 
 Matmul-generated saxpy is marked trusted after one-time bounds checks on a/b/c, so the per-k
