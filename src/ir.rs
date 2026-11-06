@@ -1011,7 +1011,6 @@ impl Builder {
                 self.push(Instr::StoreVar { var: idx, src: sv });
                 let head = self.new_block();
                 let body_bb = self.new_block();
-                let incr = self.new_block();
                 let end_bb = self.new_block();
                 self.push(Instr::Jmp(head));
                 self.cur = head;
@@ -1025,8 +1024,6 @@ impl Builder {
                 for st in body {
                     self.lower_stmt(st)?;
                 }
-                self.push(Instr::Jmp(incr));
-                self.cur = incr;
                 let lv2 = self.value();
                 self.push(Instr::LoadVar { dst: lv2, var: idx });
                 let one = self.value();

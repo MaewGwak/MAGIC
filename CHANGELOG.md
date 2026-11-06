@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.34 — for-loop increment folded into the body (2026-11-06)
+
+The IR now emits a `for` loop's increment instructions directly at the end of the body block instead
+of a separate increment block, removing one jump and one block transition per iteration. Vecpart
+203 ms, particles 764 ms, sieve 84 ms; the other benchmarks are unchanged. Unrolling-by-2 was
+implemented and measured for both `for` and `while` loops: it made vecpart 8% slower and nbody
+slightly slower with no consistent gain, so it was removed rather than shipped.
+
 ## v0.8.33 — xmm register allocation for f64 in the IR (2026-11-06)
 
 The IR block allocator now keeps `f64` values in a second register file: fourteen caller-saved

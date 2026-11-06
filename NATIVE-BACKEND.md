@@ -182,7 +182,9 @@ and the 4–6x compute gap to C is reduced (xmm allocation, unrolling, SIMD). v0
 assembly peephole (self-moves, `test` instead of `cmp $0`); a jump-to-next-block reduction was tried
 and rejected because it helped nbody but cost matmul and sieve more. v0.8.33 adds a second register
 file: f64 values live in `%xmm2`–`%xmm15` with `movsd` spills, taking nbody to 2.63 s, vecpart to
-207 ms, raytrace to 363 ms and particles to 766 ms.
+207 ms, raytrace to 363 ms and particles to 766 ms. v0.8.34 folds the `for` increment into the body
+block (one less jump per iteration); unrolling-by-2 was measured and rejected as consistently slower
+or neutral.
 
 ## Register-allocation experiments## Register-allocation experiments (v0.8.8 → v0.8.9)
 
