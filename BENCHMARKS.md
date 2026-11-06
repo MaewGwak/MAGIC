@@ -133,7 +133,7 @@ interpreter and no libc (see the static section).
 - Runtime panics report `file:line: message` with the canonical source path, including when the
   fault is inside an imported file (the loader's concatenated line is remapped through its
   `(start_line, path)` segments). Out-of-bounds and division-by-zero panics are followed by a
-  symbolized stack trace (`inner`, `middle`, `main`, libc, `_start`).
+  symbolized stack trace in the IR and C backends (`inner`, `middle`, `main`, libc, `_start`).
 - 170 Rust tests; 60/60 `.magic` corpus compiles through both C and IR backends; `verify-ir.sh`
   runs the differential corpus; `tests/fuzz_diff.rs` mutation-fuzzes programs against the C
   backend; `verify-native.sh` builds the corpus with a PATH containing only `as` and `ld`.

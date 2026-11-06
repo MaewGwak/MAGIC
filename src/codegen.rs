@@ -170,6 +170,16 @@ fn header_base(prog: &Program) -> String {
          \x20   _Exit(1);\n\
          }\n\n",
     );
+    out.push_str(
+        "static int64_t magic_idiv(int64_t a, int64_t b, const char *msg) {\n\
+         \x20   if (b == 0) magic_panic(msg);\n\
+         \x20   return a / b;\n\
+         }\n\
+         static int64_t magic_irem(int64_t a, int64_t b, const char *msg) {\n\
+         \x20   if (b == 0) magic_panic(msg);\n\
+         \x20   return a % b;\n\
+         }\n\n",
+    );
     if has_vecs {
         out.push_str(
             "static void magic_push(void **p, int64_t *len, int64_t *cap, const void *v, size_t esz, const char *msg) {\n\
@@ -1238,7 +1248,21 @@ fn expr(e: &Expr) -> String {
             UnOp::Neg => format!("(-{})", expr(e)),
             UnOp::Not => format!("(!{})", expr(e)),
         },
-        ExprKind::Bin { op, l, r } => format!("({} {} {})", expr(l), binop(*op), expr(r)),
+        ExprKind::Bin { op, l, r } => {
+            let a = expr(l);
+            let b = expr(r);
+            match op {
+                BinOp::Div => format!(
+                    "_Generic(({}), double: ({} / {}), float: ({} / {}), default: magic_idiv((int64_t)({}), (int64_t)({}), \"line {}: division by zero\"))",
+                    b, a, b, a, b, a, b, e.line
+                ),
+                BinOp::Rem => format!(
+                    "magic_irem((int64_t)({}), (int64_t)({}), \"line {}: division by zero\")",
+                    a, b, e.line
+                ),
+                _ => format!("({} {} {})", a, binop(*op), b),
+            }
+        }
         ExprKind::Call { name, args } => {
             if name == "clear" && args.len() == 1 {
                 if let ExprKind::Var(n) = &args[0].kind {

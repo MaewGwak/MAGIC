@@ -150,8 +150,9 @@ fn run() -> Result<(), String> {
                         .map_err(|e| map_diagnostic(e, &segments, src_path))?;
                 }
                 _ => {
-                    magic::compile_to_c_opts(&source, unroll)
+                    let c = magic::compile_to_c_opts(&source, unroll)
                         .map_err(|e| map_diagnostic(e, &segments, src_path))?;
+                    remap_c_panics(&c, &source_files);
                 }
             }
             println!("🔮 ok: {}", src_path.display());
@@ -169,7 +170,7 @@ fn run() -> Result<(), String> {
             } else {
                 let c = magic::compile_to_c_opts(&source, unroll)
                     .map_err(|e| map_diagnostic(e, &segments, src_path))?;
-                print!("{}", c);
+                print!("{}", remap_c_panics(&c, &source_files));
             }
             Ok(())
         }
@@ -205,8 +206,11 @@ fn run() -> Result<(), String> {
                 )
                 .map_err(|e| map_diagnostic(e, &segments, src_path));
             }
-            let c = magic::compile_to_c_opts(&source, unroll)
-                .map_err(|e| map_diagnostic(e, &segments, src_path))?;
+            let c = remap_c_panics(
+                &magic::compile_to_c_opts(&source, unroll)
+                    .map_err(|e| map_diagnostic(e, &segments, src_path))?,
+                &source_files,
+            );
             let dir = src_path.parent().unwrap_or_else(|| Path::new("."));
             let exe_path = out_override.clone().unwrap_or_else(|| {
                 if cfg!(windows) {
@@ -232,10 +236,15 @@ fn run() -> Result<(), String> {
                 .clone()
                 .or_else(find_cc)
                 .ok_or("no C compiler found (tried $CC, gcc, clang, cc)")?;
+            let files_key: String = source_files
+                .iter()
+                .map(|(start, path)| format!("{}:{};", start, path))
+                .collect();
             let flags = format!(
-                "v3|{}|{:x}|{}{}-nou|{}|{}",
+                "v3|{}|{:x}|{:x}|{}{}-nou|{}|{}",
                 env!("CARGO_PKG_VERSION"),
                 fnv64(source.as_bytes()),
+                fnv64(files_key.as_bytes()),
                 if dev { "O0" } else { "O3" },
                 if native { "-native" } else { "" },
                 compiler_hash(),
@@ -251,8 +260,11 @@ fn run() -> Result<(), String> {
             let recorded_exe = stamp_text.lines().nth(1).unwrap_or("").trim().to_string();
             let exe_matches = !recorded_exe.is_empty()
                 && recorded_exe == fnv_file(&exe_path);
-            let chunks = magic::compile_parts_opts(&source, 16, unroll)
-                .map_err(|e| map_diagnostic(e, &segments, src_path))?;
+            let chunks: Vec<String> = magic::compile_parts_opts(&source, 16, unroll)
+                .map_err(|e| map_diagnostic(e, &segments, src_path))?
+                .into_iter()
+                .map(|c| remap_c_panics(&c, &source_files))
+                .collect();
             let needs_omp = chunks.iter().any(|c| c.contains("#pragma omp"));
             if unroll && cc.to_lowercase().contains("gcc") {
                 eprintln!(
@@ -795,6 +807,42 @@ fn map_diagnostic(err: String, segments: &[(usize, PathBuf)], fallback: &Path) -
 fn display_path(path: &Path) -> String {
     let s = path.display().to_string();
     s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+}
+
+fn remap_c_panics(c: &str, files: &[(usize, String)]) -> String {
+    const TAILS: [&str; 7] = [
+        "index out of bounds",
+        "bad array length",
+        "out of memory",
+        "assertion failed",
+        "bad arena size",
+        "pop from empty vec",
+        "division by zero",
+    ];
+    let mut out = String::with_capacity(c.len());
+    let mut rest = c;
+    while let Some(pos) = rest.find("line ") {
+        out.push_str(&rest[..pos]);
+        let after = &rest[pos + 5..];
+        let digits = after.chars().take_while(|ch| ch.is_ascii_digit()).count();
+        if digits > 0 {
+            let line: usize = after[..digits].parse().unwrap_or(0);
+            let tail = &after[digits..];
+            if let Some(msg) = tail.strip_prefix(": ") {
+                if TAILS.iter().any(|t| msg.starts_with(t)) {
+                    if let Some((start, path)) = files.iter().rev().find(|(s, _)| *s <= line) {
+                        out.push_str(&format!("{}:{}", path, line - start + 1));
+                        rest = tail;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push_str("line ");
+        rest = after;
+    }
+    out.push_str(rest);
+    out
 }
 
 fn find_cc() -> Option<String> {

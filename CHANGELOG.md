@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.13 — C backend diagnostics parity (2026-11-06)
+
+The C backend now remaps `line N:` panic strings through the loader segments before compilation,
+for both the single-unit emit path and the chunked build path (cache keys include the map), so an
+out-of-bounds in an imported file reports `path:local_line: index out of bounds`. Integer `/` and `%`
+lower through `magic_idiv`/`magic_irem` (selected for non-floats with `_Generic`), which panic with
+the mapped line and the libc-symbolized trace instead of trapping. Repro: import + OOB now prints
+`/tmp/impt/main2.magic:5: index out of bounds`; `10 / 0` prints `path:3: division by zero` plus
+frames on both IR and C. All gates pass, 170 tests, parity 60/60, static-memory and scaling green.
+
 ## v0.10.12 — runtime panics name the imported file (2026-11-06)
 
 The CLI now passes the loader's `(start_line, canonical_path)` segments into the IR program, and the
