@@ -192,6 +192,41 @@ fn main() { var q = mk(5); print(total(q)); print(q.b); var r = mk(7); print(tot
 "#,
         ),
         (
+            "par_for_int_and_scalar",
+            r#"
+fn main() {
+    var a: [i32] = [0; 20000];
+    var k = 3;
+    par for i in 0..20000 {
+        a[i] = i * k + 7;
+    }
+    var t: i64 = 0;
+    for i in 0..20000 { t = t + a[i]; }
+    print(t);
+    print(a[0]); print(a[19999]);
+}
+"#,
+        ),
+        (
+            "par_for_bool_sieve",
+            r#"
+fn main() {
+    let n = 1000; let half = n / 2; let root = 32;
+    var composite: [bool] = [false; half];
+    par for i in 1..root / 2 {
+        if !composite[i] {
+            let p = 2 * i + 1;
+            var j = (p * p) / 2;
+            while j < half { composite[j] = true; j = j + p; }
+        }
+    }
+    var count = 1; var k = 1;
+    while k < half { if !composite[k] { count = count + 1; } k = k + 1; }
+    print(count);
+}
+"#,
+        ),
+        (
             "break_continue_loops",
             r#"
 fn main() {

@@ -30,6 +30,27 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.74 — real pthread `par for` in the IR (2026-11-06)
+
+`par for` now runs on four pthreads instead of falling back to a sequential loop. The lowerer
+synthesizes a body function with a context block holding captured arrays (pointer + length) and
+read-only scalars; the runtime `.Lpar_for` splits the range into up to four chunks, spawns all of them
+and joins. Array writes are visible to the caller; writes to captured scalars, nested `par for`,
+vectors/structs captures and `break`/`continue` inside the body are rejected with explicit errors.
+Function calls (user functions and builtins) are allowed; nested `print`/`print_assert`-style calls
+are lowered as statements. Bool arrays captured by a par loop use a byte representation (like the C
+backend's par mode) instead of bit-packing, because concurrent bit updates in one word would race;
+this keeps the sieve-style mark loops correct (`5761455`) and deterministic. A `lock or`/`lock and`
+atomic bit store is also available for bit-packed bool stores in parallel bodies.
+
+The build cache now includes the compiler binary's own hash, so rebuilding `magicc` invalidates stale
+executables (a real trap found while debugging: an old IR binary hid a layout fix), and the C-path
+stamp keeps the compiler command as its last field so tooling that reads it still works. Differential
+cases cover a par integer fill with a captured scalar and a par bool sieve; repository parity stays
+60/60 and all gates pass. Performance note: par speedup is currently limited by inner-loop bounds
+checks and the static chunk split (sieve par IR ~260 ms versus ~180 ms sequential and ~95 ms C
+OpenMP); the next step is constant-length capture plus dynamic scheduling.
+
 ## v0.8.73 — the IR backend becomes the default (2026-11-06)
 
 `magicc build app.magic` now uses the typed-IR native backend by default: GNU assembler plus `ld`,

@@ -220,7 +220,8 @@ register path, taking btree to 158 ms and hashmap to 96 ms.
 IR wins all compute-heavy programs and AST wins the database programs narrowly. Since v0.8.73 the
 IR backend is the default (`--backend native` selects AST, `--backend c` the C11 path); closing the
 3–6x compute gap to C (width-aware 32-bit arithmetic, SLP/SIMD) and real parallel `par for` remain the
-main milestones. Arena blocks, the `net_*` TCP builtins, struct parameters (by value,
+main milestones. `par for` now uses real pthreads in the IR (four chunks, byte-layout bool arrays for
+parallel capture), though its speedup still trails the C/OpenMP path. Arena blocks, the `net_*` TCP builtins, struct parameters (by value,
 copied into the callee at entry) and growable-array parameters now work in the IR as well. The AST
 native backend still rejects vector parameters with an explicit error, while the C and IR backends
 support them (prt/len/cap are passed by reference, so `push` inside a callee updates the caller). v0.8.32 adds a small

@@ -62,6 +62,9 @@ pub enum Instr {
     CopySlots { ptr_var: usize, var_index: usize, slots: usize },
     CopySlotsTo { dst_ptr_var: usize, src: Value, slots: usize },
     Select { dst: Value, cond: Value, a: Value, b: Value, float: bool },
+    LoadCtx { dst_var: usize, ctx_var: usize, off: i64 },
+    FuncAddr { dst: Value, name: String },
+    IndexStoreBoolAtomic { ptr_var: usize, idx: Value, src: Value },
     StoreVec { src_ptr_var: usize, ptr_var: usize, len_var: usize, cap_var: usize },
     LoadPtr { dst_var: usize, src_var: usize },
     StorePtr { dst_ptr_var: usize, src_var: usize },
@@ -192,6 +195,164 @@ struct Builder {
     loops: Vec<(usize, usize)>,
     sret_var: Option<usize>,
     sret_hint: Option<(String, usize, usize)>,
+    fname: String,
+    par_counter: u32,
+    par_body: bool,
+    byte_bool: std::collections::HashSet<String>,
+    extra: Vec<IrFunc>,
+}
+
+fn collect_par_array_names(stmts: &[Stmt], out: &mut std::collections::HashSet<String>) {
+    for st in stmts {
+        match &st.kind {
+            StmtKind::For { par, body, .. } => {
+                if *par {
+                    let mut reads = std::collections::HashSet::new();
+                    let mut declared = std::collections::HashSet::new();
+                    for s in body {
+                        let _ = par_collect_stmt(s, &mut reads, &mut declared);
+                    }
+                    out.extend(reads);
+                }
+                collect_par_array_names(body, out);
+            }
+            StmtKind::While { body, .. } | StmtKind::Arena { body } => {
+                collect_par_array_names(body, out)
+            }
+            StmtKind::If { then, els, .. } => {
+                collect_par_array_names(then, out);
+                collect_par_array_names(els, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn par_collect_expr(
+    e: &Expr,
+    reads: &mut std::collections::HashSet<String>,
+    declared: &std::collections::HashSet<String>,
+) -> Result<(), String> {
+    match &e.kind {
+        ExprKind::Var(n) => {
+            if !declared.contains(n) {
+                reads.insert(n.clone());
+            }
+            Ok(())
+        }
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) => Ok(()),
+        ExprKind::Bin { l, r, .. } => {
+            par_collect_expr(l, reads, declared)?;
+            par_collect_expr(r, reads, declared)
+        }
+        ExprKind::Un { e, .. } | ExprKind::Cast { e, .. } => par_collect_expr(e, reads, declared),
+        ExprKind::Index { name, index } => {
+            if !declared.contains(name) {
+                reads.insert(name.clone());
+            }
+            par_collect_expr(index, reads, declared)
+        }
+        ExprKind::ArrayLen(name) => {
+            if !declared.contains(name) {
+                reads.insert(name.clone());
+            }
+            Ok(())
+        }
+        ExprKind::Call { args, .. } => {
+            for a in args {
+                par_collect_expr(a, reads, declared)?;
+            }
+            Ok(())
+        }
+        ExprKind::Field { .. } | ExprKind::FieldPath { .. } | ExprKind::IndexField { .. }
+        | ExprKind::IndexFieldPath { .. } => {
+            Err("par for body cannot use struct fields yet".to_string())
+        }
+        ExprKind::StructLit { .. } => Err("par for body cannot build structs yet".to_string()),
+        other => Err(format!("par for body does not support this expression yet ({:?})", other)),
+    }
+}
+
+fn par_collect_stmt(
+    st: &Stmt,
+    reads: &mut std::collections::HashSet<String>,
+    declared: &mut std::collections::HashSet<String>,
+) -> Result<(), String> {
+    match &st.kind {
+        StmtKind::Let { name, init, .. } => {
+            par_collect_expr(init, reads, declared)?;
+            declared.insert(name.clone());
+            Ok(())
+        }
+        StmtKind::Assign { name, value } => {
+            if !declared.contains(name) {
+                reads.insert(name.clone());
+            }
+            par_collect_expr(value, reads, declared)
+        }
+        StmtKind::If { cond, then, els } => {
+            par_collect_expr(cond, reads, declared)?;
+            for s in then.iter().chain(els.iter()) {
+                par_collect_stmt(s, reads, declared)?;
+            }
+            Ok(())
+        }
+        StmtKind::While { cond, body } => {
+            par_collect_expr(cond, reads, declared)?;
+            for s in body {
+                par_collect_stmt(s, reads, declared)?;
+            }
+            Ok(())
+        }
+        StmtKind::For { var, start, end, body, par } => {
+            if *par {
+                return Err("nested par for is not supported".to_string());
+            }
+            par_collect_expr(start, reads, declared)?;
+            par_collect_expr(end, reads, declared)?;
+            declared.insert(var.clone());
+            for s in body {
+                par_collect_stmt(s, reads, declared)?;
+            }
+            Ok(())
+        }
+        StmtKind::Print { value, .. } => par_collect_expr(value, reads, declared),
+        StmtKind::ArrayLet { name, value, count, .. } => {
+            par_collect_expr(value, reads, declared)?;
+            par_collect_expr(count, reads, declared)?;
+            declared.insert(name.clone());
+            Ok(())
+        }
+        StmtKind::IndexAssign { name, index, value } => {
+            if !declared.contains(name) {
+                reads.insert(name.clone());
+            }
+            par_collect_expr(index, reads, declared)?;
+            par_collect_expr(value, reads, declared)
+        }
+        StmtKind::Expr(e) => par_collect_expr(e, reads, declared),
+        StmtKind::Assert { cond } => par_collect_expr(cond, reads, declared),
+        StmtKind::Return(_) => Err("par for body cannot return".to_string()),
+        StmtKind::Break | StmtKind::Continue => {
+            Err("break/continue inside par for is not supported".to_string())
+        }
+        StmtKind::Arena { .. } => Err("arena inside par for is not supported".to_string()),
+        other => Err(format!("par for body does not support this statement yet ({:?})", other)),
+    }
+}
+
+fn par_writes_scalar(st: &Stmt, name: &str) -> bool {
+    match &st.kind {
+        StmtKind::Assign { name: n, .. } => n == name,
+        StmtKind::If { then, els, .. } => {
+            then.iter().any(|s| par_writes_scalar(s, name))
+                || els.iter().any(|s| par_writes_scalar(s, name))
+        }
+        StmtKind::While { body, .. } | StmtKind::For { body, .. } | StmtKind::Arena { body } => {
+            body.iter().any(|s| par_writes_scalar(s, name))
+        }
+        _ => false,
+    }
 }
 
 fn stmt_has_continue(st: &Stmt) -> bool {
@@ -234,6 +395,11 @@ impl Builder {
             loops: Vec::new(),
             sret_var: None,
             sret_hint: None,
+            fname: String::new(),
+            par_counter: 0,
+            par_body: false,
+            byte_bool: Default::default(),
+            extra: Vec::new(),
             ret,
         }
     }
@@ -659,8 +825,13 @@ impl Builder {
                 })?;
                 let dst = self.value();
                 self.push(Instr::IndexLoad { dst, ptr_var, idx, elem });
-                self.vty[dst.0 as usize] = elem;
-                self.narrow[dst.0 as usize] = matches!(elem, Ty::I32 | Ty::U8 | Ty::Bool);
+                if self.byte_bool.contains(name) && elem == Ty::U8 {
+                    self.vty[dst.0 as usize] = Ty::Bool;
+                    self.vbool[dst.0 as usize] = true;
+                } else {
+                    self.vty[dst.0 as usize] = elem;
+                    self.narrow[dst.0 as usize] = matches!(elem, Ty::I32 | Ty::U8 | Ty::Bool);
+                }
                 Ok(dst)
             }
             ExprKind::Field { base, field } => {
@@ -1200,6 +1371,175 @@ impl Builder {
         Ok(())
     }
 
+    fn lower_par_for(
+        &mut self,
+        var: &str,
+        start: &Expr,
+        end: &Expr,
+        body: &[Stmt],
+        line: usize,
+    ) -> Result<(), String> {
+        let mut reads: std::collections::HashSet<String> = Default::default();
+        let mut declared: std::collections::HashSet<String> = Default::default();
+        for st in body {
+            par_collect_stmt(st, &mut reads, &mut declared)?;
+        }
+        reads.remove(var);
+        let mut caps: Vec<(String, Option<(Ty, LenRef)>)> = Vec::new();
+        let mut names: Vec<String> = reads.into_iter().collect();
+        names.sort();
+        for n in names {
+            if let Some((elem, len)) = self.arrays.get(&n).copied() {
+                caps.push((n, Some((elem, len))));
+            } else if self.vecs.contains_key(&n) {
+                return Err(format!("line {}: par for cannot capture vector `{}`", line, n));
+            } else if self.struct_vars.contains_key(&n) {
+                return Err(format!("line {}: par for cannot capture struct `{}`", line, n));
+            } else if self.vars.contains_key(&n) {
+                if body.iter().any(|s| par_writes_scalar(s, &n)) {
+                    return Err(format!(
+                        "line {}: par for cannot write captured scalar `{}` (use an array)",
+                        line, n
+                    ));
+                }
+                caps.push((n, None));
+            } else {
+                return Err(format!("line {}: par for uses unknown variable `{}`", line, n));
+            }
+        }
+        let sv = self.lower_expr(start)?;
+        let ev = self.lower_expr(end)?;
+        let total_slots: usize = caps
+            .iter()
+            .map(|(_, a)| if a.is_some() { 2 } else { 1 })
+            .sum();
+        let ctx_base = self.nvars;
+        self.nvars += total_slots;
+        let mut slot = 0usize;
+        for (name, arr) in &caps {
+            if let Some((_elem, len)) = arr {
+                let pv = *self.vars.get(name).unwrap();
+                let v = self.value();
+                self.push(Instr::LoadVar { dst: v, var: pv });
+                self.vty[v.0 as usize] = Ty::I64;
+                self.push(Instr::StoreVar { var: ctx_base + slot, src: v });
+                let lv = self.value();
+                match len {
+                    LenRef::Const(c) => self.push(Instr::Const { dst: lv, v: *c }),
+                    LenRef::Var(vv) => self.push(Instr::LoadVar { dst: lv, var: *vv }),
+                }
+                self.vty[lv.0 as usize] = Ty::I64;
+                self.push(Instr::StoreVar { var: ctx_base + slot + 1, src: lv });
+                slot += 2;
+            } else {
+                let vv = *self.vars.get(name).unwrap();
+                let v = self.value();
+                self.push(Instr::LoadVar { dst: v, var: vv });
+                self.push(Instr::StoreVar { var: ctx_base + slot, src: v });
+                slot += 1;
+            }
+        }
+        let mut cb = Builder::new(Ty::Void);
+        self.par_counter += 1;
+        let fname = format!("{}__par{}", self.fname, self.par_counter);
+        cb.fname = fname.clone();
+        cb.par_body = true;
+        cb.sigs = self.sigs.clone();
+        cb.struct_defs = self.struct_defs.clone();
+        cb.inlinable = self.inlinable.clone();
+        cb.nvars = 3;
+        for (i, nm) in ["#ctx", "#lo", "#hi"].iter().enumerate() {
+            cb.vars.insert(nm.to_string(), i);
+            cb.var_ty.insert(nm.to_string(), Ty::I64);
+        }
+        let mut slot = 0usize;
+        for (name, arr) in &caps {
+            if let Some((elem, _)) = arr {
+                let pv = cb.nvars;
+                cb.nvars += 1;
+                cb.push(Instr::LoadCtx { dst_var: pv, ctx_var: 0, off: -((slot * 8) as i64) });
+                let lv = cb.nvars;
+                cb.nvars += 1;
+                cb.push(Instr::LoadCtx { dst_var: lv, ctx_var: 0, off: -(((slot + 1) * 8) as i64) });
+                cb.vars.insert(name.clone(), pv);
+                cb.var_ty.insert(name.clone(), Ty::I64);
+                let byte_bool = *elem == Ty::Bool && self.byte_bool.contains(name);
+                if byte_bool {
+                    cb.byte_bool.insert(name.clone());
+                }
+                let elem_eff = if byte_bool { Ty::U8 } else { *elem };
+                cb.arrays.insert(name.clone(), (elem_eff, LenRef::Var(lv)));
+                slot += 2;
+            } else {
+                let v = cb.nvars;
+                cb.nvars += 1;
+                cb.push(Instr::LoadCtx { dst_var: v, ctx_var: 0, off: -((slot * 8) as i64) });
+                cb.vars.insert(name.clone(), v);
+                let ty = self.var_ty.get(name).copied().unwrap_or(Ty::I32);
+                cb.var_ty.insert(name.clone(), ty);
+                if ty == Ty::Bool {
+                    cb.var_bool.insert(name.clone(), true);
+                }
+                slot += 1;
+            }
+        }
+        let idx = cb.var(var);
+        let ity = self.var_ty.get(var).copied().unwrap_or(Ty::I32);
+        cb.var_ty.insert(var.to_string(), ity);
+        let lo = cb.value();
+        cb.push(Instr::LoadVar { dst: lo, var: 1 });
+        cb.vty[lo.0 as usize] = Ty::I64;
+        cb.push(Instr::StoreVar { var: idx, src: lo });
+        let head = cb.new_block();
+        let body_bb = cb.new_block();
+        let end_bb = cb.new_block();
+        cb.push(Instr::Jmp(head));
+        cb.cur = head;
+        let iv = cb.value();
+        cb.push(Instr::LoadVar { dst: iv, var: idx });
+        cb.vty[iv.0 as usize] = Ty::I32;
+        let hv = cb.value();
+        cb.push(Instr::LoadVar { dst: hv, var: 2 });
+        cb.vty[hv.0 as usize] = Ty::I64;
+        let cv = cb.value();
+        cb.push(Instr::Bin { dst: cv, op: Op::Lt, l: iv, r: hv });
+        cb.vty[cv.0 as usize] = Ty::Bool;
+        cb.vbool[cv.0 as usize] = true;
+        cb.push(Instr::Br { cond: cv, then_bb: body_bb, else_bb: end_bb });
+        cb.cur = body_bb;
+        for st in body {
+            cb.lower_stmt(st)?;
+        }
+        let lv2 = cb.value();
+        cb.push(Instr::LoadVar { dst: lv2, var: idx });
+        cb.vty[lv2.0 as usize] = Ty::I32;
+        let one = cb.value();
+        cb.push(Instr::Const { dst: one, v: 1 });
+        cb.vty[one.0 as usize] = Ty::I32;
+        let nv = cb.value();
+        cb.push(Instr::Bin { dst: nv, op: Op::Add, l: lv2, r: one });
+        cb.push(Instr::StoreVar { var: idx, src: nv });
+        cb.push(Instr::Jmp(head));
+        cb.cur = end_bb;
+        cb.push(Instr::Ret(None));
+        let mut bf = cb.finish();
+        bf.name = fname.clone();
+        bf.nparams = 3;
+        self.extra.push(bf);
+        let fnaddr = self.value();
+        self.push(Instr::FuncAddr { dst: fnaddr, name: fname });
+        self.vty[fnaddr.0 as usize] = Ty::I64;
+        let ctxaddr = self.value();
+        self.push(Instr::AddrVar { dst: ctxaddr, var_index: ctx_base, slots: total_slots });
+        self.vty[ctxaddr.0 as usize] = Ty::I64;
+        self.push(Instr::Call {
+            dst: None,
+            name: ".Lpar_for".to_string(),
+            args: vec![fnaddr, ctxaddr, sv, ev],
+        });
+        Ok(())
+    }
+
     fn lower_stmt(&mut self, s: &Stmt) -> Result<(), String> {
         match &s.kind {
             StmtKind::VecLet { name, elem } => {
@@ -1299,10 +1639,12 @@ impl Builder {
             StmtKind::ArrayLet { name, elem, value, count } => {
                 let lenv = self.lower_expr(count)?;
                 let ptr_var = self.var(name);
-                let esz = crate::ty_size(*elem, &self.struct_defs);
+                let byte_bool = *elem == Ty::Bool && self.byte_bool.contains(name);
+                let elem_eff = if byte_bool { Ty::U8 } else { *elem };
+                let esz = if byte_bool { 1 } else { crate::ty_size(*elem, &self.struct_defs) };
                 self.push(Instr::Alloc {
                     ptr_var,
-                    elem: *elem,
+                    elem: elem_eff,
                     esz,
                     len: lenv,
                     arena: self.arena_depth > 0,
@@ -1311,7 +1653,7 @@ impl Builder {
                 self.nvars += 1;
                 self.push(Instr::StoreVar { var: len_var, src: lenv });
                 let len_ref = LenRef::Var(len_var);
-                self.arrays.insert(name.clone(), (*elem, len_ref));
+                self.arrays.insert(name.clone(), (elem_eff, len_ref));
                 let zero = is_zero_expr(value);
                 if !zero {
                     if let Ty::Struct(id) = *elem {
@@ -1408,7 +1750,7 @@ impl Builder {
                     let init = self.lower_expr(value)?;
                     self.push(Instr::Fill {
                         ptr_var,
-                        elem: *elem,
+                        elem: elem_eff,
                         esz,
                         len: lenv,
                         value: init,
@@ -1516,19 +1858,30 @@ impl Builder {
                     let idx = self.lower_expr(index)?;
                     self.push(Instr::BoundsCheck { idx, len: LenRef::Var(len_var), line: s.line });
                     let src = self.lower_expr(value)?;
-                    self.push(Instr::IndexStore { ptr_var, idx, elem, src });
+                    if self.par_body && elem == Ty::Bool {
+                        self.push(Instr::IndexStoreBoolAtomic { ptr_var, idx, src });
+                    } else {
+                        self.push(Instr::IndexStore { ptr_var, idx, elem, src });
+                    }
                     return Ok(());
                 }
-                let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
-                    format!("line {}: IR: unknown array `{}`", s.line, name)
-                })?;
+                let (elem, len) = match self.arrays.get(name) {
+                    Some(x) => *x,
+                    None => {
+                        return Err(format!("line {}: IR: unknown array `{}`", s.line, name));
+                    }
+                };
                 let idx = self.lower_expr(index)?;
                 self.push(Instr::BoundsCheck { idx, len, line: s.line });
                 let src = self.lower_expr(value)?;
                 let ptr_var = *self.vars.get(name).ok_or_else(|| {
                     format!("line {}: IR: unknown array `{}`", s.line, name)
                 })?;
-                self.push(Instr::IndexStore { ptr_var, idx, elem, src });
+                if self.par_body && elem == Ty::Bool {
+                    self.push(Instr::IndexStoreBoolAtomic { ptr_var, idx, src });
+                } else {
+                    self.push(Instr::IndexStore { ptr_var, idx, elem, src });
+                }
             }
             StmtKind::Print { value, ty } => {
                 let v = self.lower_expr(value)?;
@@ -1564,6 +1917,29 @@ impl Builder {
             }
             StmtKind::Expr(e) => {
                 if let ExprKind::Call { name, args } = &e.kind {
+                    if name == "print" && args.len() == 1 {
+                        let v = self.lower_expr(&args[0])?;
+                        let boolean = self.vbool[v.0 as usize];
+                        let vt = self.vty[v.0 as usize];
+                        self.push(Instr::Print {
+                            v,
+                            boolean,
+                            float: vt == Ty::F64,
+                            string: vt == Ty::Str,
+                        });
+                        return Ok(());
+                    }
+                    if name == "print_prec" && args.len() == 2 {
+                        let v = self.lower_expr(&args[0])?;
+                        let prec = self.lower_expr(&args[1])?;
+                        self.push(Instr::PrintPrec { v, prec });
+                        return Ok(());
+                    }
+                    if name == "assert" && args.len() == 1 {
+                        let c = self.lower_expr(&args[0])?;
+                        self.push(Instr::Assert { cond: c, line: e.line });
+                        return Ok(());
+                    }
                     if name == "reserve" && args.len() == 2 {
                         if let ExprKind::Var(vname) = &args[0].kind {
                             if let Some((_, ptr_var, len_var, cap_var, esz)) =
@@ -1626,7 +2002,9 @@ impl Builder {
                 self.cur = end_bb;
             }
             StmtKind::For { var, start, end, body, par } => {
-                let _ = par;
+                if *par {
+                    return self.lower_par_for(var, start, end, body, s.line);
+                }
                 let sv = self.lower_expr(start)?;
                 let idx = self.var(var);
                 self.push(Instr::StoreVar { var: idx, src: sv });
@@ -1751,9 +2129,13 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
         }
     }
     let mut funcs = Vec::new();
+    let mut extras = Vec::new();
     for f in &prog.funcs {
-        funcs.push(lower_func(f, &sigs, &prog.structs, &inlinable)?);
+        let (ir, mut ex) = lower_func(f, &sigs, &prog.structs, &inlinable)?;
+        funcs.push(ir);
+        extras.append(&mut ex);
     }
+    funcs.append(&mut extras);
     Ok(IrProgram { funcs })
 }
 
@@ -1762,8 +2144,10 @@ fn lower_func(
     sigs: &HashMap<String, Ty>,
     structs: &[StructDef],
     inlinable: &HashMap<String, (Vec<String>, Expr)>,
-) -> Result<IrFunc, String> {
+) -> Result<(IrFunc, Vec<IrFunc>), String> {
     let mut b = Builder::new(f.ret);
+    b.fname = f.name.clone();
+    collect_par_array_names(&f.body, &mut b.byte_bool);
     b.sigs = sigs.clone();
     b.struct_defs = structs.to_vec();
     b.inlinable = inlinable.clone();
@@ -1865,12 +2249,13 @@ fn lower_func(
             }
         }
     }
+    let extras = std::mem::take(&mut b.extra);
     let mut out = b.finish();
     out.name = f.name.clone();
     out.nparams = nparams;
     out.argc_var = argc_var;
     out.argv_var = argv_var;
-    Ok(out)
+    Ok((out, extras))
 }
 
 fn compute_value_consts(f: &IrFunc, var_consts: &HashMap<usize, i64>) -> HashMap<Value, i64> {
@@ -2503,6 +2888,12 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
         | Instr::LoadPtr { .. }
         | Instr::StorePtr { .. } => {}
         Instr::CopySlotsTo { src, .. } => uses.push(*src),
+        Instr::LoadCtx { .. } => {}
+        Instr::FuncAddr { dst, .. } => defs.push(*dst),
+        Instr::IndexStoreBoolAtomic { idx, src, .. } => {
+            uses.push(*idx);
+            uses.push(*src);
+        }
         Instr::Select { dst, cond, a, b, .. } => {
             uses.push(*cond);
             uses.push(*a);
@@ -2578,11 +2969,15 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::StructInit { .. }
                 | Instr::AddrVar { .. }
         | Instr::Select { .. }
+        | Instr::FuncAddr { .. }
                 | Instr::CopySlots { .. }
                 | Instr::StoreVec { .. }
                 | Instr::LoadPtr { .. }
                 | Instr::StorePtr { .. }
                 | Instr::CopySlotsTo { .. }
+                | Instr::LoadCtx { .. }
+                | Instr::FuncAddr { .. }
+                | Instr::IndexStoreBoolAtomic { .. }
         | Instr::AddrVar { .. }
                 | Instr::VecNew { .. }
                 | Instr::VecReserve { .. }
@@ -2929,7 +3324,10 @@ fn emit_fast_block(
             | Instr::StoreVec { .. }
             | Instr::LoadPtr { .. }
             | Instr::StorePtr { .. }
-            | Instr::CopySlotsTo { .. } => {}
+            | Instr::CopySlotsTo { .. }
+            | Instr::LoadCtx { .. }
+            | Instr::FuncAddr { .. }
+            | Instr::IndexStoreBoolAtomic { .. } => {}
             Instr::Select { dst, cond, a, b, float } => {
                 let c = ra.operand(*cond);
                 if *float {
@@ -3903,6 +4301,11 @@ fn rewrite_operands(ins: &mut Instr, f: &dyn Fn(Value) -> Value) {
         | Instr::LoadPtr { .. }
         | Instr::StorePtr { .. } => {}
         Instr::CopySlotsTo { src, .. } => rw(src),
+        Instr::LoadCtx { .. } | Instr::FuncAddr { .. } => {}
+        Instr::IndexStoreBoolAtomic { idx, src, .. } => {
+            rw(idx);
+            rw(src);
+        }
         Instr::Select { cond, a, b, .. } => {
             rw(cond);
             rw(a);
@@ -4917,6 +5320,21 @@ pub fn emit(prog: &IrProgram) -> String {
             for ins in &b.instrs {
                 let ld = |v: Value| format!("    mov -{}(%rbp), %rax\n", voff(f, v));
                 match ins {
+                    Instr::IndexStoreBoolAtomic { ptr_var, idx, src } => {
+                        out.push_str(&format!("    mov -{}(%rbp), %rax\n", voff(f, *idx)));
+                        out.push_str(&format!("    mov -{}(%rbp), %rdx\n", voff(f, *src)));
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %r10\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        }
+                        out.push_str("    mov %rax, %r11\n    shr $6, %r11\n");
+                        out.push_str("    and $63, %rax\n    mov %rax, %rcx\n");
+                        out.push_str("    mov $1, %rsi\n    shl %cl, %rsi\n");
+                        out.push_str("    test %rdx, %rdx\n    je 2f\n");
+                        out.push_str("    lock or %rsi, (%r10,%r11,8)\n    jmp 3f\n");
+                        out.push_str("2:\n    not %rsi\n    lock and %rsi, (%r10,%r11,8)\n3:\n");
+                    }
                     Instr::Select { dst, cond, a, b, float } => {
                         if *float {
                             out.push_str(&format!("    movsd -{}(%rbp), %xmm0\n", voff(f, *a)));
@@ -4933,6 +5351,23 @@ pub fn emit(prog: &IrProgram) -> String {
                             out.push_str("    cmovne %rax, %rdx\n");
                             out.push_str(&format!("    mov %rdx, -{}(%rbp)\n", voff(f, *dst)));
                         }
+                    }
+                    Instr::LoadCtx { dst_var, ctx_var, off } => {
+                        if let Some(reg) = var_regs.get(ctx_var) {
+                            out.push_str(&format!("    mov {}, %rax\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*ctx_var)));
+                        }
+                        out.push_str(&format!("    mov {}(%rax), %rdx\n", off));
+                        if let Some(reg) = var_regs.get(dst_var) {
+                            out.push_str(&format!("    mov %rdx, {}\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov %rdx, -{}(%rbp)\n", varoff(*dst_var)));
+                        }
+                    }
+                    Instr::FuncAddr { dst, name } => {
+                        out.push_str(&format!("    lea {}(%rip), %rax\n", name));
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
                     Instr::CopySlotsTo { dst_ptr_var, src, slots } => {
                         if let Some(reg) = var_regs.get(dst_ptr_var) {
@@ -5678,6 +6113,37 @@ pub fn emit(prog: &IrProgram) -> String {
         out.push_str(&format!("    call {}@PLT\n", lib));
         out.push_str("    add $8, %rsp\n    pop %r12\n    pop %rbx\n    ret\n");
     }
+    // Parallel-for runtime: fixed fan-out of four pthreads (main thread takes
+    // the first chunk). Each worker calls the generated body function with
+    // (ctx, lo, hi).
+    out.push_str(".p2align 4\n.Lpar_worker:\n");
+    out.push_str("    mov %rdi, %rax\n    mov 0(%rax), %r11\n    mov 8(%rax), %rdi\n");
+    out.push_str("    mov 16(%rax), %rsi\n    mov 24(%rax), %rdx\n");
+    out.push_str("    sub $8, %rsp\n    call *%r11\n    add $8, %rsp\n    ret\n");
+    out.push_str(".p2align 4\n.Lpar_for:\n");
+    out.push_str("    push %rbp\n    mov %rsp, %rbp\n    push %rbx\n    push %r12\n");
+    out.push_str("    push %r13\n    push %r14\n    push %r15\n    sub $216, %rsp\n");
+    out.push_str("    mov %rdi, %r12\n    mov %rsi, %r13\n    mov %rdx, %r14\n    mov %rcx, %r15\n");
+    out.push_str("    sub %rdx, %rcx\n    jle .Lpar_done\n    mov %rcx, 200(%rsp)\n");
+    out.push_str("    mov $4, %rdx\n    cmp $4, %rcx\n    jge 1f\n    mov %rcx, %rdx\n");
+    out.push_str("1:\n    mov %rdx, 208(%rsp)\n    lea -1(%rdx), %rax\n");
+    out.push_str("    add 200(%rsp), %rax\n    xor %edx, %edx\n    divq 208(%rsp)\n");
+    out.push_str("    mov %rax, 192(%rsp)\n    xor %ebx, %ebx\n");
+    out.push_str(".Lpar_loop:\n    cmp 208(%rsp), %rbx\n    jge .Lpar_join_setup\n");
+    out.push_str("    mov %rbx, %rax\n    imulq 192(%rsp), %rax\n    add %r14, %rax\n");
+    out.push_str("    mov 192(%rsp), %rdx\n    add %rax, %rdx\n    cmp %r15, %rdx\n");
+    out.push_str("    jbe 2f\n    mov %r15, %rdx\n2:\n    cmp %rdx, %rax\n    jge .Lpar_next\n");
+    out.push_str("    mov %rbx, %r10\n    shl $5, %r10\n    lea (%rsp,%r10), %r11\n");
+    out.push_str("    mov %r12, 0(%r11)\n    mov %r13, 8(%r11)\n    mov %rax, 16(%r11)\n");
+    out.push_str("    mov %rdx, 24(%r11)\n    lea 128(%rsp,%rbx,8), %rdi\n    xor %esi, %esi\n");
+    out.push_str("    lea .Lpar_worker(%rip), %rdx\n    mov %r11, %rcx\n    call pthread_create@PLT\n");
+    out.push_str(".Lpar_next:\n    inc %rbx\n    jmp .Lpar_loop\n");
+    out.push_str(".Lpar_join_setup:\n    xor %ebx, %ebx\n.Lpar_join:\n");
+    out.push_str("    cmp 208(%rsp), %rbx\n    jge .Lpar_done\n");
+    out.push_str("    mov 128(%rsp,%rbx,8), %rdi\n    xor %esi, %esi\n    call pthread_join@PLT\n");
+    out.push_str("    inc %rbx\n    jmp .Lpar_join\n.Lpar_done:\n");
+    out.push_str("    add $216, %rsp\n    pop %r15\n    pop %r14\n    pop %r13\n    pop %r12\n");
+    out.push_str("    pop %rbx\n    leave\n    ret\n");
     // Network helpers mirroring the native backend's inline sequences.
     out.push_str(".p2align 4\n.Lmf_flush:\n    xor %edi, %edi\n    jmp fflush@PLT\n");
     out.push_str(".p2align 4\n.Lmf_env:\n    jmp getenv@PLT\n");

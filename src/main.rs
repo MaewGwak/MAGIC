@@ -203,11 +203,12 @@ fn run() -> Result<(), String> {
                 .or_else(find_cc)
                 .ok_or("no C compiler found (tried $CC, gcc, clang, cc)")?;
             let flags = format!(
-                "v2|{}|{:x}|{}{}-nou|{}",
+                "v3|{}|{:x}|{}{}-nou|{}|{}",
                 env!("CARGO_PKG_VERSION"),
                 fnv64(source.as_bytes()),
                 if dev { "O0" } else { "O3" },
                 if native { "-native" } else { "" },
+                compiler_hash(),
                 cc
             );
             let stamp = dir.join(format!("{}.flags", stem));
@@ -457,6 +458,13 @@ fn cc_command(cc: &str) -> Command {
     cmd
 }
 
+fn compiler_hash() -> String {
+    std::env::current_exe()
+        .ok()
+        .map(|p| fnv_file(&p))
+        .unwrap_or_default()
+}
+
 fn build_native(
     src_path: &Path,
     source: &str,
@@ -488,13 +496,14 @@ fn build_native(
             .unwrap_or_else(|| "out".to_string())
     };
     let flags = format!(
-        "v1|{}|{:x}|{}|{}|{}|{}",
+        "v2|{}|{:x}|{}|{}|{}|{}|{}",
         env!("CARGO_PKG_VERSION"),
         fnv64(source.as_bytes()),
         if use_ir { "ir" } else { "native" },
         env::var("AS").unwrap_or_default(),
         env::var("LD").unwrap_or_default(),
-        env::var("MAGIC_CRT_DIR").unwrap_or_default()
+        env::var("MAGIC_CRT_DIR").unwrap_or_default(),
+        compiler_hash()
     );
     let stamp = dir.join(format!("{}.flags", stem));
     let stamp_text = fs::read_to_string(&stamp).unwrap_or_default();
@@ -582,6 +591,7 @@ fn build_native(
         link.arg(c);
     }
     link.arg("-lc")
+        .arg("-lpthread")
         .arg("-dynamic-linker")
         .arg(&ldso);
     for d in &dirs {
