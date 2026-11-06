@@ -99,3 +99,5 @@
 /bench-db/hashmap_magic_fast.c
 /bench-db/sqlscan_magic_fast
 /bench-db/sqlscan_magic_fast.c
+
+examples_ir/
