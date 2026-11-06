@@ -76,11 +76,12 @@ cargo test
 
 ```powershell
 magicc check examples\hello.magic --report   # type check + memory bound
-magicc emit  examples\hello.magic            # print generated C
-magicc build examples\hello.magic            # write hello.c, compile
+magicc emit  examples\hello.magic            # print generated assembly
+magicc build examples\hello.magic            # native IR backend (default, no C compiler)
 magicc run   examples\fib.magic              # build and run
-magicc build big.magic --native              # -march=native (not portable)
-magicc build big.magic --dev                 # -O0 for fast iteration
+magicc build big.magic --fast                # C backend, -O3 -march=native (speed path)
+magicc build big.magic --native              # C backend + -march=native
+magicc build big.magic --dev                 # C backend at -O0 for fast iteration
 magicc build big.magic --backend c --cc "zig cc"  # C path: pick the compiler (may carry arguments)
 magicc build big.magic --unroll              # unroll small constant for-loops (clang/zig)
 magicc build main.magic lib.magic             # several files compile as one program, in order
@@ -178,6 +179,10 @@ Source files: C `bench-suite/*_c.c` (bt: `bench-bt/bt_c.c`), C++ `bench-suite/*_
 `bench-suite/*_rs.rs` (bt: `bench-bt/bt_rust_flat.rs`), MAGIC `bench-suite/*_magic*.magic` and
 `bench-bt/bt_magic_loop.magic`. `bench-parity-gate.sh` builds and checks exact output tails; see
 BENCHMARKS for the full method and fairness caveats.
+
+For the speed path, `--fast` selects the explicit C backend with `-O3 -march=native` and prefers
+clang when available. It needs a C compiler and is not the native/no-C path; measured on n-body it
+is ~196–201 ms with clang vs 613 ms native (and ~326 ms with gcc).
 
 **This is not a best-of claim.** A separate independent best-of suite (`bench-best/RESULTS.md`)
 shows no overall winner: best Rust wins fannkuch, best C/C++ wins raytrace, and most other workloads

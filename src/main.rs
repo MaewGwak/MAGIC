@@ -22,10 +22,11 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let mut args: Vec<String> = env::args().collect();
-    let native = args.iter().any(|a| a == "--native");
+    let mut native = args.iter().any(|a| a == "--native");
+    let fast = args.iter().any(|a| a == "--fast");
     let report_bound = args.iter().any(|a| a == "--report");
     let dev = args.iter().any(|a| a == "--dev");
-    args.retain(|a| a != "--native" && a != "--report" && a != "--dev");
+    args.retain(|a| a != "--native" && a != "--fast" && a != "--report" && a != "--dev");
     let mut cc_override: Option<String> = None;
     let unroll = args.iter().any(|a| a == "--unroll");
     args.retain(|a| a != "--unroll");
@@ -39,6 +40,7 @@ fn run() -> Result<(), String> {
     let static_link = args.iter().any(|a| a == "--static");
     args.retain(|a| a != "--static");
     let mut backend = "ir".to_string();
+    let backend_explicit = args.iter().any(|a| a == "--backend");
     if let Some(pos) = args.iter().position(|a| a == "--backend") {
         if pos + 1 >= args.len() {
             return Err("--backend needs a value: c, native or ir".to_string());
@@ -48,6 +50,22 @@ fn run() -> Result<(), String> {
     }
     if backend != "c" && backend != "native" && backend != "ir" {
         return Err(format!("unknown backend `{}` (use c, native or ir)", backend));
+    }
+    if fast {
+        if static_link {
+            return Err("--fast cannot be combined with --static (use the native IR path)".to_string());
+        }
+        if backend_explicit && backend != "c" {
+            return Err("--fast selects the C backend; drop the conflicting --backend".to_string());
+        }
+        if dev {
+            return Err("--fast and --dev are contradictory".to_string());
+        }
+        backend = "c".to_string();
+        native = true;
+        if cc_override.is_none() {
+            cc_override = find_fast_cc();
+        }
     }
     if static_link && backend != "ir" {
         return Err("--static requires the ir backend".to_string());
@@ -92,7 +110,8 @@ fn run() -> Result<(), String> {
              \x20 build   build a native executable (default IR backend, as+ld)\n\
              \x20 run     build, then run\n\n\
              \x20 --backend c|native|ir   code generator (default ir; c emits C11)\n\
-             \x20 --native  add -march=native to gcc (C backend only)\n\
+             \x20 --native  add -march=native to the C compiler (C backend only)\n\
+             \x20 --fast    C backend at -O3 -march=native (recommended for speed)\n\
              \x20 --report  print the static memory bound\n\
              \x20 --dev     compile at -O0 for fast iteration (C backend only)\n\
              \x20 --cc      C compiler command, may carry arguments (e.g. \"zig cc\")\n\
@@ -859,6 +878,15 @@ fn remap_c_panics(c: &str, files: &[(usize, String)]) -> String {
     }
     out.push_str(rest);
     out
+}
+
+fn find_fast_cc() -> Option<String> {
+    for name in ["clang", "gcc", "cc"] {
+        if Command::new(name).arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+            return Some(name.to_string());
+        }
+    }
+    None
 }
 
 fn find_cc() -> Option<String> {
