@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.16 — bit-packed `[bool]` arrays in the IR (2026-11-06)
+
+The IR now lowers `[bool]` arrays: allocation reserves `(len + 63) / 64` words, loads shift and mask
+the word, stores are a read-modify-write with the mask, and the fill loop initialises bits. Blocks
+that touch bool elements use the slot emitter because bit operations need scratch registers. The
+sieve example runs through `--backend ir` and prints 664579 in 145 ms (AST backend: 88 ms, C: 38 ms);
+making bool operations register-allocated is a future optimisation.
+
 ## v0.8.15 — affine bounds proofs in the IR (2026-11-06)
 
 Constant propagation over IR values and variables turns `let n = 384` and `n * n` into constants, so

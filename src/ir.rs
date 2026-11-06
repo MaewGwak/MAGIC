@@ -277,12 +277,6 @@ impl Builder {
                 self.var_bool.insert(name.clone(), is_bool);
             }
             StmtKind::ArrayLet { name, elem, value, count } => {
-                if *elem == Ty::Bool {
-                    return Err(format!(
-                        "line {}: IR: `[bool]` arrays are bit-packed; the IR does not support them yet",
-                        s.line
-                    ));
-                }
                 let lenv = self.lower_expr(count)?;
                 let ptr_var = self.var(name);
                 self.push(Instr::Alloc { ptr_var, elem: *elem, len: lenv });
@@ -964,6 +958,8 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::Alloc { .. }
                 | Instr::Print { .. }
                 | Instr::Bin { op: Op::Div | Op::Rem, .. }
+                | Instr::IndexLoad { elem: Ty::Bool, .. }
+                | Instr::IndexStore { elem: Ty::Bool, .. }
         )
     })
 }
@@ -1539,13 +1535,20 @@ pub fn emit(prog: &IrProgram) -> String {
                     }
                     Instr::Jmp(bb) => out.push_str(&format!("    jmp {}\n", lblock(*bb))),
                     Instr::Alloc { ptr_var, elem, len } => {
-                        let esz = match elem {
-                            Ty::U8 => 1,
-                            Ty::I32 => 4,
-                            _ => 8,
-                        };
                         out.push_str(&ld(*len));
+                        if *elem == Ty::Bool {
+                            out.push_str("    add $63, %rax\n    shr $6, %rax\n");
+                        }
                         out.push_str("    mov %rax, %rdi\n");
+                        let esz = if *elem == Ty::Bool {
+                            8
+                        } else {
+                            match elem {
+                                Ty::U8 => 1,
+                                Ty::I32 => 4,
+                                _ => 8,
+                            }
+                        };
                         out.push_str(&format!("    mov ${}, %esi\n", esz));
                         out.push_str("    call calloc@PLT\n");
                         if let Some(reg) = var_regs.get(ptr_var) {
@@ -1584,6 +1587,12 @@ pub fn emit(prog: &IrProgram) -> String {
                             Ty::I32 => {
                                 out.push_str("    movslq (%r10,%rax,4), %rax\n");
                             }
+                            Ty::Bool => {
+                                out.push_str("    mov %rax, %r11\n    shr $6, %r11\n");
+                                out.push_str("    and $63, %rax\n    mov %rax, %rcx\n");
+                                out.push_str("    mov (%r10,%r11,8), %rax\n");
+                                out.push_str("    shr %cl, %rax\n    and $1, %rax\n");
+                            }
                             _ => {
                                 out.push_str("    mov (%r10,%rax,8), %rax\n");
                             }
@@ -1602,6 +1611,17 @@ pub fn emit(prog: &IrProgram) -> String {
                         match elem {
                             Ty::U8 => out.push_str("    movb %cl, (%r10,%rax,1)\n"),
                             Ty::I32 => out.push_str("    movl %ecx, (%r10,%rax,4)\n"),
+                            Ty::Bool => {
+                                out.push_str("    mov %rcx, %rdx\n");
+                                out.push_str("    mov %rax, %r11\n    shr $6, %r11\n");
+                                out.push_str("    and $63, %rax\n    mov %rax, %rcx\n");
+                                out.push_str("    mov $1, %rsi\n    shl %cl, %rsi\n");
+                                out.push_str("    mov (%r10,%r11,8), %rax\n");
+                                out.push_str("    test %rdx, %rdx\n    je 2f\n");
+                                out.push_str("    or %rsi, %rax\n    jmp 3f\n");
+                                out.push_str("2:\n    not %rsi\n    and %rsi, %rax\n3:\n");
+                                out.push_str("    mov %rax, (%r10,%r11,8)\n");
+                            }
                             _ => out.push_str("    movq %rcx, (%r10,%rax,8)\n"),
                         }
                     }

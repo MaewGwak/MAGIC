@@ -82,7 +82,7 @@ fn ir_matches_c_on_small_integer_programs() {
         .iter()
         .map(|(n, s)| (n.to_string(), s.to_string()))
         .collect();
-    for ex in ["fib", "for", "sum", "array_param"] {
+    for ex in ["fib", "for", "sum", "array_param", "sieve"] {
         let src = std::fs::read_to_string(root.join(format!("examples/{ex}.magic"))).unwrap();
         corpus.push((format!("example_{ex}"), src));
     }
