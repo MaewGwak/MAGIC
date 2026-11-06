@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.11 (0.11.1)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.11 (0.11.2)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -175,7 +175,7 @@ Rust's 227 ms; the 613 ms figure is native IR.
 | particles 1M × 100 | 67 | 73 | 148 | **84** (2-step fusion) | **5** (closed) | **13.4x faster** |
 | n-body 10M | 315 | 310 | **227** | **613** (loop) | 613 (native) | 2.70x slower |
 | binary trees | 720 | — | 1329 | 4036 | **507** (native loop) | **1.42x faster** |
-| matmul 384 | 12 | 12 | 43 | **11** | 9 (i-k-j) | **1.33x faster** |
+| matmul 384 | 10 | 11 | 42 | **5** | 4 (i-k-j) | **2.50x faster** |
 
 Static builds peak below **C, C++ and Rust on all eight workloads**: sieve 11.9 MB vs C 96.9 / C++ 99.2 / Rust 97.1 (8.1x), fannkuch 0.4 vs 1.7/4.1/2.2, matmul 1.6 vs 3.4/5.6/3.7, hash 31.9 vs 33.6/35.6/33.8, binary trees 15.9 vs 17.6/—/17.9, n-body 0.4 vs 1.6/4.2/2.1, particles 30.4 vs 32.1/34.3/32.3 and raytrace 0.4 vs 1.6/4.2/2.1. Dynamic builds are at parity because both sides use plain arrays; the win comes from the freestanding static layout.
 Cold compilation of the 2,000-function source is 25 ms versus 47 ms for gcc, 109 ms for rustc and

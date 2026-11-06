@@ -1,3 +1,11 @@
+## v0.11.2 — AVX2 Saxpy with CPUID dispatch (2026-11-07)
+
+The guarded saxpy now has an AVX2 path selected at startup by CPUID/XGETBV, with the existing
+SSE2 path as fallback; default binaries remain portable. Matmul improved from 8–11 ms to 5 ms
+(default i-j-k) and 4 ms (i-k-j) in the official portable matrix (C 10, C++ 11). Against the
+optimized C baseline it is still a tie (5 vs 5; best 6), not the required win. No other workload
+moved. The strict 1.0.0 gate therefore remains unmet.
+
 ## v0.11.1 — optimized-baseline harness and gap table (2026-11-07)
 
 Added `bench-optimized.sh`: gcc/g++ -O3 -march=native and rustc -O -C target-cpu=native baselines

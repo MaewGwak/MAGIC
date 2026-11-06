@@ -112,7 +112,7 @@ MAGIC variant. Current result (Ryzen host, medians of 3):
 |---|---:|---:|---:|---:|---:|---:|
 | sieve | 397 | 397 | 396 | **361** | **37** | 1.10x faster |
 | fannkuch | 164 | 163 | **151** | 256 | **62** | 1.70x slower |
-| matmul | **6** | 6 | 25 | 8 | 9 | 1.33x slower |
+| matmul | **5** | 7 | 25 | 5 | 6 | 1.00x (tie) |
 | n-body | 325 | 330 | **224** | 573 | 615 (native) | 2.56x slower |
 | raytrace | 31 | **29** | 34 | 77 | **15** | 2.66x slower |
 | hash | **25** | 25 | 25 | 40 | **5** | 1.60x slower |

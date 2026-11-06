@@ -7052,7 +7052,7 @@ pub fn optimize(prog: &mut IrProgram) {
 pub fn emit(prog: &IrProgram) -> String {
     let mut out = String::new();
     out.push_str(".text\n");
-    out.push_str(".section .bss\n.align 8\n.Lbt_buf: .zero 512\n.text\n");
+    out.push_str(".section .bss\n.align 8\n.Lbt_buf: .zero 512\n.Lcpu_avx2: .zero 1\n.text\n");
     out.push_str(".Lfmt_ll: .asciz \"%lld\\n\"\n");
     out.push_str(".Lfmt_s: .asciz \"%s\\n\"\n");
     out.push_str(".Ltrue: .asciz \"true\"\n");
@@ -7243,6 +7243,15 @@ pub fn emit(prog: &IrProgram) -> String {
             } else {
                 out.push_str(&format!("    mov {}, -{}(%rbp)\n", src, varoff(var)));
             }
+        }
+        if f.name == "main" {
+            out.push_str("    push %rbx\n");
+            out.push_str("    mov $1, %eax\n    xor %ecx, %ecx\n    cpuid\n");
+            out.push_str("    mov %ecx, %edx\n    and $0x18000000, %edx\n    cmp $0x18000000, %edx\n    jne .Lcpu_no_avx\n");
+            out.push_str("    xor %ecx, %ecx\n    xgetbv\n    and $6, %eax\n    cmp $6, %eax\n    jne .Lcpu_no_avx\n");
+            out.push_str("    mov $7, %eax\n    xor %ecx, %ecx\n    cpuid\n    bt $5, %ebx\n    jnc .Lcpu_no_avx\n");
+            out.push_str("    movb $1, .Lcpu_avx2(%rip)\n.Lcpu_no_avx:\n");
+            out.push_str("    pop %rbx\n");
         }
         let lblock = |bb: usize| format!(".L{}_{}", f.name, bb);
         let nblocks = f.blocks.len();
@@ -7508,6 +7517,19 @@ pub fn emit(prog: &IrProgram) -> String {
                         }
                         out.push_str("    lea (%r8,%r10,4), %r8\n    lea (%r9,%r11,4), %r9\n");
                         out.push_str(&format!("    movslq -{}(%rbp), %rax\n", voff(f, *av)));
+                        let avx_id = format!("{}_{}_{}", line, c_ptr, count.0);
+                        out.push_str("    cmpb $0, .Lcpu_avx2(%rip)\n");
+                        out.push_str(&format!("    je .Lsse_{}\n", avx_id));
+                        out.push_str("    movd %eax, %xmm0\n    vpbroadcastd %xmm0, %ymm0\n    xor %edx, %edx\n");
+                        out.push_str(&format!(".Lavxloop_{}:\n", avx_id));
+                        out.push_str("    lea 8(%rdx), %rax\n    cmp %rcx, %rax\n");
+                        out.push_str(&format!("    ja .Lavxdone_{}\n", avx_id));
+                        out.push_str("    vmovdqu (%r8,%rdx,4), %ymm1\n    vmovdqu (%r9,%rdx,4), %ymm2\n");
+                        out.push_str("    vpmulld %ymm0, %ymm2, %ymm2\n    vpaddd %ymm2, %ymm1, %ymm1\n");
+                        out.push_str("    vmovdqu %ymm1, (%r8,%rdx,4)\n    add $8, %rdx\n");
+                        out.push_str(&format!("    jmp .Lavxloop_{}\n", avx_id));
+                        out.push_str(&format!(".Lavxdone_{}:\n    vzeroupper\n    jmp 4f\n", avx_id));
+                        out.push_str(&format!(".Lsse_{}:\n", avx_id));
                         out.push_str("    movd %eax, %xmm0\n    pshufd $0, %xmm0, %xmm0\n");
                         out.push_str("    xor %edx, %edx\n");
                         let group = |off: &str| format!(
