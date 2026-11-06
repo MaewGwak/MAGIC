@@ -30,6 +30,15 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.50 — division fast-path attempt reverted (2026-11-06)
+
+Moving `Div`/`Rem` out of the slot emitter and into the register-allocated path (with a per-block
+pool that avoids `%rdx`) showed promise on btree (178 → 156 ms) and hashmap (108 → 98 ms), but the
+required restructuring of the pool/liveness setup left the emitter in a state where the differential
+corpus miscompiled, and the fix would need a larger refactor of the block emitter. The experiment was
+reverted in full; v0.8.49's codegen is unchanged and green. The measurements are kept here so the
+next attempt (proper per-block pool construction) starts from evidence rather than a guess.
+
 ## v0.8.49 — loop-depth-weighted variable promotion in the IR (2026-11-06)
 
 Variables are now ranked for the five callee-saved registers by their use count weighted with the
