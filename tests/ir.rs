@@ -232,6 +232,24 @@ fn main() {
 "#,
         ),
         (
+            "i32_variable_traffic",
+            r#"
+fn main() {
+    var x: i32 = -7;
+    var y: i32 = 2147483647;
+    print(x); print(y);
+    y = y + 1; print(y);
+    x = x * -3; print(x);
+    var big: i64 = 5000000000;
+    print(big);
+    var a: [i32] = [0; 4];
+    var i: i32 = -1;
+    print(i + 2);
+    a[0] = i; print(a[0]);
+}
+"#,
+        ),
+        (
             "iv_mutated_before_access",
             r#"
 fn main() {

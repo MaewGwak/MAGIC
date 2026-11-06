@@ -30,6 +30,19 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.77 — four-byte i32 variables (2026-11-06)
+
+Named i32 variables are now stored as four bytes (`movl`) and loaded with a sign-extending
+`movslq`, instead of keeping a canonical 64-bit copy with a wrap instruction after every
+assignment. A new pass drops the `Trunc i32` node when the truncated value is consumed by exactly
+one store into an i32 variable: the low 32 bits of the 64-bit computation are already the wrapped
+value, so the store can write those four bytes and the load reconstructs the sign. Unnamed slots
+(array pointer/length and vector descriptors) are typed `i64` in the function metadata so they are
+never compressed by mistake. Medians: matmul 80 → 71 ms, hashmap 80 → 77 ms, btree 77 → 74 ms,
+sqlscan 18 → 17 ms, fannkuch buf ~193 → 165 ms; float benchmarks are unchanged. A differential case
+covers negative values, i32::MAX wrap, mixed i64 and array stores. All gates pass, 168 tests, repo
+parity 60/60.
+
 ## v0.8.76 — bounds-check elimination restored, audited and hardened (2026-11-06)
 
 Since the i32 wrap fix every arithmetic op is followed by a `Trunc`, which made the bounds prover

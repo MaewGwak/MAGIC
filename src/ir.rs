@@ -2070,7 +2070,9 @@ impl Builder {
             name: String::new(),
             vty: self.vty.clone(),
             var_ty: {
-                let mut out = vec![Ty::I32; self.nvars];
+                // Unnamed slots hold pointers/lengths (array and vector
+                // descriptors); only named scalars carry an explicit type.
+                let mut out = vec![Ty::I64; self.nvars];
                 for (name, var) in &self.vars {
                     if let Some(ty) = self.var_ty.get(name) {
                         out[*var] = *ty;
@@ -3544,8 +3546,23 @@ fn emit_fast_block(
                     ra.xdef_store(*dst, d);
                 } else {
                     let d = ra.dst(*dst);
+                    let i32v = f.var_ty.get(*var).copied() == Some(Ty::I32);
                     if let Some(reg) = var_regs.get(var) {
-                        ra.out.push_str(&format!("    mov {}, {}\n", reg, POOL[d].0));
+                        if i32v {
+                            ra.out.push_str(&format!(
+                                "    movslq {}, {}\n",
+                                reg32_name(reg),
+                                POOL[d].0
+                            ));
+                        } else {
+                            ra.out.push_str(&format!("    mov {}, {}\n", reg, POOL[d].0));
+                        }
+                    } else if i32v {
+                        ra.out.push_str(&format!(
+                            "    movslq -{}(%rbp), {}\n",
+                            varoff(*var),
+                            POOL[d].0
+                        ));
                     } else {
                         ra.out.push_str(&format!(
                             "    mov -{}(%rbp), {}\n",
@@ -3566,8 +3583,23 @@ fn emit_fast_block(
                     }
                 } else {
                     let a = ra.operand(*src);
+                    let i32v = f.var_ty.get(*var).copied() == Some(Ty::I32);
                     if let Some(reg) = var_regs.get(var) {
-                        ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, reg));
+                        if i32v {
+                            ra.out.push_str(&format!(
+                                "    movl {}, {}\n",
+                                POOL[a].1,
+                                reg32_name(reg)
+                            ));
+                        } else {
+                            ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, reg));
+                        }
+                    } else if i32v {
+                        ra.out.push_str(&format!(
+                            "    movl {}, -{}(%rbp)\n",
+                            POOL[a].1,
+                            varoff(*var)
+                        ));
                     } else {
                         ra.out.push_str(&format!(
                             "    mov {}, -{}(%rbp)\n",
@@ -4974,6 +5006,95 @@ fn remove_redundant_truncations(prog: &mut IrProgram) {
     }
 }
 
+fn reg32_name(reg: &str) -> &'static str {
+    match reg {
+        "%rbx" => "%ebx",
+        "%r12" => "%r12d",
+        "%r13" => "%r13d",
+        "%r14" => "%r14d",
+        "%r15" => "%r15d",
+        "%rdx" => "%edx",
+        "%rsi" => "%esi",
+        "%rdi" => "%edi",
+        "%r8" => "%r8d",
+        "%r9" => "%r9d",
+        "%r11" => "%r11d",
+        _ => "%eax",
+    }
+}
+
+/// Store i32 variables as four bytes and drop the explicit wrap when the
+/// truncated value is only consumed by such a store: the low 32 bits of the
+/// 64-bit computation are exactly the wrapped i32 value, and every load
+/// sign-extends the four-byte slot again.
+fn compress_i32_variable_traffic(prog: &mut IrProgram) {
+    for f in &mut prog.funcs {
+        let mut uses: HashMap<Value, usize> = HashMap::new();
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                let mut u = Vec::new();
+                let mut d = Vec::new();
+                instr_uses_defs(ins, &mut u, &mut d);
+                for v in u {
+                    *uses.entry(v).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut subst: HashMap<Value, Value> = HashMap::new();
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                if let Instr::Trunc { dst, ty: Ty::I32, a } = ins {
+                    if uses.get(dst).copied().unwrap_or(0) != 1 {
+                        continue;
+                    }
+                    let mut is_i32_store = false;
+                    for b2 in &f.blocks {
+                        for i2 in &b2.instrs {
+                            if let Instr::StoreVar { var, src } = i2 {
+                                if src == dst
+                                    && f.var_ty.get(*var).copied() == Some(Ty::I32)
+                                {
+                                    is_i32_store = true;
+                                }
+                            }
+                        }
+                    }
+                    if is_i32_store {
+                        subst.insert(*dst, *a);
+                    }
+                }
+            }
+        }
+        if subst.is_empty() {
+            continue;
+        }
+        let resolve = |v: Value, subst: &HashMap<Value, Value>| -> Value {
+            let mut cur = v;
+            loop {
+                match subst.get(&cur) {
+                    Some(n) => cur = *n,
+                    None => break,
+                }
+            }
+            cur
+        };
+        for b in f.blocks.iter_mut() {
+            let old = std::mem::take(&mut b.instrs);
+            let mut out = Vec::new();
+            for mut ins in old {
+                if let Instr::Trunc { dst, ty: Ty::I32, .. } = &ins {
+                    if subst.contains_key(dst) {
+                        continue;
+                    }
+                }
+                rewrite_operands(&mut ins, &|v| resolve(v, &subst));
+                out.push(ins);
+            }
+            b.instrs = out;
+        }
+    }
+}
+
 fn resolve_constant_lengths(prog: &mut IrProgram) {
     for f in &mut prog.funcs {
         let mut var_consts: HashMap<usize, i64> = HashMap::new();
@@ -5154,6 +5275,7 @@ pub fn optimize(prog: &mut IrProgram) {
     remove_redundant_truncations(prog);
     narrow_index_chains(prog);
     cse_blocks(prog);
+    compress_i32_variable_traffic(prog);
 }
 
 pub fn emit(prog: &IrProgram) -> String {
@@ -5555,8 +5677,21 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
                     Instr::LoadVar { dst, var } => {
+                        let i32v = f.var_ty.get(*var).copied() == Some(Ty::I32);
                         if let Some(reg) = var_regs.get(var) {
-                            out.push_str(&format!("    mov {}, %rax\n", reg));
+                            if i32v {
+                                out.push_str(&format!(
+                                    "    movslq {}, %rax\n",
+                                    reg32_name(reg)
+                                ));
+                            } else {
+                                out.push_str(&format!("    mov {}, %rax\n", reg));
+                            }
+                        } else if i32v {
+                            out.push_str(&format!(
+                                "    movslq -{}(%rbp), %rax\n",
+                                varoff(*var)
+                            ));
                         } else {
                             out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*var)));
                         }
@@ -5564,8 +5699,18 @@ pub fn emit(prog: &IrProgram) -> String {
                     }
                     Instr::StoreVar { var, src } => {
                         out.push_str(&ld(*src));
+                        let i32v = f.var_ty.get(*var).copied() == Some(Ty::I32);
                         if let Some(reg) = var_regs.get(var) {
-                            out.push_str(&format!("    mov %rax, {}\n", reg));
+                            if i32v {
+                                out.push_str(&format!(
+                                    "    movl %eax, {}\n",
+                                    reg32_name(reg)
+                                ));
+                            } else {
+                                out.push_str(&format!("    mov %rax, {}\n", reg));
+                            }
+                        } else if i32v {
+                            out.push_str(&format!("    movl %eax, -{}(%rbp)\n", varoff(*var)));
                         } else {
                             out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*var)));
                         }
