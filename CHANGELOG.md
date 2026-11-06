@@ -30,6 +30,15 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.97 — scoping/constant regressions closed (2026-11-06)
+
+Two regressions from the scoping work, found by a third audit: mutable `var` initialisers were
+recorded as immutable constants (so `n=5` after `var n=3` still unrolled/vectorised with 3), and the
+fully-unrolled `for` path returned before popping its Binds snapshot, leaking a shadowed binding
+into the enclosing block. Mutable declarations are no longer added to the constant map, assignments
+invalidate it, and the unrolled path restores its scope. Repro u3,t1,t2,t3,u2 now match C; all 12
+earlier audit cases still match. Matmul i-k-j remains ~11 ms. All gates pass, 168 tests, parity 60/60.
+
 ## v0.8.96 — guarded saxpy re-enabled after scoping fix (2026-11-06)
 
 `for` bodies (fresh loop variable) and `arena` bodies now get the same binding snapshot/restore as

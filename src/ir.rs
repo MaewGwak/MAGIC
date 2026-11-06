@@ -2432,6 +2432,7 @@ impl Builder {
                             self.subst_consts.pop();
                             self.subst_stack.pop();
                         }
+                        if let Some(b) = self.scopes.pop() { self.restore_binds(b); }
                         return Ok(());
                     }
                 }
@@ -2493,8 +2494,10 @@ impl Builder {
                 ))
             }
         }
-        if let StmtKind::Let { name, init, .. } = &s.kind {
-            if self.seen_lets.contains(name) {
+        if let StmtKind::Let { name, init, mutable, .. } = &s.kind {
+            if *mutable {
+                self.ast_consts.remove(name);
+            } else if self.seen_lets.contains(name) {
                 // A shadowing declaration must not change the outer constant.
                 self.ast_consts.remove(name);
             } else {
@@ -2526,6 +2529,7 @@ impl Builder {
             }
         }
         if let StmtKind::Assign { name, value } = &s.kind {
+            self.ast_consts.remove(name);
             if let Some(v) = self.vars.get(name).copied() {
                 match self.const_eval(value) {
                     Some(c) => {
