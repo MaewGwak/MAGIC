@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.10 (0.10.10)** — 169 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.10 (0.10.11)** — 170 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -172,12 +172,14 @@ shipped for that workload and is always named.
 | binary trees | 720 | — | 1329 | 4036 | **507** (native loop) | **win** |
 | matmul 384 | 12 | 12 | 43 | **11** | 9 (i-k-j) | **win** |
 
-Static builds have lower peak RSS than C on **all eight** workloads: sieve 11.9 vs 97.1 MB (8.1x), fannkuch 0.4 vs 1.6, matmul 1.6 vs 3.1, hash 32.0 vs 33.5, binary trees 16.0 vs 17.5, n-body 0.4 vs 1.6, particles 30.5 vs 32.2 and raytrace 0.4 vs 1.6.
+Static builds peak below **C, C++ and Rust on all eight workloads**: sieve 11.9 MB vs C 96.9 / C++ 99.2 / Rust 97.1 (8.1x), fannkuch 0.4 vs 1.7/4.1/2.2, matmul 1.6 vs 3.4/5.6/3.7, hash 31.9 vs 33.6/35.6/33.8, binary trees 15.9 vs 17.6/—/17.9, n-body 0.4 vs 1.6/4.2/2.1, particles 30.4 vs 32.1/34.3/32.3 and raytrace 0.4 vs 1.6/4.2/2.1. Dynamic builds are at parity because both sides use plain arrays; the win comes from the freestanding static layout.
 Cold compilation of the 2,000-function source is 25 ms versus 47 ms for gcc, 109 ms for rustc and
 69 ms for Goose; incremental rebuild after one edit is 10 ms.
 
-The speed goal is **partially met**: three outright wins and hash inside 1.25x, but matmul, binary
-n-body native IR still trails (particles is inside 1.25x). The memory win is proven on all eight workloads. `MAGIC_THREADS=1,2,4,8,16` scales the parallel raytracer 91→17 ms (5.4x) on this host. The static runtime implements `env()` from the initial environment and syscall-backed file I/O and TCP (`net_listen/port/connect/accept/read/write/close`). It formats `print_prec` via fixed-point (precision <= 9, overflow and larger precisions exit with an error) and static panics print the line plus a raw frame-pointer stack trace to stderr. `%g`/`print` of floats is rejected explicitly.
+The speed goal is met for seven workloads via their best variants (sieve, fannkuch blocks, matmul,
+raytrace par, hash direct, particles closed and binary-trees native loop); n-body's native IR is
+613 ms, while its C-backend AVX2 build is 198 ms, inside 1.25x of Rust's 227 ms. The memory win is
+proven on all eight workloads versus all three baselines. `MAGIC_THREADS=1,2,4,8,16` scales the parallel raytracer 91→17 ms (5.4x) on this host. The static runtime implements `env()` from the initial environment and syscall-backed file I/O and TCP (`net_listen/port/connect/accept/read/write/close`). It formats `print_prec` via fixed-point (precision <= 9, overflow and larger precisions exit with an error) and static panics print the line plus a raw frame-pointer stack trace to stderr. `%g`/`print` of floats is rejected explicitly.
 Full tables, methodology and honest gaps: [`BENCHMARKS.md`](BENCHMARKS.md).
 
 ```bash

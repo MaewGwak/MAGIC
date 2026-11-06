@@ -933,3 +933,23 @@ fn main() {
     let i = run(src, &dir, "fuse_i", true, &cc_cmd).expect("IR build");
     assert_eq!(c.0, i.0);
 }
+
+#[test]
+fn division_by_zero_reports_line_and_trace() {
+    let Some(cc_cmd) = cc() else { return };
+    let dir = std::env::temp_dir().join(format!("magic-div-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "fn main() {\n    var z = 0;\n    var x = 10 / z;\n    print(x);\n}\n";
+    let asm = magic::compile_to_asm_ir(src).expect("compile");
+    let sp = dir.join("div.s");
+    let op = dir.join("div.o");
+    let exe = dir.join("div");
+    std::fs::write(&sp, asm).unwrap();
+    assert!(Command::new("as").arg("--64").arg("-o").arg(&op).arg(&sp).status().unwrap().success());
+    assert!(Command::new(cc_cmd).arg(&op).arg("-o").arg(&exe).status().unwrap().success());
+    let out = Command::new(&exe).output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("line 3: division by zero"), "stderr: {err}");
+    assert!(err.contains("main"), "stderr: {err}");
+}

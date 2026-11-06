@@ -95,6 +95,27 @@ else
   echo "env: build FAIL"; FAIL=1
 fi
 
+cat > "$OUT/div.magic" <<'EOF'
+fn main() {
+    var s = 0;
+    for i in 0..4 {
+        var z = i - 2;
+        s = s + 10 / z;
+    }
+    print(s);
+}
+EOF
+if "$M" build "$OUT/div.magic" --static -o "$OUT/div" >/dev/null 2>&1; then
+  "$OUT/div" >/dev/null 2>"$OUT/de"; rc=$?
+  if [ "$rc" -ne 0 ] && grep -q 'line 5: division by zero' "$OUT/de" && grep -q 'stack trace:' "$OUT/de"; then
+    echo "division_zero: ok static"
+  else
+    echo "division_zero: FAIL rc=$rc"; FAIL=1
+  fi
+else
+  echo "division_zero: build FAIL"; FAIL=1
+fi
+
 cat > "$OUT/panic.magic" <<'EOF'
 fn main() {
     var a: [i32] = [1; 2];

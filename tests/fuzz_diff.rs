@@ -172,6 +172,12 @@ fn mutated_programs_agree_between_backends() {
             // equivalent, one crashing while the other succeeds is not.
             let c_ok = ccode == Some(0);
             let i_ok = icode == Some(0);
+            // When both sides fail, stdout before the trap/panic is buffering-
+            // dependent (C may lose it, the IR panic flushes); only require
+            // that both failed.
+            if !c_ok && !i_ok {
+                continue;
+            }
             if cout != iout || c_ok != i_ok {
                 mismatches.push(format!("{src}\n  C=({cout:?},{ccode:?}) IR=({iout:?},{icode:?})"));
             }

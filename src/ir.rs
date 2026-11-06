@@ -47,6 +47,7 @@ pub enum Instr {
     LoadVar { dst: Value, var: usize },
     StoreVar { var: usize, src: Value },
     Bin { dst: Value, op: Op, l: Value, r: Value },
+    DivZeroCheck { value: Value, id: Value, line: usize },
     Un { dst: Value, neg: bool, a: Value },
     Trunc { dst: Value, ty: Ty, a: Value },
     Call { dst: Option<Value>, name: String, args: Vec<Value> },
@@ -1080,6 +1081,12 @@ impl Builder {
                     BinOp::Or => Op::Or,
                 };
                 let dst = self.value();
+                if matches!(op, Op::Div | Op::Rem) {
+                    let c = self.const_eval(r);
+                    if !matches!(c, Some(v) if v != 0) {
+                        self.push(Instr::DivZeroCheck { value: b, id: dst, line: e.line });
+                    }
+                }
                 self.push(Instr::Bin { dst, op, l: a, r: b });
                 if matches!(
                     op,
@@ -3997,6 +4004,7 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
             uses.push(*src);
         }
         Instr::BoundsCheck { idx, .. } => uses.push(*idx),
+        Instr::DivZeroCheck { value, .. } => uses.push(*value),
         Instr::IndexLoad { dst, idx, .. } => {
             uses.push(*idx);
             defs.push(*dst);
@@ -4618,6 +4626,17 @@ fn emit_fast_block(
                 }
                 ra.xdef_store(*dst, xd);
                 ra.xdef_store(*tmp, xv);
+                ra.free_dead(ii);
+                continue;
+            }
+            Instr::DivZeroCheck { value, id, line } => {
+                let a = ra.operand(*value);
+                ra.out.push_str(&format!("    test {}, {}\n    jne 1f\n", POOL[a].0, POOL[a].0));
+                ra.out.push_str(&format!(
+                    "    .pushsection .rodata\n    .p2align 2\n.Ldivmsg{}_{}: .asciz \"line {}: division by zero\"\n    .popsection\n",
+                    line, id.0, line
+                ));
+                ra.out.push_str(&format!("    lea .Ldivmsg{}_{}(%rip), %rdi\n    call .Lir_panic\n1:\n", line, id.0));
                 ra.free_dead(ii);
                 continue;
             }
@@ -7227,6 +7246,15 @@ pub fn emit(prog: &IrProgram) -> String {
             for ins in &b.instrs {
                 let ld = |v: Value| format!("    mov -{}(%rbp), %rax\n", voff(f, v));
                 match ins {
+                    Instr::DivZeroCheck { value, id, line } => {
+                        out.push_str(&ld(*value));
+                        out.push_str("    test %rax, %rax\n    jne 1f\n");
+                        out.push_str(&format!(
+                            "    .pushsection .rodata\n    .p2align 2\n.Ldivmsg{}_{}: .asciz \"line {}: division by zero\"\n    .popsection\n",
+                            line, id.0, line
+                        ));
+                        out.push_str(&format!("    lea .Ldivmsg{}_{}(%rip), %rdi\n    call .Lir_panic\n1:\n", line, id.0));
+                    }
                     Instr::FastDivPow2 { dst, a, k, d, rem } => {
                         out.push_str(&ld(*a));
                         out.push_str("    mov %rax, %rcx\n");
@@ -7466,7 +7494,7 @@ pub fn emit(prog: &IrProgram) -> String {
                             Op::Div | Op::Rem => {
                                 out.push_str("    test %rcx, %rcx\n    jne 1f\n");
                                 out.push_str("    lea .Ldiv0(%rip), %rdi\n");
-                                out.push_str("    call abort@PLT\n1:\n");
+                                out.push_str("    call .Lir_panic\n1:\n");
                                 out.push_str("    cqo\n    idiv %rcx\n");
                                 if *op == Op::Rem {
                                     out.push_str("    mov %rdx, %rax\n");

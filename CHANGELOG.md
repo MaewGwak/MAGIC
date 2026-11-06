@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.11 — memory vs C/C++/Rust and line-correct division panics (2026-11-06)
+
+`bench-static-memory.sh` now builds gcc, g++ and rustc baselines and requires static MAGIC to peak
+below all three: it does on all eight workloads (sieve 11.9 vs 96.9/99.2/97.1, others 0.4–31.9 vs
+1.6–35.6), so "lowest on most" is measured against all three languages. Integer `/` and `%` now lower
+to a `DivZeroCheck` that panics with the real source line and a stack trace on the default IR path;
+constant nonzero divisors skip the check, and the static backend links and reports the same message
+with a raw trace (previously non-constant division failed to link with a missing `abort`). All gates
+pass, 170 tests, parity 60/60, static and scaling green.
+
 ## v0.10.10 — refreshed best-variant matrix (2026-11-06)
 
 A fresh bench-linux run records the current best variants: sieve 397 (C 432), fannkuch blocks 75

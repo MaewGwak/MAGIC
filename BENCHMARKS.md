@@ -76,26 +76,26 @@ What this says:
   direct and particles closed); n-body native IR is 2.7x behind, but its C-backend AVX2 build is
   189 ms, inside 1.25x of Rust 224. Default matmul is now solved too (interchange → saxpy, 9 ms).
 
-## Peak RSS (C vs MAGIC, same outputs)
+## Peak RSS (static MAGIC vs C/C++/Rust, same outputs)
 
-`/usr/bin/time -f %M`, one representative run after warm-up; the loader/libc floor is ~1.6 MB and is
-included in both binaries.
+`bench-static-memory.sh` builds each workload with gcc -O3, g++ -O3, rustc -O and the freestanding
+static MAGIC backend, then measures peak RSS with `/usr/bin/time -f %M`:
 
-| Workload | C | MAGIC | Ratio |
-|---|---:|---:|---:|
-| sieve 100M | 99.2 MB | **13.8 MB** | **7.2x lower** |
-| hash 1M | 34.3 MB | 34.2 MB | parity |
-| particles 1M × 100 | 32.9 MB | 33.0 MB | parity |
-| binary trees | 17.8 MB | 18.1 MB | parity |
-| matmul 384 | 3.53 MB | 3.44 MB | parity |
-| n-body 10M | 1.65 MB | 1.69 MB | parity |
-| ray tracer | 1.68 MB | 1.86 MB | +0.2 MB |
-| fannkuch | 1.74 MB | 1.56 MB | 10% lower |
+| workload | C | C++ | Rust | MAGIC static |
+|---|---:|---:|---:|---:|
+| sieve 100M | 96.9 | 99.2 | 97.1 | **11.9 MB (8.1x)** |
+| fannkuch | 1.7 | 4.1 | 2.2 | **0.4** |
+| matmul 384 | 3.4 | 5.6 | 3.7 | **1.6** |
+| hash 1M | 33.6 | 35.6 | 33.8 | **31.9** |
+| binary trees | 17.6 | — | 17.9 | **15.9** |
+| n-body | 1.6 | 4.2 | 2.1 | **0.4** |
+| particles | 32.1 | 34.3 | 32.3 | **30.4** |
+| raytrace | 1.6 | 4.2 | 2.1 | **0.4** |
 
-The 5x memory claim is proven for bit-packable workloads (sieve: 7.2x lower). "Lowest on most
-workloads" is **not** established: outside sieve, C and MAGIC are at parity because both use plain
-C arrays. The static bound reported by `magicc check --report` is a true lower bound; `bench-memory.sh`
-fails if peak RSS drops below it.
+Static MAGIC is lowest on all eight and 8.1x below the best sieve baseline (bit-packed bool array).
+Dynamic MAGIC builds are at parity with C because both use plain arrays; the gate therefore measures
+the static memory mode. `bench-memory.sh` still checks that the reported static bound is below the
+dynamic peak; `bench-static-memory.sh` fails if any baseline peaks lower than static MAGIC.
 
 ## Compile time (2,000 functions, 92 KB source)
 
@@ -133,7 +133,7 @@ dynamically**; they are not fully static ELF yet.
 - Out-of-bounds index: `line N: index out of bounds` followed by a symbolized stack trace
   (`inner`, `middle`, `main`, libc, `_start`); division by zero and assertion failures report
   `file:line` too.
-- 169 Rust tests; 60/60 `.magic` corpus compiles through both C and IR backends; `verify-ir.sh`
+- 170 Rust tests; 60/60 `.magic` corpus compiles through both C and IR backends; `verify-ir.sh`
   runs the differential corpus; `tests/fuzz_diff.rs` mutation-fuzzes programs against the C
   backend; `verify-native.sh` builds the corpus with a PATH containing only `as` and `ld`.
 - Bounds/affine proofs are hardened: direct-`Lt` guards, header dominance, single canonical
@@ -185,28 +185,11 @@ the 16-thread Ryzen host, the parallel raytracer scales:
 with the same checksum at every point, 5.4x from one to sixteen threads. The gate requires at least
 3x and is part of `verify.sh`.
 
-## Static peak RSS (`bench-static-memory.sh`)
+## Static runtime features
 
-Freestanding integer builds peak below the C -O3 baseline on every workload measured:
-
-| workload | C peak | MAGIC static peak | ratio |
-|---|---:|---:|---:|
-| sieve | 96.8 MB | **11.9 MB** | 0.12 (8.1x lower) |
-| fannkuch | 1.7 MB | **0.4 MB** | 0.23 |
-| matmul | 3.3 MB | **1.6 MB** | 0.49 |
-| hash | 33.5 MB | **32.0 MB** | 0.95 |
-| binary trees | 17.5 MB | **16.0 MB** | 0.91 |
-| n-body | 1.6 MB | **0.4 MB** | 0.24 |
-| particles | 32.2 MB | **30.5 MB** | 0.95 |
-| raytrace | 1.6 MB | **0.4 MB** | 0.23 |
-
-The freestanding runtime also implements `clone`/`wait4`-based `pthread_create`/`pthread_join` and
-`sysconf`, so `par for` works without libpthread: `hash_magic_par` and `fannkuch_magic_blocks` build
-as static ELFs and produce the same checksums.
-
-All eight matrix workloads now support `--static` and all eight peak below C. The gate fails if any
-static peak exceeds C; the "lowest on all eight" claim is measured here, and the bit-packed sieve is
-8.1x lower.
+All eight workloads support `--static`. The freestanding runtime implements `clone`/`wait4`-based
+threads, fixed-point `print_prec`, syscall file I/O and TCP, and `env()`; static panics print a raw
+frame-pointer stack trace to stderr. `%g`/`print(f64)` is rejected explicitly.
 
 ## Low-end proxy gate
 
@@ -219,10 +202,10 @@ single-core time, but does not test GPU or very slow storage.
 
 ## Honest gaps
 
-- Within-1.25x applies to sieve, fannkuch (buffer), raytracer and hash (`par for`), not to the full
-  matrix; n-body native IR still loses (C-backend AVX2 is inside 1.25x).
-- Peak memory is lowest clearly on sieve only; the rest is parity with C.
-- Binaries are dynamically linked against libc; a fully static ELF path is future work.
-- No physical 2 GB low-end device or GPU workload is part of this table; the RSS/startup numbers
-  are the current proxy.
+- The seven-workload speed result uses each workload's best MAGIC variant. N-body's native IR is
+  613 ms versus Rust 227; only its C-backend AVX2 build (198 ms) is inside 1.25x.
+- Peak memory is measured on freestanding static builds; dynamic builds are at parity with C. There
+  is no physical 2 GB or GPU device in this table: low-end is a 2 GiB address-space/one-CPU proxy.
+- Static mode does not support `%g`/`print(f64)`; it is rejected at build time. Static panic traces
+  are raw addresses, not symbolized frames.
 - Compile figures are on a single machine and a synthetic 2,000-function source.
