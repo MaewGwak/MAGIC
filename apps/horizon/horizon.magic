@@ -26,7 +26,7 @@ fn write_value(dir: str, name: str, value: str) -> i32 {
 
 fn main() {
     if argc() < 3 {
-        print("horizon: usage: horizon init <dir> | horizon launch <dir>");
+        print("horizon: usage: horizon init <dir> | list <dir> | show <dir> | set <dir> <key> <value> | launch <dir>");
         return;
     }
     var cmd = arg(1);
@@ -35,6 +35,7 @@ fn main() {
     var mbuf: [u8] = [0; 256];
     var nbuf: [u8] = [0; 256];
     var cbuf: [u8] = [0; 256];
+    var dbuf: [u8] = [0; 4096];
 
     if str_eq(cmd, "init") {
         if dir_mkdir(dir) != 0 && !path_exists(dir) {
@@ -46,6 +47,52 @@ fn main() {
         write_value(dir, "main", "net.minecraft.client.main.Main");
         write_value(dir, "classpath", "");
         print(str_cat("horizon: created instance ", dir));
+        return;
+    }
+
+    if str_eq(cmd, "list") {
+        var n = dir_list(dir, dbuf, 4096);
+        if n < 0 {
+            print("horizon: cannot read instance directory");
+            return;
+        }
+        if n == 0 { print("horizon: no instances"); return; }
+        print(str_from_bytes(dbuf, n));
+        return;
+    }
+
+    if str_eq(cmd, "show") {
+        if !path_exists(dir) { print("horizon: instance directory does not exist"); return; }
+        var jn = read_value(dir, "java", jbuf, 256);
+        var mn = read_value(dir, "memory", mbuf, 256);
+        var nn = read_value(dir, "main", nbuf, 256);
+        var cn = read_value(dir, "classpath", cbuf, 256);
+        var java = "java";
+        var memory = "2G";
+        var main = "net.minecraft.client.main.Main";
+        var classpath = "";
+        if jn >= 0 { java = str_from_bytes(jbuf, jn); }
+        if mn >= 0 { memory = str_from_bytes(mbuf, mn); }
+        if nn >= 0 { main = str_from_bytes(nbuf, nn); }
+        if cn >= 0 { classpath = str_from_bytes(cbuf, cn); }
+        print(str_cat("java: ", java));
+        print(str_cat("memory: ", memory));
+        print(str_cat("main: ", main));
+        print(str_cat("classpath: ", classpath));
+        return;
+    }
+
+    if str_eq(cmd, "set") {
+        if argc() < 5 { print("horizon: set needs <dir> <key> <value>"); return; }
+        if !path_exists(dir) { print("horizon: instance directory does not exist"); return; }
+        var key = arg(3);
+        var value = arg(4);
+        if !(str_eq(key, "java") || str_eq(key, "memory") || str_eq(key, "main") || str_eq(key, "classpath")) {
+            print("horizon: unknown key (java, memory, main, classpath)");
+            return;
+        }
+        if write_value(dir, key, value) < 0 { print("horizon: cannot write config"); return; }
+        print("horizon: config updated");
         return;
     }
 

@@ -9,15 +9,19 @@ magicc build apps/horizon/horizon.magic --backend c \
   --cc "gcc -O3 -march=native -lm" -o horizon
 
 ./horizon init /tmp/instance
+./horizon show /tmp/instance
+./horizon set /tmp/instance memory 4G
+./horizon list /tmp/instance
 # edit /tmp/instance/{java,memory,main,classpath}, then:
 ./horizon launch /tmp/instance
 ```
 
 `init` creates the instance directory and four plain-text config files with
 defaults (`java`, `2G`, `net.minecraft.client.main.Main`, empty classpath).
-`launch` reads them, builds `java -Xmx<memory> -cp <classpath> <main>` and runs
-it via `proc_run` (C `system`). A fake `/bin/echo` java is enough to test the
-command path offline.
+`show` prints them, `set <dir> <key> <value>` updates one, `list <dir>` prints
+directory entries (use the instances root), and `launch` builds
+`java -Xmx<memory> -cp <classpath> <main>` and runs it via `proc_run` (C
+`system`). A fake `/bin/echo` java is enough to test the command path offline.
 
 Current scope is the launcher **core**. It does not yet download Mojang
 metadata/assets, verify hashes, manage multiple instances, or parse JSON; those

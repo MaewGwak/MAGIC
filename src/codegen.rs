@@ -454,11 +454,12 @@ fn header_base(prog: &Program) -> String {
     for f in &prog.funcs {
         collect_calls(&f.body, &mut all_calls);
     }
-    let uses_launcher = ["str_cat", "str_from_bytes", "proc_run", "dir_mkdir", "path_exists"]
+    let uses_launcher = ["str_cat", "str_from_bytes", "proc_run", "dir_mkdir", "path_exists", "dir_list"]
         .iter().any(|n| all_calls.contains(*n));
     let uses_perm = all_calls.iter().any(|n| n.starts_with("perm_") || n.starts_with("cnt_"));
     if uses_launcher {
         out.push_str(r#"#include <sys/stat.h>
+#include <dirent.h>
 static inline const char *magic_str_cat(const char *a, const char *b) {
     size_t na = strlen(a), nb = strlen(b);
     char *r = (char*)malloc(na + nb + 1);
@@ -483,6 +484,25 @@ static inline int32_t magic_path_exists(const char *path) {
     return _access(path, 0) == 0;
 #else
     return access(path, F_OK) == 0;
+#endif
+}
+static inline int32_t magic_dir_list(const char *path, uint8_t *buf, int32_t cap) {
+#ifdef _WIN32
+    return -1;
+#else
+    DIR *d = opendir(path);
+    if (!d) return -1;
+    int32_t n = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        int32_t len = (int32_t)strlen(e->d_name);
+        if (n + len + 2 > cap) break;
+        memcpy(buf + n, e->d_name, (size_t)len); n += len; buf[n++] = '\n';
+    }
+    closedir(d);
+    if (n > 0) buf[n - 1] = '\n';
+    return n;
 #endif
 }
 "#);
@@ -1433,6 +1453,9 @@ fn expr(e: &Expr) -> String {
                     expr(&args[0]),
                     expr(&args[1])
                 );
+            }
+            if name == "dir_list" && args.len() == 3 {
+                return format!("magic_dir_list(({}), ({}), (int32_t)({}))", expr(&args[0]), expr(&args[1]), expr(&args[2]));
             }
             if name == "str_cat" && args.len() == 2 {
                 return format!("magic_str_cat(({}), ({}))", expr(&args[0]), expr(&args[1]));
