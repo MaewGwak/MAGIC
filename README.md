@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.9 (0.9.9)** — 168 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.10 (0.10.0)** — 168 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -172,12 +172,12 @@ shipped for that workload and is always named.
 | binary trees | 721 | — | 1333 | 3904 | 1512 | 5.42x |
 | matmul 384 | 12 | 15 | 42 | **9** (interchange SIMD) | 10 (i-k-j) | **win** |
 
-Static builds have lower peak RSS than C on all five integer workloads: sieve 11.9 vs 96.8 MB (8.1x), fannkuch 0.4 vs 1.7, matmul 1.6 vs 3.3, hash 32.0 vs 33.6 and binary trees 16.0 vs 17.5. Float workloads (n-body, particles, ray) are still dynamic and at parity.
+Static builds have lower peak RSS than C on **all eight** workloads: sieve 11.9 vs 97.1 MB (8.1x), fannkuch 0.4 vs 1.6, matmul 1.6 vs 3.1, hash 32.0 vs 33.5, binary trees 16.0 vs 17.5, n-body 0.4 vs 1.6, particles 30.5 vs 32.2 and raytrace 0.4 vs 1.6.
 Cold compilation of the 2,000-function source is 25 ms versus 47 ms for gcc, 109 ms for rustc and
 69 ms for Goose; incremental rebuild after one edit is 10 ms.
 
 The speed goal is **partially met**: three outright wins and hash inside 1.25x, but matmul, binary
-trees, n-body and particles still trail. The memory win is proven on all five integer workloads; float printing is not yet supported by the static runtime.
+trees, n-body and particles still trail. The memory win is proven on all eight workloads. The static runtime formats `print_prec` via fixed-point (precision <= 9, overflow and larger precisions exit with an error) and rejects `%g`/`print` of floats explicitly.
 Full tables, methodology and honest gaps: [`BENCHMARKS.md`](BENCHMARKS.md).
 
 ```bash

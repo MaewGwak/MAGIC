@@ -29,9 +29,14 @@ check fannkuch bench-fannkuch/fannkuch_magic.magic 38
 check bt bench-bt/bt_magic.magic 568328208
 check hash_par bench-suite/hash_magic_par.magic 1500001500000
 check fannkuch_blocks bench-fannkuch/fannkuch_magic_blocks.magic 38
-if "$M" build bench-suite/nbody_magic.magic --static -o "$OUT/nb" >/dev/null 2>&1; then
-  echo "float program unexpectedly accepted"; FAIL=1
+check nbody bench-suite/nbody_magic.magic 11211.531383831
+check particles bench-suite/particles_magic.magic 500094707846.643
+check ray bench-suite/raytrace_magic.magic 336141.941
+check ray_par bench-suite/raytrace_magic_par.magic 336141.941
+printf 'fn main() { let x = 1.5; print(x); }\n' > "$OUT/g.magic"
+if "$M" build "$OUT/g.magic" --static -o "$OUT/g" >/dev/null 2>&1; then
+  echo "%%g program unexpectedly accepted"; FAIL=1
 else
-  echo "float rejection: ok"
+  echo "%%g rejection: ok"
 fi
 [ "$FAIL" -eq 0 ] && echo "STATIC GATE PASSED" || { echo "STATIC GATE FAILED"; exit 1; }

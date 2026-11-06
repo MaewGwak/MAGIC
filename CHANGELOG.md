@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.10.0 — static builds beat C on all eight workloads (2026-11-06)
+
+The freestanding runtime now formats `print_prec` with an x87 fixed-point path (precision <= 9,
+nearest-even rounding, overflow and larger precision exit with an error) and rejects `%g` explicitly.
+All eight workloads build as 5.2–9.6 KB static ELFs with no interpreter and correct checksums, and
+`bench-static-memory.sh` shows lower peak RSS than gcc -O3 on every one: sieve 11.9 vs 97.1 MB
+(8.1x), fannkuch 0.4 vs 1.6, matmul 1.6 vs 3.1, hash 32.0 vs 33.5, binary trees 16.0 vs 17.5,
+n-body 0.4 vs 1.6, particles 30.5 vs 32.2, raytrace 0.4 vs 1.6. All gates pass, 168 tests, parity
+60/60, low-end and both static gates green.
+
 ## v0.9.9 — par for in the freestanding runtime (2026-11-06)
 
 The syscall-only runtime now provides `clone`/`wait4`-backed `pthread_create`/`pthread_join` and a

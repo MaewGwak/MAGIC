@@ -24,5 +24,8 @@ check fannkuch bench-fannkuch/fannkuch_c.c bench-fannkuch/fannkuch_magic.magic
 check matmul bench-suite/matmul_c.c bench-suite/matmul_magic.magic
 check hash bench-suite/hash_c.c bench-suite/hash_magic.magic
 check bt bench-bt/bt_c.c bench-bt/bt_magic.magic
+check nbody bench-suite/nbody_c.c bench-suite/nbody_magic.magic
+check particles bench-suite/particles_c.c bench-suite/particles_magic.magic
+check ray bench-suite/raytrace_c.c bench-suite/raytrace_magic.magic
 if [ "$FAIL" -ne 0 ]; then echo "STATIC MEMORY GATE FAILED"; exit 1; fi
-echo "STATIC MEMORY GATE PASSED (MAGIC static peak < C on all 5 integer workloads)"
+echo "STATIC MEMORY GATE PASSED (MAGIC static peak < C on all 8 workloads)"

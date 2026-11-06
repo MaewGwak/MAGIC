@@ -173,8 +173,8 @@ fn run() -> Result<(), String> {
             if static_link {
                 let asm = magic::compile_to_asm_ir(&source)
                     .map_err(|e| map_diagnostic(e, &segments, src_path))?;
-                if asm.lines().any(|l| l.contains("lea .Lfmt_g(") || l.contains("lea .Lfmt_pf(")) {
-                    return Err("--static does not support float printing".to_string());
+                if asm.lines().any(|l| l.contains("lea .Lfmt_g(")) {
+                    return Err("--static does not support %g printing (use print_prec)".to_string());
                 }
                 let exe_path = out_override.clone().unwrap_or_else(|| with_ext(src_path, "bin"));
                 build_static_ir(&asm, &exe_path)?;

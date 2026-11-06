@@ -146,11 +146,10 @@ dynamically**; they are not fully static ELF yet.
 `magicc build prog.magic --static` emits assembly, sectionises each runtime helper, and links with
 `ld -static -nostdlib --gc-sections -e _start` against a small syscall-only runtime (`runtime/
 static_runtime.s`: mmap-based calloc, memset/memcpy, `%lld`/`%d`/`%s` printf, exit, simple panic).
-No C compiler and no libc are involved. The five integer/bool workloads build to 5.0–5.3 KB ELFs
-with **no PT_INTERP**, and their checksums match: sieve 5761455, matmul 326316140, hash
-1500001500000, fannkuch 38, binary trees 568328208. Float printing, file/net/par and other libc
-features are rejected at build time (missing runtime symbol or an explicit float-print error), never
-silently miscompiled. `verify-static.sh` is part of `verify.sh`.
+No C compiler and no libc are involved. All eight workloads build to 5.2–9.6 KB ELFs with **no
+PT_INTERP** and correct checksums; `par for` uses a `clone`/`wait4` runtime, and `print_prec` uses a
+fixed-point x87 formatter (precision <= 9, overflow guarded). `%g`/`print` of floats, file and net
+are rejected at build time, never silently miscompiled. `verify-static.sh` is part of `verify.sh`.
 
 ## Latest full matrix run (v0.9.5, 2026-11-06)
 
@@ -180,17 +179,19 @@ Freestanding integer builds peak below the C -O3 baseline on every workload meas
 | sieve | 96.8 MB | **11.9 MB** | 0.12 (8.1x lower) |
 | fannkuch | 1.7 MB | **0.4 MB** | 0.23 |
 | matmul | 3.3 MB | **1.6 MB** | 0.49 |
-| hash | 33.6 MB | **32.0 MB** | 0.95 |
-| binary trees | 17.5 MB | **15.9 MB** | 0.91 |
+| hash | 33.5 MB | **32.0 MB** | 0.95 |
+| binary trees | 17.5 MB | **16.0 MB** | 0.91 |
+| n-body | 1.6 MB | **0.4 MB** | 0.24 |
+| particles | 32.2 MB | **30.5 MB** | 0.95 |
+| raytrace | 1.6 MB | **0.4 MB** | 0.23 |
 
 The freestanding runtime also implements `clone`/`wait4`-based `pthread_create`/`pthread_join` and
 `sysconf`, so `par for` works without libpthread: `hash_magic_par` and `fannkuch_magic_blocks` build
-as static ELFs and produce the same checksums. Float workloads still reject at build time.
+as static ELFs and produce the same checksums.
 
-Five of the eight matrix workloads are integer/bool and support `--static`; the three float workloads
-(n-body, particles, raytrace) still use dynamic binaries at parity. The gate fails if any static
-peak exceeds C. This is where the "lowest on most workloads" claim now stands: 5/8 measured, with
-the float three explicitly outstanding.
+All eight matrix workloads now support `--static` and all eight peak below C. The gate fails if any
+static peak exceeds C; the "lowest on all eight" claim is measured here, and the bit-packed sieve is
+8.1x lower.
 
 ## Low-end proxy gate
 
