@@ -10,7 +10,7 @@
 //! lowering tests and the differential harness before replacing the slots with
 //! linear-scan allocation.
 
-use crate::ast::{BinOp, Expr, ExprKind, Func, ParamTy, Program, Stmt, StmtKind, Ty, UnOp};
+use crate::ast::{BinOp, Expr, ExprKind, Func, ParamTy, Program, Stmt, StmtKind, StructDef, Ty, UnOp};
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -52,8 +52,13 @@ pub enum Instr {
     Ret(Option<Value>),
     Br { cond: Value, then_bb: usize, else_bb: usize },
     Jmp(usize),
-    Alloc { ptr_var: usize, elem: Ty, len: Value },
-    Fill { ptr_var: usize, elem: Ty, len: Value, value: Value },
+    Alloc { ptr_var: usize, elem: Ty, esz: u64, len: Value },
+    Fill { ptr_var: usize, elem: Ty, esz: u64, len: Value, value: Value },
+    StructInit { var_index: usize, slots: usize, fields: Vec<(u64, Ty, Value)> },
+    FieldLoad { dst: Value, var_index: usize, slots: usize, off: u64, ty: Ty },
+    FieldStore { var_index: usize, slots: usize, off: u64, ty: Ty, src: Value },
+    IndexFieldLoad { dst: Value, ptr_var: usize, idx: Value, size: u64, off: u64, ty: Ty, len: LenRef, line: usize },
+    IndexFieldStore { ptr_var: usize, idx: Value, size: u64, off: u64, ty: Ty, src: Value, len: LenRef, line: usize },
     Str { dst: Value, id: usize, s: String },
     FBin { dst: Value, op: Op, l: Value, r: Value },
     FNeg { dst: Value, a: Value },
@@ -75,6 +80,7 @@ pub struct Block {
 #[derive(Clone, Debug)]
 pub struct IrFunc {
     pub name: String,
+    pub extra_frame: usize,
     pub nvars: usize,
     pub nvalues: usize,
     pub nparams: usize,
@@ -83,6 +89,57 @@ pub struct IrFunc {
 
 pub struct IrProgram {
     pub funcs: Vec<IrFunc>,
+}
+
+fn struct_layout(defs: &[StructDef], id: u16) -> (u64, Vec<u64>) {
+    let Some(d) = defs.get(id as usize) else {
+        return (0, Vec::new());
+    };
+    let mut off = 0u64;
+    let mut align = 1u64;
+    let mut offsets = Vec::new();
+    for (_, ty) in &d.fields {
+        let a = crate::ty_align(*ty, defs);
+        let sz = crate::ty_size(*ty, defs);
+        align = align.max(a);
+        off = (off + a - 1) / a * a;
+        offsets.push(off);
+        off += sz;
+    }
+    let size = (off + align - 1) / align * align;
+    (size, offsets)
+}
+
+fn struct_field(defs: &[StructDef], id: u16, name: &str) -> Option<(u64, Ty)> {
+    let d = defs.get(id as usize)?;
+    let (_, offsets) = struct_layout(defs, id);
+    d.fields
+        .iter()
+        .enumerate()
+        .find(|(_, (n, _))| n == name)
+        .map(|(i, (_, ty))| (offsets[i], *ty))
+}
+
+fn struct_path(defs: &[StructDef], id: u16, path: &[String]) -> Option<(u64, Ty)> {
+    let mut total = 0u64;
+    let mut ty = Ty::Struct(id);
+    for part in path {
+        let Ty::Struct(cid) = ty else { return None };
+        let (off, fty) = struct_field(defs, cid, part)?;
+        total += off;
+        ty = fty;
+    }
+    Some((total, ty))
+}
+
+fn is_zero_expr(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Int(0) => true,
+        ExprKind::Bool(false) => true,
+        ExprKind::Float(f) => *f == 0.0,
+        ExprKind::StructLit { fields, .. } => fields.iter().all(|(_, v)| is_zero_expr(v)),
+        _ => false,
+    }
 }
 
 struct Builder {
@@ -98,6 +155,9 @@ struct Builder {
     sigs: HashMap<String, Ty>,
     arrays: HashMap<String, (Ty, LenRef)>,
     next_str: usize,
+    struct_defs: Vec<StructDef>,
+    struct_vars: HashMap<String, (usize, usize, u16)>,
+    struct_bytes: i64,
     ret: Ty,
 }
 
@@ -116,6 +176,9 @@ impl Builder {
             sigs: HashMap::new(),
             arrays: HashMap::new(),
             next_str: 0,
+            struct_defs: Vec::new(),
+            struct_vars: HashMap::new(),
+            struct_bytes: 0,
             ret,
         }
     }
@@ -145,6 +208,38 @@ impl Builder {
     fn new_block(&mut self) -> usize {
         self.blocks.push(Block { instrs: Vec::new() });
         self.blocks.len() - 1
+    }
+
+    fn lower_struct_into(
+        &mut self,
+        id: u16,
+        base: u64,
+        fields: &[(String, Expr)],
+        out: &mut Vec<(u64, Ty, Value)>,
+    ) -> Result<(), String> {
+        for (fname, fexpr) in fields {
+            let (off, ty) = {
+                let defs = &self.struct_defs;
+                struct_field(defs, id, fname)
+            }
+            .ok_or_else(|| format!("struct has no field `{}`", fname))?;
+            if let ExprKind::StructLit { name: sname, fields: inner } = &fexpr.kind {
+                if let Ty::Struct(cid) = ty {
+                    let nested_id = self
+                        .struct_defs
+                        .iter()
+                        .position(|d| d.name == *sname)
+                        .ok_or_else(|| format!("unknown struct `{}`", sname))?
+                        as u16;
+                    let _ = cid;
+                    self.lower_struct_into(nested_id, base + off, inner, out)?;
+                    continue;
+                }
+            }
+            let val = self.lower_expr(fexpr)?;
+            out.push((base + off, ty, val));
+        }
+        Ok(())
     }
 
     fn lower_expr(&mut self, e: &Expr) -> Result<Value, String> {
@@ -287,6 +382,88 @@ impl Builder {
                 self.vty[dst.0 as usize] = elem;
                 Ok(dst)
             }
+            ExprKind::Field { base, field } => {
+                let (var_index, slots, id) = *self.struct_vars.get(base).ok_or_else(|| {
+                    format!("line {}: IR: unknown struct variable `{}`", e.line, base)
+                })?;
+                let (off, ty) = struct_field(&self.struct_defs, id, field).ok_or_else(|| {
+                    format!("line {}: IR: struct has no field `{}`", e.line, field)
+                })?;
+                let dst = self.value();
+                self.push(Instr::FieldLoad { dst, var_index, slots, off, ty });
+                self.vty[dst.0 as usize] = ty;
+                Ok(dst)
+            }
+            ExprKind::FieldPath { base, path } => {
+                let (var_index, slots, id) = *self.struct_vars.get(base).ok_or_else(|| {
+                    format!("line {}: IR: unknown struct variable `{}`", e.line, base)
+                })?;
+                let (off, ty) = struct_path(&self.struct_defs, id, path).ok_or_else(|| {
+                    format!("line {}: IR: unknown field path", e.line)
+                })?;
+                let dst = self.value();
+                self.push(Instr::FieldLoad { dst, var_index, slots, off, ty });
+                self.vty[dst.0 as usize] = ty;
+                Ok(dst)
+            }
+            ExprKind::IndexField { name, index, field } => {
+                let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", e.line, name)
+                })?;
+                let Ty::Struct(id) = elem else {
+                    return Err(format!("line {}: IR: `{}` is not a struct array", e.line, name));
+                };
+                let (off, ty) = struct_field(&self.struct_defs, id, field).ok_or_else(|| {
+                    format!("line {}: IR: struct has no field `{}`", e.line, field)
+                })?;
+                let (size, _) = struct_layout(&self.struct_defs, id);
+                let idx = self.lower_expr(index)?;
+                let ptr_var = *self.vars.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", e.line, name)
+                })?;
+                let dst = self.value();
+                self.push(Instr::IndexFieldLoad {
+                    dst,
+                    ptr_var,
+                    idx,
+                    size,
+                    off,
+                    ty,
+                    len,
+                    line: e.line,
+                });
+                self.vty[dst.0 as usize] = ty;
+                Ok(dst)
+            }
+            ExprKind::IndexFieldPath { name, index, path } => {
+                let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", e.line, name)
+                })?;
+                let Ty::Struct(id) = elem else {
+                    return Err(format!("line {}: IR: `{}` is not a struct array", e.line, name));
+                };
+                let (off, ty) = struct_path(&self.struct_defs, id, path).ok_or_else(|| {
+                    format!("line {}: IR: unknown field path", e.line)
+                })?;
+                let (size, _) = struct_layout(&self.struct_defs, id);
+                let idx = self.lower_expr(index)?;
+                let ptr_var = *self.vars.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", e.line, name)
+                })?;
+                let dst = self.value();
+                self.push(Instr::IndexFieldLoad {
+                    dst,
+                    ptr_var,
+                    idx,
+                    size,
+                    off,
+                    ty,
+                    len,
+                    line: e.line,
+                });
+                self.vty[dst.0 as usize] = ty;
+                Ok(dst)
+            }
             ExprKind::Cast { e, ty } => {
                 let a = self.lower_expr(e)?;
                 let from = self.vty[a.0 as usize];
@@ -403,6 +580,27 @@ impl Builder {
     fn lower_stmt(&mut self, s: &Stmt) -> Result<(), String> {
         match &s.kind {
             StmtKind::Let { name, init, .. } => {
+                if let ExprKind::StructLit { name: sname, fields } = &init.kind {
+                    let id = self
+                        .struct_defs
+                        .iter()
+                        .position(|d| d.name == *sname)
+                        .ok_or_else(|| format!("line {}: IR: unknown struct `{}`", s.line, sname))?
+                        as u16;
+                    let (size, _) = struct_layout(&self.struct_defs, id);
+                    let slots = ((size + 7) / 8) as usize;
+                    let var_index = self.nvars;
+                    self.nvars += slots;
+                    self.struct_vars.insert(name.clone(), (var_index, slots, id));
+                    let mut inits = Vec::new();
+                    self.lower_struct_into(id, 0, fields, &mut inits)?;
+                    self.push(Instr::StructInit {
+                        var_index,
+                        slots,
+                        fields: inits,
+                    });
+                    return Ok(());
+                }
                 let v = self.lower_expr(init)?;
                 let is_bool = self.vbool[v.0 as usize];
                 let var = self.var(name);
@@ -424,24 +622,110 @@ impl Builder {
             StmtKind::ArrayLet { name, elem, value, count } => {
                 let lenv = self.lower_expr(count)?;
                 let ptr_var = self.var(name);
-                self.push(Instr::Alloc { ptr_var, elem: *elem, len: lenv });
+                let esz = crate::ty_size(*elem, &self.struct_defs);
+                self.push(Instr::Alloc {
+                    ptr_var,
+                    elem: *elem,
+                    esz,
+                    len: lenv,
+                });
                 let len_var = self.nvars;
                 self.nvars += 1;
                 self.push(Instr::StoreVar { var: len_var, src: lenv });
                 let len_ref = LenRef::Var(len_var);
                 self.arrays.insert(name.clone(), (*elem, len_ref));
-                let zero = matches!(value.kind, ExprKind::Int(0))
-                    || matches!(value.kind, ExprKind::Bool(false));
+                let zero = is_zero_expr(value);
                 if !zero {
+                    if matches!(elem, Ty::Struct(_)) {
+                        return Err(format!(
+                            "line {}: IR: struct-array fill with a non-zero value is not supported yet",
+                            s.line
+                        ));
+                    }
                     let init = self.lower_expr(value)?;
                     self.push(Instr::Fill {
                         ptr_var,
                         elem: *elem,
+                        esz,
                         len: lenv,
                         value: init,
                     });
                 }
                 let _ = len_ref;
+            }
+            StmtKind::FieldAssign { base, field, value } => {
+                let (var_index, slots, id) = *self.struct_vars.get(base).ok_or_else(|| {
+                    format!("line {}: IR: unknown struct variable `{}`", s.line, base)
+                })?;
+                let (off, ty) = struct_field(&self.struct_defs, id, field).ok_or_else(|| {
+                    format!("line {}: IR: struct has no field `{}`", s.line, field)
+                })?;
+                let src = self.lower_expr(value)?;
+                self.push(Instr::FieldStore { var_index, slots, off, ty, src });
+            }
+            StmtKind::FieldPathAssign { base, path, value } => {
+                let (var_index, slots, id) = *self.struct_vars.get(base).ok_or_else(|| {
+                    format!("line {}: IR: unknown struct variable `{}`", s.line, base)
+                })?;
+                let (off, ty) = struct_path(&self.struct_defs, id, path).ok_or_else(|| {
+                    format!("line {}: IR: unknown field path", s.line)
+                })?;
+                let src = self.lower_expr(value)?;
+                self.push(Instr::FieldStore { var_index, slots, off, ty, src });
+            }
+            StmtKind::IndexFieldAssign { name, index, field, value } => {
+                let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", s.line, name)
+                })?;
+                let Ty::Struct(id) = elem else {
+                    return Err(format!("line {}: IR: `{}` is not a struct array", s.line, name));
+                };
+                let (off, ty) = struct_field(&self.struct_defs, id, field).ok_or_else(|| {
+                    format!("line {}: IR: struct has no field `{}`", s.line, field)
+                })?;
+                let (size, _) = struct_layout(&self.struct_defs, id);
+                let idx = self.lower_expr(index)?;
+                let src = self.lower_expr(value)?;
+                let ptr_var = *self.vars.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", s.line, name)
+                })?;
+                self.push(Instr::IndexFieldStore {
+                    ptr_var,
+                    idx,
+                    size,
+                    off,
+                    ty,
+                    src,
+                    len,
+                    line: s.line,
+                });
+            }
+            StmtKind::IndexFieldPathAssign { name, index, path, value } => {
+                let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", s.line, name)
+                })?;
+                let Ty::Struct(id) = elem else {
+                    return Err(format!("line {}: IR: `{}` is not a struct array", s.line, name));
+                };
+                let (off, ty) = struct_path(&self.struct_defs, id, path).ok_or_else(|| {
+                    format!("line {}: IR: unknown field path", s.line)
+                })?;
+                let (size, _) = struct_layout(&self.struct_defs, id);
+                let idx = self.lower_expr(index)?;
+                let src = self.lower_expr(value)?;
+                let ptr_var = *self.vars.get(name).ok_or_else(|| {
+                    format!("line {}: IR: unknown array `{}`", s.line, name)
+                })?;
+                self.push(Instr::IndexFieldStore {
+                    ptr_var,
+                    idx,
+                    size,
+                    off,
+                    ty,
+                    src,
+                    len,
+                    line: s.line,
+                });
             }
             StmtKind::IndexAssign { name, index, value } => {
                 let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
@@ -560,6 +844,7 @@ impl Builder {
     fn finish(&mut self) -> IrFunc {
         IrFunc {
             name: String::new(),
+            extra_frame: self.struct_bytes.max(0) as usize,
             nvars: self.nvars,
             nvalues: self.nvalues,
             nparams: 0,
@@ -575,17 +860,18 @@ pub fn lower(prog: &Program) -> Result<IrProgram, String> {
     }
     let mut funcs = Vec::new();
     for f in &prog.funcs {
-        funcs.push(lower_func(f, &sigs)?);
+        funcs.push(lower_func(f, &sigs, &prog.structs)?);
     }
     Ok(IrProgram { funcs })
 }
 
-fn lower_func(f: &Func, sigs: &HashMap<String, Ty>) -> Result<IrFunc, String> {
+fn lower_func(f: &Func, sigs: &HashMap<String, Ty>, structs: &[StructDef]) -> Result<IrFunc, String> {
     if f.ret == Ty::Str {
         return Err(format!("IR: `{}` returns a string, not supported yet", f.name));
     }
     let mut b = Builder::new(f.ret);
     b.sigs = sigs.clone();
+    b.struct_defs = structs.to_vec();
     let mut nparams = 0usize;
     for (name, pty) in &f.params {
         match pty {
@@ -798,6 +1084,9 @@ fn def_kind(ins: &Instr) -> Option<(Value, DefKind)> {
             Some((*dst, DefKind::Other))
         }
         Instr::I2F { dst, .. } | Instr::F2I { dst, .. } | Instr::Sqrt { dst, .. } => {
+            Some((*dst, DefKind::Other))
+        }
+        Instr::FieldLoad { dst, .. } | Instr::IndexFieldLoad { dst, .. } => {
             Some((*dst, DefKind::Other))
         }
         _ => None,
@@ -1080,6 +1369,21 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
             uses.push(*len);
             uses.push(*value);
         }
+        Instr::StructInit { fields, .. } => {
+            for (_, _, v) in fields {
+                uses.push(*v);
+            }
+        }
+        Instr::FieldLoad { dst, .. } => defs.push(*dst),
+        Instr::FieldStore { src, .. } => uses.push(*src),
+        Instr::IndexFieldLoad { dst, idx, .. } => {
+            uses.push(*idx);
+            defs.push(*dst);
+        }
+        Instr::IndexFieldStore { idx, src, .. } => {
+            uses.push(*idx);
+            uses.push(*src);
+        }
         Instr::BoundsCheck { idx, .. } => uses.push(*idx),
         Instr::IndexLoad { dst, idx, .. } => {
             uses.push(*idx);
@@ -1119,6 +1423,11 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::Sqrt { .. }
                 | Instr::PrintPrec { .. }
                 | Instr::Print { float: true, .. }
+                | Instr::StructInit { .. }
+                | Instr::FieldLoad { .. }
+                | Instr::FieldStore { .. }
+                | Instr::IndexFieldLoad { .. }
+                | Instr::IndexFieldStore { .. }
                 | Instr::Bin { op: Op::Div | Op::Rem, .. }
         )
     })
@@ -1680,7 +1989,12 @@ fn emit_fast_block(
             | Instr::I2F { .. }
             | Instr::F2I { .. }
             | Instr::Sqrt { .. }
-            | Instr::PrintPrec { .. } => {
+            | Instr::PrintPrec { .. }
+            | Instr::StructInit { .. }
+            | Instr::FieldLoad { .. }
+            | Instr::FieldStore { .. }
+            | Instr::IndexFieldLoad { .. }
+            | Instr::IndexFieldStore { .. } => {
                 unreachable!("slow block")
             }
         }
@@ -1707,9 +2021,15 @@ pub fn emit(prog: &IrProgram) -> String {
     for f in &prog.funcs {
         for b in &f.blocks {
             for i in &b.instrs {
-                if let Instr::BoundsCheck { line, .. } = i {
-                    if !lines.contains(line) {
-                        lines.push(*line);
+                let line = match i {
+                    Instr::BoundsCheck { line, .. } => Some(*line),
+                    Instr::IndexFieldLoad { line, .. } => Some(*line),
+                    Instr::IndexFieldStore { line, .. } => Some(*line),
+                    _ => None,
+                };
+                if let Some(line) = line {
+                    if !lines.contains(&line) {
+                        lines.push(line);
                     }
                 }
             }
@@ -2038,6 +2358,105 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&format!("    lea .Lstr{}(%rip), %rax\n", id));
                         out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
+                    Instr::StructInit { var_index, slots, fields } => {
+                        let base = -8 * (*var_index + *slots) as i64;
+                        for (off, ty, v) in fields {
+                            out.push_str(&ld(*v));
+                            let addr = base + *off as i64;
+                            match ty {
+                                Ty::U8 | Ty::Bool => {
+                                    out.push_str(&format!("    movb %al, {}(%rbp)\n", addr))
+                                }
+                                Ty::I32 => out.push_str(&format!("    movl %eax, {}(%rbp)\n", addr)),
+                                _ => out.push_str(&format!("    movq %rax, {}(%rbp)\n", addr)),
+                            }
+                        }
+                    }
+                    Instr::FieldLoad { dst, var_index, slots, off, ty } => {
+                        let base = -8 * (*var_index + *slots) as i64;
+                        let addr = base + *off as i64;
+                        match ty {
+                            Ty::U8 | Ty::Bool => {
+                                out.push_str(&format!("    movzbq {}(%rbp), %rax\n", addr))
+                            }
+                            Ty::I32 => out.push_str(&format!("    movslq {}(%rbp), %rax\n", addr)),
+                            _ => out.push_str(&format!("    movq {}(%rbp), %rax\n", addr)),
+                        }
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::FieldStore { var_index, slots, off, ty, src } => {
+                        let base = -8 * (*var_index + *slots) as i64;
+                        let addr = base + *off as i64;
+                        out.push_str(&ld(*src));
+                        match ty {
+                            Ty::U8 | Ty::Bool => {
+                                out.push_str(&format!("    movb %al, {}(%rbp)\n", addr))
+                            }
+                            Ty::I32 => out.push_str(&format!("    movl %eax, {}(%rbp)\n", addr)),
+                            _ => out.push_str(&format!("    movq %rax, {}(%rbp)\n", addr)),
+                        }
+                    }
+                    Instr::IndexFieldLoad { dst, ptr_var, idx, size, off, ty, len, line } => {
+                        out.push_str(&ld(*idx));
+                        out.push_str("    mov %rax, %r11\n");
+                        match len {
+                            LenRef::Const(n) => out.push_str(&format!("    mov ${}, %rcx\n", n)),
+                            LenRef::Var(v) => {
+                                if let Some(reg) = var_regs.get(v) {
+                                    out.push_str(&format!("    mov {}, %rcx\n", reg));
+                                } else {
+                                    out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                                }
+                            }
+                        }
+                        out.push_str("    cmp %rcx, %r11\n    jb 1f\n");
+                        out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                        out.push_str("    call .Lir_panic\n1:\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %r10\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        }
+                        out.push_str(&format!("    imul ${}, %r11, %r11\n", size));
+                        out.push_str(&format!("    add ${}, %r11\n", off));
+                        match ty {
+                            Ty::U8 | Ty::Bool => out.push_str("    movzbq (%r10,%r11), %rax\n"),
+                            Ty::I32 => out.push_str("    movslq (%r10,%r11), %rax\n"),
+                            _ => out.push_str("    mov (%r10,%r11), %rax\n"),
+                        }
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::IndexFieldStore { ptr_var, idx, size, off, ty, src, len, line } => {
+                        out.push_str(&ld(*src));
+                        out.push_str("    mov %rax, %r8\n");
+                        out.push_str(&ld(*idx));
+                        out.push_str("    mov %rax, %r11\n");
+                        match len {
+                            LenRef::Const(n) => out.push_str(&format!("    mov ${}, %rcx\n", n)),
+                            LenRef::Var(v) => {
+                                if let Some(reg) = var_regs.get(v) {
+                                    out.push_str(&format!("    mov {}, %rcx\n", reg));
+                                } else {
+                                    out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                                }
+                            }
+                        }
+                        out.push_str("    cmp %rcx, %r11\n    jb 1f\n");
+                        out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                        out.push_str("    call .Lir_panic\n1:\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %r10\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        }
+                        out.push_str(&format!("    imul ${}, %r11, %r11\n", size));
+                        out.push_str(&format!("    add ${}, %r11\n", off));
+                        match ty {
+                            Ty::U8 | Ty::Bool => out.push_str("    movb %r8b, (%r10,%r11)\n"),
+                            Ty::I32 => out.push_str("    movl %r8d, (%r10,%r11)\n"),
+                            _ => out.push_str("    movq %r8, (%r10,%r11)\n"),
+                        }
+                    }
                     Instr::FBin { dst, op, l, r } => {
                         out.push_str(&format!("    movsd -{}(%rbp), %xmm0\n", voff(f, *l)));
                         out.push_str(&format!("    movsd -{}(%rbp), %xmm1\n", voff(f, *r)));
@@ -2131,21 +2550,13 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&format!("    jne {}\n    jmp {}\n", lblock(*then_bb), lblock(*else_bb)));
                     }
                     Instr::Jmp(bb) => out.push_str(&format!("    jmp {}\n", lblock(*bb))),
-                    Instr::Alloc { ptr_var, elem, len } => {
+                    Instr::Alloc { ptr_var, elem, esz, len } => {
                         out.push_str(&ld(*len));
                         if *elem == Ty::Bool {
                             out.push_str("    add $63, %rax\n    shr $6, %rax\n");
                         }
                         out.push_str("    mov %rax, %rdi\n");
-                        let esz = if *elem == Ty::Bool {
-                            8
-                        } else {
-                            match elem {
-                                Ty::U8 => 1,
-                                Ty::I32 => 4,
-                                _ => 8,
-                            }
-                        };
+                        let esz = if *elem == Ty::Bool { 8 } else { *esz };
                         out.push_str(&format!("    mov ${}, %esi\n", esz));
                         out.push_str("    call calloc@PLT\n");
                         if let Some(reg) = var_regs.get(ptr_var) {
@@ -2154,7 +2565,7 @@ pub fn emit(prog: &IrProgram) -> String {
                             out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*ptr_var)));
                         }
                     }
-                    Instr::Fill { ptr_var, elem, len, value } => {
+                    Instr::Fill { ptr_var, elem, esz, len, value } => {
                         out.push_str(&ld(*value));
                         out.push_str("    mov %rax, %r8\n");
                         out.push_str(&ld(*len));
@@ -2171,11 +2582,7 @@ pub fn emit(prog: &IrProgram) -> String {
                             out.push_str("    mov %r10, %rdi\n    mov $255, %esi\n");
                             out.push_str("    call memset@PLT\n");
                         } else {
-                            let esz = match elem {
-                                Ty::U8 => 1,
-                                Ty::I32 => 4,
-                                _ => 8,
-                            };
+                            let esz = *esz as i64;
                             out.push_str(&format!(
                                 "    lea (%r10,%r11,{}), %r9\n",
                                 esz

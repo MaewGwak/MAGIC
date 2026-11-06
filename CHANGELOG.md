@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.25 — structs in the IR (2026-11-06)
+
+The IR now lowers struct definitions and locals, struct literals (including nested literals), field
+reads and writes, nested `FieldPath` access, struct arrays with a zero initialiser (calloc), and
+`IndexField`/`IndexFieldPath` loads and stores with bounds checks. Struct parameters and returns
+still report a clear diagnostic. The struct test (nested literals, f64 fields, 64-element struct
+array, indexing) is byte-identical to the C backend, and `bench-suite/particles_magic` prints
+500094707846.643 through `--backend ir` in 1049 ms (AST: ~1005 ms, C: 155 ms). Remaining field-copy
+cases (struct assignment/fill with a non-zero literal) are rejected explicitly.
+
 ## v0.8.24 — f64 support in the IR (2026-11-06)
 
 The IR understands `f64` values (bits in integer registers/slots), with dedicated instructions for

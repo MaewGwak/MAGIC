@@ -135,7 +135,10 @@ with identical output. v0.8.23 adds escaped string literals and `file_open`/`fil
 also run through the IR with identical output. v0.8.24 adds f64: bits live in integer
 registers/slots, while arithmetic, comparisons, casts, `sqrt` and `print_prec` use xmm instructions.
 The float test matches both backends and nbody prints its checksum through the IR (4.9 s vs C 738 ms,
-because float blocks still use the slot emitter).
+because float blocks still use the slot emitter). v0.8.25 adds structs: locals and nested literals,
+field/`IndexField` access with bounds checks, and struct arrays zero-initialised by calloc. The struct
+test matches the C backend and particles prints 500094707846.643 through the IR (1.05 s, AST ~1.0 s,
+C 155 ms).
 Affine indexes like
 `a[i * n + j]` are proved in v0.8.15 after constant propagation makes `n` and `n * n` literal: the
 maximum `(n-1)*n + (n-1)` is compared with the array length, so matmul's inner checks disappear

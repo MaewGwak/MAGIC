@@ -75,6 +75,7 @@ fn ir_matches_c_on_small_integer_programs() {
         ("boolops", "fn main() { print(1 < 2); print(1 == 2); print(1 <= 1); print(2 > 3); }"),
         ("nested", "fn main() { var t = 0; for i in 0..4 { for j in 0..3 { t = t + i * j; } } print(t); }"),
         ("divmod", "fn main() { var a = 12345; print(a / 10); print(a % 10); print(a / -3); print(a % -3); }"),
+        ("structs", "struct P { x: f64, y: f64 } struct L { a: P, b: P } fn main() { var p = P { x: 1.5, y: 2.25 }; print(p.x + p.y); p.x = p.x + 10.0; print(p.x); var ps: [P] = [P { x: 0.0, y: 0.0 }; 64]; var i = 0; while i < 64 { ps[i].x = i as f64; ps[i].y = (i as f64) * 0.5; i = i + 1; } var t = 0.0; i = 0; while i < 64 { t = t + ps[i].x + ps[i].y; i = i + 1; } print(t); var l = L { a: P { x: 1.0, y: 2.0 }, b: P { x: 3.0, y: 4.0 } }; print(l.a.x + l.b.y); print(l.b.x); }"),
         ("floats", "fn main() { var x: f64 = 1.5; var y = 2.0; print(x + y); print(x * y); print(x / y); print(x - y); print(x < y); print(x == y); print(sqrt(16.0)); print_prec(x * y, 3); var a: [f64] = [0.0; 4]; a[2] = 3.25; print(a[2]); print(-x); print(x as i32); print(3 as f64); var t = 0.0; var i = 0; while i < 5 { t = t + (i as f64) * 0.5; i = i + 1; } print(t); }"),
         ("immops", "fn main() { var a = 10; var b = 3; print(5 - b); print(5 < b); print(5 > b); print(5 <= 5); print(5 == a); print(a + 7); print(a * 3); print(a - 4); print(a / 2); print(a % 3); print(1000 - a); print(b - 10); }"),
         ("fill1", "fn main() { var a: [i32] = [7; 1]; print(a[0]); }"),
