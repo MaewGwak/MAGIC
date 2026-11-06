@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.30 — inline field-bounds elimination in the IR (2026-11-06)
+
+Loop-bound analysis now understands vector lengths (`for i in 0..len(v)` lowers to `VecLen`, possibly
+wrapped in a cast) and removes the bounds check embedded in `IndexField` accesses, not just separate
+`BoundsCheck` instructions. Marked checks get line 0 and the emitters skip the compare/panic
+sequence. Vecpart's hot loop drops from 11 panic sites to zero and runs 253 → 244 ms; particles and
+raytrace are unchanged, nbody stays around 3.18 s.
+
 ## v0.8.29 — argc/argv, stdin/stdout and string builtins in the IR (2026-11-06)
 
 `main` now saves `argc`/`argv`, and the IR lowers `argc`, `arg(i)`, `input_read(buf, len)`

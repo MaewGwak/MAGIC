@@ -1281,7 +1281,7 @@ enum DefKind {
     Other,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Bound {
     Const(i64),
     Var(usize),
@@ -1340,6 +1340,7 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
         }
         let all_instrs: Vec<&Instr> = f.blocks.iter().flat_map(|b| b.instrs.iter()).collect();
         let mut constraints: Vec<HashMap<usize, Bound>> = vec![HashMap::new(); n];
+        let mut unchecked: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
         for h in 0..n {
             let last = match f.blocks[h].instrs.last() {
                 Some(Instr::Br { then_bb, else_bb, .. }) => (*then_bb, *else_bb),
@@ -1387,6 +1388,29 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                                     Some(c) => Bound::Const(*c),
                                     None => Bound::Var(w),
                                 });
+                            }
+                            Some((DefKind::Other, _)) => {
+                                // `for i in 0..len(vec)` lowers the bound as a
+                                // VecLen (possibly wrapped in a cast).
+                                let mut defv = *r;
+                                let mut len_var = None;
+                                for _ in 0..3 {
+                                    let ins = all_instrs.iter().find(|ins| {
+                                        def_kind(ins).map(|(d, _)| d) == Some(defv)
+                                    });
+                                    match ins {
+                                        Some(Instr::VecLen { len_var: lv, .. }) => {
+                                            len_var = Some(*lv);
+                                            break;
+                                        }
+                                        Some(Instr::Trunc { a, .. }) => defv = *a,
+                                        _ => break,
+                                    }
+                                }
+                                if let Some(lv) = len_var {
+                                    iv = Some(v);
+                                    bound = Some(Bound::Var(lv));
+                                }
                             }
                             _ => {}
                         }
@@ -1461,6 +1485,24 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                             remove.insert((*bb, ii));
                         }
                     }
+                    match ins {
+                        Instr::IndexFieldLoad { idx, len, .. }
+                        | Instr::IndexFieldStore { idx, len, .. } => {
+                            let idx_is_iv = matches!(
+                                defs.get(idx),
+                                Some((DefKind::LoadVar(x), db)) if *x == iv && *db == *bb
+                            );
+                            let len_matches = match (bound, len) {
+                                (Bound::Const(a), LenRef::Const(b)) => a == *b,
+                                (Bound::Var(a), LenRef::Var(b)) => a == *b,
+                                _ => false,
+                            };
+                            if idx_is_iv && len_matches {
+                                unchecked.insert((*bb, ii));
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -1514,8 +1556,18 @@ fn remove_redundant_bounds(prog: &mut IrProgram) {
                 }
             }
         }
-        if remove.is_empty() {
+        if remove.is_empty() && unchecked.is_empty() {
             continue;
+        }
+        for (bi, ii) in &unchecked {
+            if let Some(ins) = f.blocks[*bi].instrs.get_mut(*ii) {
+                match ins {
+                    Instr::IndexFieldLoad { line, .. } | Instr::IndexFieldStore { line, .. } => {
+                        *line = 0;
+                    }
+                    _ => {}
+                }
+            }
         }
         for (bi, b) in f.blocks.iter_mut().enumerate() {
             let mut new_instrs = Vec::new();
@@ -2206,9 +2258,11 @@ fn emit_fast_block(
                         }
                     }
                 }
-                ra.out.push_str("    cmp %rcx, %rax\n    jb 1f\n");
-                ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
-                ra.out.push_str("    call .Lir_panic\n1:\n");
+                if *line != 0 {
+                    ra.out.push_str("    cmp %rcx, %rax\n    jb 1f\n");
+                    ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                    ra.out.push_str("    call .Lir_panic\n1:\n");
+                }
                 let ptr_slot = var_regs.get(ptr_var).copied();
                 let d = ra.dst_excluding(*dst, &[i]);
                 let base = match ptr_slot {
@@ -2249,9 +2303,11 @@ fn emit_fast_block(
                         }
                     }
                 }
-                ra.out.push_str("    cmp %r10, %rax\n    jb 1f\n");
-                ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
-                ra.out.push_str("    call .Lir_panic\n1:\n");
+                if *line != 0 {
+                    ra.out.push_str("    cmp %r10, %rax\n    jb 1f\n");
+                    ra.out.push_str(&format!("    lea .Lmsg{}(%rip), %rdi\n", line));
+                    ra.out.push_str("    call .Lir_panic\n1:\n");
+                }
                 if let Some(reg) = var_regs.get(ptr_var) {
                     ra.out.push_str(&format!("    mov {}, %r10\n", reg));
                 } else {
@@ -2419,7 +2475,7 @@ pub fn emit(prog: &IrProgram) -> String {
                     _ => None,
                 };
                 if let Some(line) = line {
-                    if !lines.contains(&line) {
+                    if line != 0 && !lines.contains(&line) {
                         lines.push(line);
                     }
                 }

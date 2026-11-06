@@ -146,7 +146,9 @@ vecpart to 251 ms. v0.8.28 adds the remaining file builtins (`file_seek`, `file_
 `file_write_at`, `file_tell`, `file_size`, `file_write_str`), matching the native backend's
 read-into-buffer-fragment semantics, so bufpool runs through the IR too (187 ms vs C 128 ms).
 v0.8.29 adds `argc`/`arg`, stdin/stdout builtins and NULL-safe `str_eq`/`str_byte`/`str_byte_n`/
-`str_len`; dbload, dbquery, sqldb and dbcli now match the C backend through the IR.
+`str_len`; dbload, dbquery, sqldb and dbcli now match the C backend through the IR. v0.8.30 extends
+loop-bound elimination to `VecLen` bounds and to the checks embedded in `IndexField` accesses
+(vecpart goes from 11 panic sites to none, 253 → 244 ms).
 Affine indexes like
 `a[i * n + j]` are proved in v0.8.15 after constant propagation makes `n` and `n * n` literal: the
 maximum `(n-1)*n + (n-1)` is compared with the array length, so matmul's inner checks disappear
