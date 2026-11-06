@@ -1,7 +1,7 @@
 # MAGIC benchmarks — current evidence (Linux, 2026-11-06)
 
 Machine: AMD Ryzen AI 7 350, 31.1 GB RAM, Linux. Compilers: gcc/g++ 16.2.1, rustc 1.99.1,
-Go and Goose where the harness has a source. MAGIC is `magicc 1.0.4` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
+Go and Goose where the harness has a source. MAGIC is `magicc 1.0.0` (speed numbers measured across the 0.8.87–0.8.90 compiler), default **IR** backend
 (`as` + `ld`, no C compiler in the build path). Every number below comes from
 `./verify.sh` / `./bench-linux.sh`; every program's checksum is compared and `verify.sh` fails on
 a mismatch. Timings are medians of 3–5 interleaved runs, portable flags (no `-march=native` for the
@@ -103,25 +103,48 @@ dynamic peak; `bench-static-memory.sh` fails if any baseline peaks lower than st
 
 ## Performance gate (1.0, clang C optimized path)
 
-Protocol: optimized C/C++/Rust baselines use `-O3 -march=native` / `rustc -O -C target-cpu=native`.
-The optimized MAGIC path explicitly uses the clang C backend for all eight workloads (best practical
-backend); native IR is the no-C/`--static` fallback. `bench-parity-gate.sh` is part of `verify.sh`;
-ties are accepted. Measured:
+Protocol: optimized C/C++/Rust baselines use `-O3 -march=native` / `rustc -O -C target-cpu=native`;
+the optimized MAGIC path explicitly uses the clang C backend for all eight. Native IR is the
+no-C/`--static` fallback and is not the speed headline. `bench-parity-gate.sh` is part of `verify.sh`;
+ties are accepted. All times below are **milliseconds (ms)**, medians of five warm runs, lower better.
 
-| workload | fastest optimized baseline | MAGIC optimized (clang C) |
-|---|---:|---:|
-| sieve | 399 | **16** |
-| fannkuch | 148 | **27** |
-| matmul | 4 | 4 (tie) |
-| n-body | 222 | **198** |
-| raytrace | 28 | **8** |
-| hash | 25 | **5** |
-| particles | 64 | **2** |
-| binary trees | 694 | **2** |
+| workload | C (ms) | C++ (ms) | Rust (ms) | fastest (ms) | MAGIC (ms) |
+|---|---:|---:|---:|---:|---:|
+| sieve | 403 | **389** | 398 | **389** (C++) | **17** |
+| fannkuch | 154 | 160 | **146** | **146** (Rust) | **27** |
+| matmul | **4** | 5 | 24 | **4** (C) | 3 |
+| n-body | 328 | 326 | **219** | **219** (Rust) | **199** |
+| raytrace | **29** | 33 | 31 | **29** (C) | **8** |
+| hash | 25 | 27 | **23** | **23** (Rust) | **4** |
+| particles | **66** | **66** | 131 | **66** (C/C++) | **3** |
+| binary trees | **697** | — | 1279 | **697** (C) | **2** |
 
-Native no-C fallback (not headline): sieve 33, fannkuch 60, matmul 6, n-body 613, raytrace 17,
-hash 4, particles 4, binary trees 442. Debug/sanitizer builds never ship as release artifacts. The
-C-backend choice is explicit; no silent fallback.
+### Files, commands and fairness
+
+- **C:** `bench-suite/sieve_c.c`, `fannkuch/fannkuch_c.c`, `matmul_c.c`, `nbody_c.c`,
+  `raytrace_c.c`, `hash_c.c`, `particles_c.c`, and `bench-bt/bt_c.c`. Built with
+  `gcc -O3 -march=native ... -lm`.
+- **C++:** matching `bench-suite/*_cpp.cpp` (no C++ binary-trees baseline exists; shown as `—`).
+  Built with `g++ -O3 -march=native ... -lm`.
+- **Rust:** matching `bench-suite/*_rs.rs`; binary trees uses `bench-bt/bt_rust_flat.rs`. Built with
+  `rustc -O -C target-cpu=native`.
+- **MAGIC:** `bench-suite/sieve_magic_blockodd.magic`, `fannkuch/fannkuch_magic_blocks.magic`,
+  `matmul_magic_ikj.magic`, `nbody_magic.magic`, `raytrace_magic_par.magic`,
+  `hash_magic_direct.magic`, `particles_magic_closed.magic`, `bench-bt/bt_magic_loop.magic`. Built
+  with `magicc build --backend c --cc "clang -O3 -march=native -pthread -lm"`.
+- **Exactness:** every timed binary must print the expected output tail; a mismatch fails the gate.
+  Outputs are compared as exact strings.
+- **Runs:** five warm runs, median reported; one host, no CPU pinning, so a few percent of noise is
+  expected (matmul is a 4-vs-3 ms tie/near-tie in this run).
+- **Algorithm caveat:** baseline sources keep their original algorithms with optimized flags; MAGIC
+  uses its best shipped algorithm (blocked sieve, blocks fannkuch, i-k-j matmul, par raytrace, direct
+  hash, closed-form particles, level-order trees). This is not same-algorithm parity; it is the
+  owner-approved best-practical comparison.
+- **Backend caveat:** the speed path needs a C compiler and is not the static path. `--static` uses
+  native IR and the no-C fallback numbers: sieve 33, fannkuch 60, matmul 6, n-body 613, raytrace 17,
+  hash 4, particles 4, binary trees 442 ms. No silent fallback.
+- **Memory:** static peak RSS is measured in **MiB** by `bench-static-memory.sh`; see the static
+  memory table above.
 
 ## Compile time (2,000 functions, 92 KB source)
 

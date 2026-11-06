@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v1.0 (1.0.4)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v1.0 (1.0.0)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -157,36 +157,54 @@ rejected. Integer overflow is not trapped.
 
 ## Benchmarks
 
-Current Linux evidence (Ryzen AI 7 350, gcc 16.2, rustc 1.99; medians of 3–5 runs). This is the
-**1.0 performance gate** enforced by `verify.sh`. Baselines are optimized with native flags
-(`gcc/g++ -O3 -march=native`, `rustc -O -C target-cpu=native`). The optimized MAGIC path uses the
-explicit clang C backend for all eight workloads (best practical backend); the native IR backend
-remains the no-C/`--static` path and is slower. Ties are acceptable: this run wins seven and ties
-matmul.
+All timings are wall-clock medians of 3–5 warm runs in **milliseconds (ms)**, lower is better, on the
+same host (Ryzen AI 7 350, gcc 16.2, clang 22.1, rustc 1.99). This is the **1.0 performance gate**
+enforced by `verify.sh`. Baselines use `gcc/g++ -O3 -march=native` and
+`rustc -O -C target-cpu=native`; the optimized MAGIC path uses the explicit clang C backend for all
+eight workloads. Ties are acceptable per owner guidance.
 
-| Workload | Fastest optimized baseline | MAGIC default/optimized (clang C) |
-|---|---:|---:|
-| sieve 100M | 399 | **16** |
-| fannkuch n=10 | 148 | **27** |
-| ray tracer 1536² | 28 | **8** |
-| hash 1M | 25 | **5** |
-| particles 1M × 100 | 64 | **2** |
-| n-body 10M | 222 | **198** |
-| binary trees | 694 | **2** |
-| matmul 384 | 4 | 4 (tie) |
+| Workload | C (ms) | C++ (ms) | Rust (ms) | Fastest (ms) | MAGIC (ms) |
+|---|---:|---:|---:|---:|---:|
+| sieve 100M | 403 | 389 | 398 | **389** (C++) | **17** |
+| fannkuch n=10 | 154 | 160 | **146** | **146** (Rust) | **27** |
+| ray tracer 1536² | 29 | 33 | 31 | **29** (C) | **8** |
+| hash 1M | 25 | 27 | **23** | **23** (Rust) | **4** |
+| particles 1M × 100 | 66 | 66 | 131 | **66** (C/C++) | **3** |
+| n-body 10M | 328 | 326 | **219** | **219** (Rust) | **199** |
+| binary trees | **697** | — | 1279 | **697** (C) | **2** |
+| matmul 384 | **4** | 5 | 24 | **4** (C) | **3** |
 
-Native no-C fallback (for `--static` and environments without a C compiler) remains available and is
-not the speed headline: sieve 33, fannkuch 60, matmul 6, n-body 613, raytrace 17, hash 4, particles
-4, binary trees 442. Exact outputs are checked in both paths. Caveat: baseline sources keep their
-original algorithms with optimized flags; MAGIC uses its best shipped algorithm, and the C-backend
-choice is explicit, never silent.
+Source files: C `bench-suite/*_c.c` (bt: `bench-bt/bt_c.c`), C++ `bench-suite/*_cpp.cpp`, Rust
+`bench-suite/*_rs.rs` (bt: `bench-bt/bt_rust_flat.rs`), MAGIC `bench-suite/*_magic*.magic` and
+`bench-bt/bt_magic_loop.magic`. `bench-parity-gate.sh` builds and checks exact output tails; see
+BENCHMARKS for the full method and fairness caveats.
 
-Static builds peak below **C, C++ and Rust on all eight workloads**: sieve 11.9 MB vs C 96.9 / C++ 99.2 / Rust 97.1 (8.1x), fannkuch 0.4 vs 1.7/4.1/2.2, matmul 1.6 vs 3.4/5.6/3.7, hash 31.9 vs 33.6/35.6/33.8, binary trees 15.9 vs 17.6/—/17.9, n-body 0.4 vs 1.6/4.2/2.1, particles 30.4 vs 32.1/34.3/32.3 and raytrace 0.4 vs 1.6/4.2/2.1. Dynamic builds are at parity because both sides use plain arrays; the win comes from the freestanding static layout.
+Native no-C fallback (for `--static`/no C compiler) remains available but is not the speed headline:
+sieve 33 ms, fannkuch 60 ms, matmul 6 ms, n-body 613 ms, raytrace 17 ms, hash 4 ms, particles 4 ms,
+binary trees 442 ms.
+
+### Static peak RSS
+
+Static builds, **MiB of peak resident set** (RSS), lower is better (`bench-static-memory.sh`):
+
+| Workload | MAGIC (MiB) | C (MiB) | C++ (MiB) | Rust (MiB) |
+|---|---:|---:|---:|---:|
+| sieve 100M | **11.9** | 96.9 | 99.2 | 97.1 |
+| fannkuch n=10 | **0.4** | 1.7 | 4.1 | 2.2 |
+| matmul 384 | **1.6** | 3.4 | 5.6 | 3.7 |
+| hash 1M | **31.9** | 33.6 | 35.6 | 33.8 |
+| binary trees | **15.9** | 17.6 | — | 17.9 |
+| n-body 10M | **0.4** | 1.6 | 4.2 | 2.1 |
+| particles | **30.4** | 32.1 | 34.3 | 32.3 |
+| raytrace | **0.4** | 1.6 | 4.2 | 2.1 |
+
+Dynamic builds are at memory parity because both sides use plain arrays; the static win comes from
+the freestanding layout. MAGIC static peak is below every baseline on all eight.
+
 Cold compilation of the 2,000-function source is 25 ms versus 47 ms for gcc, 109 ms for rustc and
 69 ms for Goose; incremental rebuild after one edit is 10 ms.
 
-The memory win is
-proven on all eight workloads versus all three baselines. `MAGIC_THREADS=1,2,4,8,16` scales the parallel raytracer 91→17 ms (5.4x) on this host. The static runtime implements `env()` from the initial environment and syscall-backed file I/O and TCP (`net_listen/port/connect/accept/read/write/close`). It formats `print_prec` via fixed-point (precision <= 9, overflow and larger precisions exit with an error) and static panics print the line plus a raw frame-pointer stack trace to stderr. `%g`/`print` of floats is rejected explicitly.
+`MAGIC_THREADS=1,2,4,8,16` scales the parallel raytracer 91→17 ms (5.4x) on this host. The static runtime implements `env()` from the initial environment and syscall-backed file I/O and TCP (`net_listen/port/connect/accept/read/write/close`). It formats `print_prec` via fixed-point (precision <= 9, overflow and larger precisions exit with an error) and static panics print the line plus a raw frame-pointer stack trace to stderr. `%g`/`print` of floats is rejected explicitly.
 Full tables, methodology and honest gaps: [`BENCHMARKS.md`](BENCHMARKS.md).
 
 ```bash

@@ -41,7 +41,9 @@ run(){ # name c cpp rs magic want mode want_magic
   local st=ok
   if [ "$dm" -gt "$best" ] || [ "$om" -gt "$best" ]; then st=FAIL; FAIL=1;
   elif [ "$dm" -eq "$best" ]; then st=tie; fi
-  printf '%-10s best_base=%-4s MAGIC default=%-4s opt=%-4s %s\n' "$n" "$best" "$dm" "$om" "$st"
+  local cs=$cm ps=$pm rs=$rm
+  [ "$cs" = 999999 ] && cs=-; [ "$ps" = 999999 ] && ps=-; [ "$rs" = 999999 ] && rs=-
+  printf '%-10s C=%-4s C++=%-4s Rust=%-4s best=%-4s MAGIC=%-4s %s\n' "$n" "$cs" "$ps" "$rs" "$best" "$dm" "$st"
 }
 # nbody C/C++ FMA prints 844; Rust/native MAGIC prints 831; clang MAGIC prints 844.
 run sieve bench-suite/sieve_c.c bench-suite/sieve_cpp.cpp bench-suite/sieve_rs.rs bench-suite/sieve_magic_blockodd.magic 5761455 clang 5761455

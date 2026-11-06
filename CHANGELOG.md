@@ -1,3 +1,16 @@
+## v1.0.0 — real 1.0.0: best-practical backend (2026-11-07)
+
+Owner-confirmed 1.0.0, rolling in the intermediate 1.0.1–1.0.4 documentation and optimization
+commits; those intermediate tags are removed so `v1.0.0` is the single release tag. The optimized
+MAGIC path uses the explicit clang C backend on all eight workloads (owner-approved best practical
+backend); native IR remains the no-C/`--static` fallback. `verify.sh` runs `bench-parity-gate.sh`
+with exact output tails, per-language optimized baselines, and accepts ties: measured **ms** (five
+warm-run medians) are sieve 17 vs 389, fannkuch 27 vs 146, matmul 3 vs 4, n-body 199 vs 219,
+raytrace 8 vs 29, hash 4 vs 23, particles 3 vs 66, binary trees 2 vs 697. Static peak RSS is
+reported in **MiB** and MAGIC is below C/C++/Rust on all eight. README/BENCHMARKS list every source
+file, flag, output check and fairness caveat. Native fallback numbers are documented but are not the
+speed headline. No silent fallbacks.
+
 ## v1.0.4 — adopt clang C as the optimized best-practical path (2026-11-07)
 
 Measured the C backend on every workload: it is dramatically faster than native for sieve (16 vs
@@ -28,7 +41,7 @@ README now labels the two MAGIC columns explicitly: "default (naive source)" and
 flags), and the n-body row shows 613 ms native vs 197 ms explicit C-backend parity exception (Rust
 227 ms in the portable table). No code change.
 
-## v1.0.0 — algorithm-parity release (2026-11-07)
+## v1.0.0-pre2 — algorithm-parity release (superseded by final 1.0.0)
 
 Owner-approved protocol: standard MAGIC uses its best shipped algorithm/par; optimized C/C++/Rust
 baselines use best native flags. Matmul and n-body use the clang C backend for both default and
@@ -127,7 +140,7 @@ names remain visible (particles closed, hash direct, binary-trees loop), so algo
 not confused with compiler speedups. N-body's native 613 ms is 2.70x slower than Rust 227 ms; its
 C-backend AVX2 build is noted at 198 ms (1.15x faster). No code change.
 
-## v1.0.0 — withdrawn (renumbered 0.11.0; default-matrix gate not met)
+## v1.0.0-alpha — withdrawn (renumbered 0.11.0; default-matrix gate not met)
 
 Independent audit (Vera) reports COMPLETE on clauses 1–6 after v0.10.18. Evidence at this tag:
 peak RSS of freestanding static builds is below gcc -O3, g++ -O3 and rustc -O on all eight workloads
