@@ -709,6 +709,7 @@ fn emit_fast_block(
     instrs: &[Instr],
     live_out: &std::collections::HashSet<Value>,
     name: &str,
+    var_regs: &HashMap<usize, &'static str>,
 ) {
     let mut ra = RegAlloc {
         out,
@@ -730,20 +731,28 @@ fn emit_fast_block(
             }
             Instr::LoadVar { dst, var } => {
                 let d = ra.dst(*dst);
-                ra.out.push_str(&format!(
-                    "    mov -{}(%rbp), {}\n",
-                    varoff(*var),
-                    POOL[d].0
-                ));
+                if let Some(reg) = var_regs.get(var) {
+                    ra.out.push_str(&format!("    mov {}, {}\n", reg, POOL[d].0));
+                } else {
+                    ra.out.push_str(&format!(
+                        "    mov -{}(%rbp), {}\n",
+                        varoff(*var),
+                        POOL[d].0
+                    ));
+                }
                 ra.def_store(*dst, d);
             }
             Instr::StoreVar { var, src } => {
                 let a = ra.operand(*src);
-                ra.out.push_str(&format!(
-                    "    mov {}, -{}(%rbp)\n",
-                    POOL[a].0,
-                    varoff(*var)
-                ));
+                if let Some(reg) = var_regs.get(var) {
+                    ra.out.push_str(&format!("    mov {}, {}\n", POOL[a].0, reg));
+                } else {
+                    ra.out.push_str(&format!(
+                        "    mov {}, -{}(%rbp)\n",
+                        POOL[a].0,
+                        varoff(*var)
+                    ));
+                }
             }
             Instr::Bin { dst, op, l, r } => {
                 let a = ra.operand(*l);
@@ -815,7 +824,11 @@ fn emit_fast_block(
                         ra.out.push_str(&format!("    mov ${}, %rcx\n", n));
                     }
                     LenRef::Var(v) => {
-                        ra.out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                        if let Some(reg) = var_regs.get(v) {
+                            ra.out.push_str(&format!("    mov {}, %rcx\n", reg));
+                        } else {
+                            ra.out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                        }
                     }
                 }
                 ra.out.push_str("    cmp %rcx, %rax\n    jb 1f\n");
@@ -825,7 +838,11 @@ fn emit_fast_block(
             Instr::IndexLoad { dst, ptr_var, idx, elem } => {
                 let a = ra.operand(*idx);
                 ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
-                ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                if let Some(reg) = var_regs.get(ptr_var) {
+                    ra.out.push_str(&format!("    mov {}, %r10\n", reg));
+                } else {
+                    ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                }
                 match elem {
                     Ty::U8 => ra.out.push_str("    movzbq (%r10,%rax,1), %rax\n"),
                     Ty::I32 => ra.out.push_str("    movslq (%r10,%rax,4), %rax\n"),
@@ -840,7 +857,11 @@ fn emit_fast_block(
                 ra.out.push_str(&format!("    mov {}, %rcx\n", POOL[s].0));
                 let a = ra.operand(*idx);
                 ra.out.push_str(&format!("    mov {}, %rax\n", POOL[a].0));
-                ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                if let Some(reg) = var_regs.get(ptr_var) {
+                    ra.out.push_str(&format!("    mov {}, %r10\n", reg));
+                } else {
+                    ra.out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                }
                 match elem {
                     Ty::U8 => ra.out.push_str("    movb %cl, (%r10,%rax,1)\n"),
                     Ty::I32 => ra.out.push_str("    movl %ecx, (%r10,%rax,4)\n"),
@@ -909,16 +930,50 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str("    lea .Lfmt_panic(%rip), %rsi\n    xor %eax, %eax\n");
     out.push_str("    call fprintf@PLT\n    mov $1, %edi\n    call exit@PLT\n");
     for f in &prog.funcs {
+        // Variables used most often get a callee-saved register for the whole
+        // function; the emitter never touches these registers elsewhere.
+        let mut var_counts: HashMap<usize, u32> = HashMap::new();
+        for b in &f.blocks {
+            for ins in &b.instrs {
+                match ins {
+                    Instr::LoadVar { var, .. } => {
+                        *var_counts.entry(*var).or_insert(0) += 1;
+                    }
+                    Instr::StoreVar { var, .. } => {
+                        *var_counts.entry(*var).or_insert(0) += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut ranked: Vec<(usize, u32)> = var_counts.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let chosen: Vec<(usize, &'static str)> = ranked
+            .into_iter()
+            .take(5)
+            .enumerate()
+            .map(|(i, (var, _))| (var, ["%rbx", "%r12", "%r13", "%r14", "%r15"][i]))
+            .collect();
+        let var_regs: HashMap<usize, &'static str> = chosen.iter().copied().collect();
+
         out.push_str(&format!(".globl {}\n.type {}, @function\n{}:\n", f.name, f.name, f.name));
         out.push_str("    push %rbp\n    mov %rsp, %rbp\n");
         let frame = 8 * (f.nvars + f.nvalues);
         let frame = (frame + 15) & !15;
-        if frame > 0 {
-            out.push_str(&format!("    sub ${}, %rsp\n", frame));
+        let pad = if chosen.len() % 2 == 1 { 8 } else { 0 };
+        if frame + pad > 0 {
+            out.push_str(&format!("    sub ${}, %rsp\n", frame + pad));
+        }
+        for i in 0..chosen.len() {
+            out.push_str(&format!("    push {}\n", ["%rbx", "%r12", "%r13", "%r14", "%r15"][i]));
         }
         let regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
         for i in 0..f.nparams.min(6) {
-            out.push_str(&format!("    mov {}, -{}(%rbp)\n", regs[i], varoff(i)));
+            if let Some(reg) = var_regs.get(&i) {
+                out.push_str(&format!("    mov {}, {}\n", regs[i], reg));
+            } else {
+                out.push_str(&format!("    mov {}, -{}(%rbp)\n", regs[i], varoff(i)));
+            }
         }
         let lblock = |bb: usize| format!(".L{}_{}", f.name, bb);
         let nblocks = f.blocks.len();
@@ -973,7 +1028,7 @@ pub fn emit(prog: &IrProgram) -> String {
         for (bb, b) in f.blocks.iter().enumerate() {
             out.push_str(&format!("{}:\n", lblock(bb)));
             if !slow_block(&b.instrs) {
-                emit_fast_block(&mut out, f, &b.instrs, &live_out[bb], &f.name);
+                emit_fast_block(&mut out, f, &b.instrs, &live_out[bb], &f.name, &var_regs);
                 continue;
             }
             for ins in &b.instrs {
@@ -988,12 +1043,20 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
                     Instr::LoadVar { dst, var } => {
-                        out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*var)));
+                        if let Some(reg) = var_regs.get(var) {
+                            out.push_str(&format!("    mov {}, %rax\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*var)));
+                        }
                         out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
                     }
                     Instr::StoreVar { var, src } => {
                         out.push_str(&ld(*src));
-                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*var)));
+                        if let Some(reg) = var_regs.get(var) {
+                            out.push_str(&format!("    mov %rax, {}\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*var)));
+                        }
                     }
                     Instr::Bin { dst, op, l, r } => {
                         out.push_str(&ld(*l));
@@ -1095,14 +1158,22 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str("    mov %rax, %rdi\n");
                         out.push_str(&format!("    mov ${}, %esi\n", esz));
                         out.push_str("    call calloc@PLT\n");
-                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*ptr_var)));
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov %rax, {}\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*ptr_var)));
+                        }
                     }
                     Instr::BoundsCheck { idx, len, line } => {
                         out.push_str(&ld(*idx));
                         match len {
                             LenRef::Const(n) => out.push_str(&format!("    mov ${}, %rcx\n", n)),
                             LenRef::Var(v) => {
-                                out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)))
+                                if let Some(reg) = var_regs.get(v) {
+                                    out.push_str(&format!("    mov {}, %rcx\n", reg));
+                                } else {
+                                    out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*v)));
+                                }
                             }
                         }
                         out.push_str("    cmp %rcx, %rax\n    jb 1f\n");
@@ -1111,7 +1182,11 @@ pub fn emit(prog: &IrProgram) -> String {
                     }
                     Instr::IndexLoad { dst, ptr_var, idx, elem } => {
                         out.push_str(&ld(*idx));
-                        out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %r10\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        }
                         match elem {
                             Ty::U8 => {
                                 out.push_str("    movzbq (%r10,%rax,1), %rax\n");
@@ -1129,7 +1204,11 @@ pub fn emit(prog: &IrProgram) -> String {
                         out.push_str(&ld(*src));
                         out.push_str("    mov %rax, %rcx\n");
                         out.push_str(&ld(*idx));
-                        out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %r10\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        }
                         match elem {
                             Ty::U8 => out.push_str("    movb %cl, (%r10,%rax,1)\n"),
                             Ty::I32 => out.push_str("    movl %ecx, (%r10,%rax,4)\n"),
@@ -1140,6 +1219,9 @@ pub fn emit(prog: &IrProgram) -> String {
             }
         }
         out.push_str(&format!(".L{}_ret:\n", f.name));
+        for i in (0..chosen.len()).rev() {
+            out.push_str(&format!("    pop {}\n", ["%rbx", "%r12", "%r13", "%r14", "%r15"][i]));
+        }
         out.push_str("    leave\n    ret\n");
         out.push_str(&format!(".size {}, .-{}\n", f.name, f.name));
     }

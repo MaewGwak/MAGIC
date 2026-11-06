@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.13 — IR variables in callee-saved registers (2026-11-06)
+
+The IR emitter ranks variables by use count and keeps the top five in `%rbx`/`%r12-%r15` for the
+whole function: the prologue saves the registers, parameters are initialised there, and `LoadVar` /
+`StoreVar`, array pointers, runtime lengths and `BoundsCheck` all read and write the promoted
+register instead of a stack slot. Three bugs surfaced through the array-parameter differential case
+(a runtime length bypassing the promotion, a pointer written straight to the slot after `calloc`, and
+array accesses reloading the stale slot) and are fixed. IR matmul keeps its checksum 326316140 and
+improves 297 → 251 ms (481 ms before any allocation; C: 31 ms, AST native: see below).
+
 ## v0.8.12 — block register allocation for the IR (2026-11-06)
 
 The IR emitter now runs a linear-scan allocation per basic block: six caller-saved registers hold

@@ -110,9 +110,10 @@ backends.
 
 v0.8.12 adds a per-block linear-scan allocator: six caller-saved registers for temporaries,
 live-out/spilled values stored to slots, and a slot-mode fallback for blocks containing calls,
-`printf`, `calloc` or division. Matmul keeps its checksum and improves from 481 ms to ~297 ms
-(C: 27 ms). Variables still live in memory; promoting them (with phi-free loop analysis or a
-slot-elimination pass) is the next allocation step.
+`printf`, `calloc` or division. v0.8.13 promotes the five most-used variables to callee-saved
+registers for the whole function (saved in the prologue), which matmul keeps from 297 ms down to
+251 ms (481 ms before allocation; C: 31 ms). Bounds checks, index scaling and the lack of
+vectorisation are the remaining costs.
 
 ## Differential harness## Differential harness
 
