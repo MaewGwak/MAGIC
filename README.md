@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.9 (0.9.7)** — 168 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.9 (0.9.8)** — 168 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -172,12 +172,12 @@ shipped for that workload and is always named.
 | binary trees | 721 | — | 1333 | 3904 | 1512 | 5.42x |
 | matmul 384 | 12 | 15 | 42 | **9** (interchange SIMD) | 10 (i-k-j) | **win** |
 
-Peak RSS is 7.2x lower than C on the bit-packed sieve (13.8 vs 99.2 MB) and at parity elsewhere.
+Static builds have lower peak RSS than C on all five integer workloads: sieve 11.9 vs 96.8 MB (8.1x), fannkuch 0.4 vs 1.7, matmul 1.6 vs 3.3, hash 32.0 vs 33.6 and binary trees 16.0 vs 17.5. Float workloads (n-body, particles, ray) are still dynamic and at parity.
 Cold compilation of the 2,000-function source is 25 ms versus 47 ms for gcc, 109 ms for rustc and
 69 ms for Goose; incremental rebuild after one edit is 10 ms.
 
 The speed goal is **partially met**: three outright wins and hash inside 1.25x, but matmul, binary
-trees, n-body and particles still trail. The memory win is proven on sieve and is parity elsewhere.
+trees, n-body and particles still trail. The memory win is proven on all five integer workloads; float printing is not yet supported by the static runtime.
 Full tables, methodology and honest gaps: [`BENCHMARKS.md`](BENCHMARKS.md).
 
 ```bash

@@ -171,6 +171,23 @@ This run confirms the four compiler-driven wins (sieve, fannkuch blocks, matmul,
 hash par inside 1.25x; n-body/particles/bt remain behind. C values move a few percent between runs
 (particles 65→72, sieve 409→431), so treat single-digit differences as noise.
 
+## Static peak RSS (`bench-static-memory.sh`)
+
+Freestanding integer builds peak below the C -O3 baseline on every workload measured:
+
+| workload | C peak | MAGIC static peak | ratio |
+|---|---:|---:|---:|
+| sieve | 96.8 MB | **11.9 MB** | 0.12 (8.1x lower) |
+| fannkuch | 1.7 MB | **0.4 MB** | 0.23 |
+| matmul | 3.3 MB | **1.6 MB** | 0.49 |
+| hash | 33.6 MB | **32.0 MB** | 0.95 |
+| binary trees | 17.5 MB | **15.9 MB** | 0.91 |
+
+Five of the eight matrix workloads are integer/bool and support `--static`; the three float workloads
+(n-body, particles, raytrace) still use dynamic binaries at parity. The gate fails if any static
+peak exceeds C. This is where the "lowest on most workloads" claim now stands: 5/8 measured, with
+the float three explicitly outstanding.
+
 ## Low-end proxy gate
 
 `./bench-lowend.sh` rebuilds all eight default workloads and runs each under a **2 GiB

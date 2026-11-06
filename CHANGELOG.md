@@ -30,6 +30,14 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.9.8 — static builds beat C peak RSS on five workloads (2026-11-06)
+
+`bench-static-memory.sh` measures peak RSS for the freestanding builds against gcc -O3: sieve 11.9
+vs 96.8 MB (8.1x), fannkuch 0.4 vs 1.7, matmul 1.6 vs 3.3, hash 32.0 vs 33.6, binary trees 15.9 vs
+17.5. All five integer workloads are lower and the gate is part of verify.sh. The three float
+workloads remain dynamic and at parity because the static runtime does not format floats yet. All
+gates pass, 168 tests, parity 60/60, low-end green.
+
 ## v0.9.7 — freestanding static binaries (2026-11-06)
 
 New `--static` mode for the IR backend: the generated assembly is sectionised, a syscall-only runtime
