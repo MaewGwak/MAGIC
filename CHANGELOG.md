@@ -1,3 +1,11 @@
+## v0.11.1 — optimized-baseline harness and gap table (2026-11-07)
+
+Added `bench-optimized.sh`: gcc/g++ -O3 -march=native and rustc -O -C target-cpu=native baselines
+against the default MAGIC build and the best MAGIC variant. Measured gap: default wins only sieve
+(361 vs 396); fannkuch 1.70x, matmul 1.33x, n-body 2.56x, raytrace 2.66x, hash 1.60x, particles
+1.27x and binary trees 5.39x behind. Best variants win six; matmul and native n-body remain behind.
+The table is recorded in BENCHMARKS; the 1.0.0 gate is explicitly not met. No compiler change.
+
 ## v0.11.0 — 1.0.0 withdrawn; default+optimized matrix gate re-opened (2026-11-07)
 
 Per owner decision, the v1.0.0/v1.0.1 tags are withdrawn and their version numbers renumbered to

@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.11 (0.11.0)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.11 (0.11.1)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -181,7 +181,7 @@ Static builds peak below **C, C++ and Rust on all eight workloads**: sieve 11.9 
 Cold compilation of the 2,000-function source is 25 ms versus 47 ms for gcc, 109 ms for rustc and
 69 ms for Goose; incremental rebuild after one edit is 10 ms.
 
-The speed goal is met for seven workloads via their best variants (sieve, fannkuch blocks, matmul,
+Under the new 1.0.0 gate (default and optimized MAGIC vs optimized C/C++/Rust) the default build wins only sieve; see BENCHMARKS. The best variants win six workloads (sieve, fannkuch blocks, matmul,
 raytrace par, hash direct, particles closed and binary-trees native loop); n-body's native IR is
 613 ms, while its C-backend AVX2 build is 198 ms, inside 1.25x of Rust's 227 ms. The memory win is
 proven on all eight workloads versus all three baselines. `MAGIC_THREADS=1,2,4,8,16` scales the parallel raytracer 91→17 ms (5.4x) on this host. The static runtime implements `env()` from the initial environment and syscall-backed file I/O and TCP (`net_listen/port/connect/accept/read/write/close`). It formats `print_prec` via fixed-point (precision <= 9, overflow and larger precisions exit with an error) and static panics print the line plus a raw frame-pointer stack trace to stderr. `%g`/`print` of floats is rejected explicitly.

@@ -101,6 +101,29 @@ Dynamic MAGIC builds are at parity with C because both use plain arrays; the gat
 the static memory mode. `bench-memory.sh` still checks that the reported static bound is below the
 dynamic peak; `bench-static-memory.sh` fails if any baseline peaks lower than static MAGIC.
 
+## Optimized-baseline gate (target, not yet met)
+
+The 1.0.0 gate requires **both** the default MAGIC build and a MAGIC-optimized build to beat
+optimized C, C++ and Rust. `bench-optimized.sh` builds baselines with `gcc/g++ -O3 -march=native`
+and `rustc -O -C target-cpu=native`, and compares the standard source (`magicc build`) and the best
+MAGIC variant. Current result (Ryzen host, medians of 3):
+
+| workload | optimized C | optimized C++ | optimized Rust | MAGIC default | MAGIC best | default gap |
+|---|---:|---:|---:|---:|---:|---:|
+| sieve | 397 | 397 | 396 | **361** | **37** | 1.10x faster |
+| fannkuch | 164 | 163 | **151** | 256 | **62** | 1.70x slower |
+| matmul | **6** | 6 | 25 | 8 | 9 | 1.33x slower |
+| n-body | 325 | 330 | **224** | 573 | 615 (native) | 2.56x slower |
+| raytrace | 31 | **29** | 34 | 77 | **15** | 2.66x slower |
+| hash | **25** | 25 | 25 | 40 | **5** | 1.60x slower |
+| particles | **63** | 65 | 133 | 80 | **5** | 1.27x slower |
+| binary trees | **695** | — | 1287 | 3746 | **448** | 5.39x slower |
+
+Under the strict "default build of the standard source" reading, only sieve is ahead; the default
+build does **not** pass this gate. Best variants win six workloads, matmul remains 9 vs C's 6, and
+n-body's native best is 2.7x behind Rust (a C-backend AVX2 variant reaches ~198 ms and would win).
+N-body C/C++ outputs differ by 1.3e-8 under `-march=native` FMA; the harness accepts that value.
+
 ## Compile time (2,000 functions, 92 KB source)
 
 `./bench-compile/run.sh`, medians of three runs. Cold = remove binary/object/stamp; edit = change one
