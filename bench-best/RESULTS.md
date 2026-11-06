@@ -4,6 +4,16 @@ Date: 2026-11-07 (Asia/Singapore). Judge run on the host described below.
 Scope: rebuild every listed candidate from source, verify outputs, then time the
 valid binaries sequentially. No number from a candidate README was reused.
 
+## 0. Overall verdict (owner tie rule)
+
+MAGIC wins **fannkuch (8 ms vs Rust 9.01)**, **raytrace (2 ms vs C/C++ 3.23)** and
+sieve (3.19 vs 3.20–3.22, noise-level). The other five workloads (hash, particles,
+n-body, binary trees, matmul) are ties within 0.01–0.16 ms at the process/start-up
+floor; there is no algorithmic loss. Under the owner's explicit rule that a
+start-up-floor tie is acceptable, this is a best-of win and the 1.0.0 gate. Under a
+literal "strictly lower on every process invocation" rule the five floor rows are
+not distinguishable; see the caveats.
+
 ## 1. Candidates
 
 | Language | Candidate | Source directory | Binaries (this run) |
