@@ -183,6 +183,10 @@ Freestanding integer builds peak below the C -O3 baseline on every workload meas
 | hash | 33.6 MB | **32.0 MB** | 0.95 |
 | binary trees | 17.5 MB | **15.9 MB** | 0.91 |
 
+The freestanding runtime also implements `clone`/`wait4`-based `pthread_create`/`pthread_join` and
+`sysconf`, so `par for` works without libpthread: `hash_magic_par` and `fannkuch_magic_blocks` build
+as static ELFs and produce the same checksums. Float workloads still reject at build time.
+
 Five of the eight matrix workloads are integer/bool and support `--static`; the three float workloads
 (n-body, particles, raytrace) still use dynamic binaries at parity. The gate fails if any static
 peak exceeds C. This is where the "lowest on most workloads" claim now stands: 5/8 measured, with

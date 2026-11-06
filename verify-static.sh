@@ -27,6 +27,8 @@ check matmul bench-suite/matmul_magic.magic 326316140
 check hash bench-suite/hash_magic.magic 1500001500000
 check fannkuch bench-fannkuch/fannkuch_magic.magic 38
 check bt bench-bt/bt_magic.magic 568328208
+check hash_par bench-suite/hash_magic_par.magic 1500001500000
+check fannkuch_blocks bench-fannkuch/fannkuch_magic_blocks.magic 38
 if "$M" build bench-suite/nbody_magic.magic --static -o "$OUT/nb" >/dev/null 2>&1; then
   echo "float program unexpectedly accepted"; FAIL=1
 else

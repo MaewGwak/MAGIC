@@ -30,6 +30,13 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.9.9 — par for in the freestanding runtime (2026-11-06)
+
+The syscall-only runtime now provides `clone`/`wait4`-backed `pthread_create`/`pthread_join` and a
+fixed `sysconf`, so `par for` needs neither libc nor libpthread in static mode. Static hash-par and
+fannkuch-blocks builds produce the correct checksums and join `verify-static.sh`. All gates pass,
+168 tests, parity 60/60, low-end and static-memory green.
+
 ## v0.9.8 — static builds beat C peak RSS on five workloads (2026-11-06)
 
 `bench-static-memory.sh` measures peak RSS for the freestanding builds against gcc -O3: sieve 11.9
