@@ -138,7 +138,9 @@ The float test matches both backends and nbody prints its checksum through the I
 because float blocks still use the slot emitter). v0.8.25 adds structs: locals and nested literals,
 field/`IndexField` access with bounds checks, and struct arrays zero-initialised by calloc. The struct
 test matches the C backend and particles prints 500094707846.643 through the IR (1.05 s, AST ~1.0 s,
-C 155 ms).
+C 155 ms). v0.8.26 adds vectors: `[T+]`, `reserve`, `push`, `len` and runtime-length bounds checks.
+`examples/vec` prints 10/285 and vecpart prints 125024147186.169 through the IR in 344 ms
+(AST ~260 ms, C 34 ms).
 Affine indexes like
 `a[i * n + j]` are proved in v0.8.15 after constant propagation makes `n` and `n * n` literal: the
 maximum `(n-1)*n + (n-1)` is compared with the array length, so matmul's inner checks disappear

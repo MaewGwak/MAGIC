@@ -30,6 +30,16 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.26 — vectors in the IR (2026-11-06)
+
+The IR now lowers `[T+]` vectors: `VecLet` allocates a heap block with length 0 and capacity 8,
+`reserve` reallocates when needed, `push` grows geometrically (2x) and copies scalar or struct
+values, `len` reads the runtime length, and indexing/`IndexField` reads and writes bounds-check
+against that runtime length. `examples/vec` prints 10/285 and `bench-suite/vecpart_magic` prints
+125024147186.169 through the IR in 344 ms (AST: ~260 ms, C: 34 ms). A bug where `realloc` clobbered
+the caller-saved length/capacity/value registers was caught by the differential test and fixed by
+saving them across the call.
+
 ## v0.8.25 — structs in the IR (2026-11-06)
 
 The IR now lowers struct definitions and locals, struct literals (including nested literals), field

@@ -59,6 +59,11 @@ pub enum Instr {
     FieldStore { var_index: usize, slots: usize, off: u64, ty: Ty, src: Value },
     IndexFieldLoad { dst: Value, ptr_var: usize, idx: Value, size: u64, off: u64, ty: Ty, len: LenRef, line: usize },
     IndexFieldStore { ptr_var: usize, idx: Value, size: u64, off: u64, ty: Ty, src: Value, len: LenRef, line: usize },
+    VecNew { ptr_var: usize, len_var: usize, cap_var: usize, esz: u64 },
+    VecReserve { ptr_var: usize, len_var: usize, cap_var: usize, esz: u64, need: Value },
+    VecLen { dst: Value, len_var: usize },
+    VecPushScalar { ptr_var: usize, len_var: usize, cap_var: usize, esz: u64, ty: Ty, src: Value },
+    VecPushStruct { ptr_var: usize, len_var: usize, cap_var: usize, esz: u64, size: u64, tmp_var: usize, tmp_slots: usize },
     Str { dst: Value, id: usize, s: String },
     FBin { dst: Value, op: Op, l: Value, r: Value },
     FNeg { dst: Value, a: Value },
@@ -158,6 +163,7 @@ struct Builder {
     struct_defs: Vec<StructDef>,
     struct_vars: HashMap<String, (usize, usize, u16)>,
     struct_bytes: i64,
+    vecs: HashMap<String, (Ty, usize, usize, usize, u64)>,
     ret: Ty,
 }
 
@@ -179,6 +185,7 @@ impl Builder {
             struct_defs: Vec::new(),
             struct_vars: HashMap::new(),
             struct_bytes: 0,
+            vecs: HashMap::new(),
             ret,
         }
     }
@@ -369,6 +376,15 @@ impl Builder {
                 Ok(dst)
             }
             ExprKind::Index { name, index } => {
+                if let Some((elem, ptr_var, len_var, _cap, _esz)) = self.vecs.get(name).copied() {
+                    let idx = self.lower_expr(index)?;
+                    let len = LenRef::Var(len_var);
+                    self.push(Instr::BoundsCheck { idx, len, line: e.line });
+                    let dst = self.value();
+                    self.push(Instr::IndexLoad { dst, ptr_var, idx, elem });
+                    self.vty[dst.0 as usize] = elem;
+                    return Ok(dst);
+                }
                 let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
                     format!("line {}: IR: unknown array `{}`", e.line, name)
                 })?;
@@ -407,6 +423,28 @@ impl Builder {
                 Ok(dst)
             }
             ExprKind::IndexField { name, index, field } => {
+                if let Some((elem, ptr_var, len_var, _cap, _esz)) = self.vecs.get(name).copied() {
+                    if let Ty::Struct(id) = elem {
+                        let (off, ty) = struct_field(&self.struct_defs, id, field).ok_or_else(|| {
+                            format!("line {}: IR: struct has no field `{}`", e.line, field)
+                        })?;
+                        let (size, _) = struct_layout(&self.struct_defs, id);
+                        let idx = self.lower_expr(index)?;
+                        let dst = self.value();
+                        self.push(Instr::IndexFieldLoad {
+                            dst,
+                            ptr_var,
+                            idx,
+                            size,
+                            off,
+                            ty,
+                            len: LenRef::Var(len_var),
+                            line: e.line,
+                        });
+                        self.vty[dst.0 as usize] = ty;
+                        return Ok(dst);
+                    }
+                }
                 let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
                     format!("line {}: IR: unknown array `{}`", e.line, name)
                 })?;
@@ -536,6 +574,20 @@ impl Builder {
                         e.line, name
                     ));
                 }
+                if name == "len" && args.len() == 1 {
+                    if let ExprKind::Var(vname) = &args[0].kind {
+                        if let Some((_, _, len_var, _, _)) = self.vecs.get(vname).copied() {
+                            let dst = self.value();
+                            self.push(Instr::VecLen { dst, len_var });
+                            self.vty[dst.0 as usize] = Ty::I32;
+                            return Ok(dst);
+                        }
+                    }
+                    return Err(format!(
+                        "line {}: IR: len() of this expression is not supported yet",
+                        e.line
+                    ));
+                }
                 if name == "sqrt" && args.len() == 1 {
                     let a = self.lower_expr(&args[0])?;
                     let a = if self.vty[a.0 as usize] == Ty::F64 {
@@ -579,6 +631,67 @@ impl Builder {
 
     fn lower_stmt(&mut self, s: &Stmt) -> Result<(), String> {
         match &s.kind {
+            StmtKind::VecLet { name, elem } => {
+                let esz = crate::ty_size(*elem, &self.struct_defs);
+                let pv = self.nvars;
+                self.nvars += 3;
+                self.vecs
+                    .insert(name.clone(), (*elem, pv, pv + 1, pv + 2, esz));
+                self.push(Instr::VecNew {
+                    ptr_var: pv,
+                    len_var: pv + 1,
+                    cap_var: pv + 2,
+                    esz,
+                });
+                return Ok(());
+            }
+            StmtKind::Push { name, value } => {
+                let Some((elem, ptr_var, len_var, cap_var, esz)) =
+                    self.vecs.get(name).copied()
+                else {
+                    return Err(format!("line {}: IR: unknown vector `{}`", s.line, name));
+                };
+                if let Ty::Struct(id) = elem {
+                    let (size, _) = struct_layout(&self.struct_defs, id);
+                    let slots = ((size + 7) / 8) as usize;
+                    let tmp_var = self.nvars;
+                    self.nvars += slots;
+                    let mut inits = Vec::new();
+                    if let ExprKind::StructLit { fields, .. } = &value.kind {
+                        self.lower_struct_into(id, 0, fields, &mut inits)?;
+                    } else {
+                        return Err(format!(
+                            "line {}: IR: vector push of a non-literal struct is not supported yet",
+                            s.line
+                        ));
+                    }
+                    self.push(Instr::StructInit {
+                        var_index: tmp_var,
+                        slots,
+                        fields: inits,
+                    });
+                    self.push(Instr::VecPushStruct {
+                        ptr_var,
+                        len_var,
+                        cap_var,
+                        esz,
+                        size,
+                        tmp_var,
+                        tmp_slots: slots,
+                    });
+                } else {
+                    let src = self.lower_expr(value)?;
+                    self.push(Instr::VecPushScalar {
+                        ptr_var,
+                        len_var,
+                        cap_var,
+                        esz,
+                        ty: elem,
+                        src,
+                    });
+                }
+                return Ok(());
+            }
             StmtKind::Let { name, init, .. } => {
                 if let ExprKind::StructLit { name: sname, fields } = &init.kind {
                     let id = self
@@ -674,6 +787,27 @@ impl Builder {
                 self.push(Instr::FieldStore { var_index, slots, off, ty, src });
             }
             StmtKind::IndexFieldAssign { name, index, field, value } => {
+                if let Some((elem, ptr_var, len_var, _cap, _esz)) = self.vecs.get(name).copied() {
+                    if let Ty::Struct(id) = elem {
+                        let (off, ty) = struct_field(&self.struct_defs, id, field).ok_or_else(|| {
+                            format!("line {}: IR: struct has no field `{}`", s.line, field)
+                        })?;
+                        let (size, _) = struct_layout(&self.struct_defs, id);
+                        let idx = self.lower_expr(index)?;
+                        let src = self.lower_expr(value)?;
+                        self.push(Instr::IndexFieldStore {
+                            ptr_var,
+                            idx,
+                            size,
+                            off,
+                            ty,
+                            src,
+                            len: LenRef::Var(len_var),
+                            line: s.line,
+                        });
+                        return Ok(());
+                    }
+                }
                 let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
                     format!("line {}: IR: unknown array `{}`", s.line, name)
                 })?;
@@ -728,6 +862,13 @@ impl Builder {
                 });
             }
             StmtKind::IndexAssign { name, index, value } => {
+                if let Some((elem, ptr_var, len_var, _cap, _esz)) = self.vecs.get(name).copied() {
+                    let idx = self.lower_expr(index)?;
+                    self.push(Instr::BoundsCheck { idx, len: LenRef::Var(len_var), line: s.line });
+                    let src = self.lower_expr(value)?;
+                    self.push(Instr::IndexStore { ptr_var, idx, elem, src });
+                    return Ok(());
+                }
                 let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
                     format!("line {}: IR: unknown array `{}`", s.line, name)
                 })?;
@@ -754,6 +895,23 @@ impl Builder {
             }
             StmtKind::Expr(e) => {
                 if let ExprKind::Call { name, args } = &e.kind {
+                    if name == "reserve" && args.len() == 2 {
+                        if let ExprKind::Var(vname) = &args[0].kind {
+                            if let Some((_, ptr_var, len_var, cap_var, esz)) =
+                                self.vecs.get(vname).copied()
+                            {
+                                let need = self.lower_expr(&args[1])?;
+                                self.push(Instr::VecReserve {
+                                    ptr_var,
+                                    len_var,
+                                    cap_var,
+                                    esz,
+                                    need,
+                                });
+                                return Ok(());
+                            }
+                        }
+                    }
                     if name == "print_prec" && args.len() == 2 {
                         let v = self.lower_expr(&args[0])?;
                         let prec = self.lower_expr(&args[1])?;
@@ -1086,6 +1244,7 @@ fn def_kind(ins: &Instr) -> Option<(Value, DefKind)> {
         Instr::I2F { dst, .. } | Instr::F2I { dst, .. } | Instr::Sqrt { dst, .. } => {
             Some((*dst, DefKind::Other))
         }
+        Instr::VecLen { dst, .. } => Some((*dst, DefKind::Other)),
         Instr::FieldLoad { dst, .. } | Instr::IndexFieldLoad { dst, .. } => {
             Some((*dst, DefKind::Other))
         }
@@ -1380,6 +1539,11 @@ fn instr_uses_defs(ins: &Instr, uses: &mut Vec<Value>, defs: &mut Vec<Value>) {
             uses.push(*idx);
             defs.push(*dst);
         }
+        Instr::VecNew { .. } => {}
+        Instr::VecReserve { need, .. } => uses.push(*need),
+        Instr::VecLen { dst, .. } => defs.push(*dst),
+        Instr::VecPushScalar { src, .. } => uses.push(*src),
+        Instr::VecPushStruct { .. } => {}
         Instr::IndexFieldStore { idx, src, .. } => {
             uses.push(*idx);
             uses.push(*src);
@@ -1428,6 +1592,11 @@ fn slow_block(instrs: &[Instr]) -> bool {
                 | Instr::FieldStore { .. }
                 | Instr::IndexFieldLoad { .. }
                 | Instr::IndexFieldStore { .. }
+                | Instr::VecNew { .. }
+                | Instr::VecReserve { .. }
+                | Instr::VecLen { .. }
+                | Instr::VecPushScalar { .. }
+                | Instr::VecPushStruct { .. }
                 | Instr::Bin { op: Op::Div | Op::Rem, .. }
         )
     })
@@ -1994,7 +2163,12 @@ fn emit_fast_block(
             | Instr::FieldLoad { .. }
             | Instr::FieldStore { .. }
             | Instr::IndexFieldLoad { .. }
-            | Instr::IndexFieldStore { .. } => {
+            | Instr::IndexFieldStore { .. }
+            | Instr::VecNew { .. }
+            | Instr::VecReserve { .. }
+            | Instr::VecLen { .. }
+            | Instr::VecPushScalar { .. }
+            | Instr::VecPushStruct { .. } => {
                 unreachable!("slow block")
             }
         }
@@ -2357,6 +2531,133 @@ pub fn emit(prog: &IrProgram) -> String {
                     Instr::Str { dst, id, .. } => {
                         out.push_str(&format!("    lea .Lstr{}(%rip), %rax\n", id));
                         out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::VecNew { ptr_var, len_var, cap_var, esz } => {
+                        out.push_str(&format!("    mov ${}, %rdi\n", esz * 8));
+                        out.push_str("    call malloc@PLT\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov %rax, {}\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*ptr_var)));
+                        }
+                        out.push_str(&format!("    movq $0, -{}(%rbp)\n", varoff(*len_var)));
+                        out.push_str(&format!("    movq $8, -{}(%rbp)\n", varoff(*cap_var)));
+                    }
+                    Instr::VecReserve { ptr_var, len_var: _, cap_var, esz, need } => {
+                        out.push_str(&ld(*need));
+                        out.push_str("    mov %rax, %r11\n");
+                        out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*cap_var)));
+                        out.push_str("    cmp %r11, %rcx\n    jae 4f\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %rdi\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %rdi\n", varoff(*ptr_var)));
+                        }
+                        out.push_str("    mov %r11, %rsi\n");
+                        out.push_str(&format!("    imul ${}, %rsi\n", esz));
+                        out.push_str("    push %r11\n    sub $8, %rsp\n");
+                        out.push_str("    call realloc@PLT\n");
+                        out.push_str("    add $8, %rsp\n    pop %r11\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov %rax, {}\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*ptr_var)));
+                        }
+                        out.push_str(&format!("    mov %r11, -{}(%rbp)\n", varoff(*cap_var)));
+                        out.push_str("4:\n");
+                    }
+                    Instr::VecLen { dst, len_var } => {
+                        out.push_str(&format!("    mov -{}(%rbp), %rax\n", varoff(*len_var)));
+                        out.push_str(&format!("    mov %rax, -{}(%rbp)\n", voff(f, *dst)));
+                    }
+                    Instr::VecPushScalar { ptr_var, len_var, cap_var, esz, ty, src } => {
+                        out.push_str(&ld(*src));
+                        out.push_str("    mov %rax, %r8\n");
+                        out.push_str(&format!("    mov -{}(%rbp), %r11\n", varoff(*len_var)));
+                        out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*cap_var)));
+                        out.push_str("    cmp %rcx, %r11\n    jb 5f\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %rdi\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %rdi\n", varoff(*ptr_var)));
+                        }
+                        out.push_str("    lea (%rcx,%rcx), %rsi\n");
+                        out.push_str(&format!("    imul ${}, %rsi\n", esz));
+                        out.push_str("    push %r8\n    push %r11\n");
+                        out.push_str("    call realloc@PLT\n");
+                        out.push_str("    pop %r11\n    pop %r8\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov %rax, {}\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*ptr_var)));
+                        }
+                        out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*cap_var)));
+                        out.push_str("    add %rcx, %rcx\n");
+                        out.push_str(&format!("    mov %rcx, -{}(%rbp)\n", varoff(*cap_var)));
+                        out.push_str("5:\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %r10\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        }
+                        out.push_str("    mov %r8, %rax\n");
+                        out.push_str(&format!("    imul ${}, %r11\n", esz));
+                        match ty {
+                            Ty::U8 | Ty::Bool => out.push_str("    movb %al, (%r10,%r11)\n"),
+                            Ty::I32 => out.push_str("    movl %eax, (%r10,%r11)\n"),
+                            _ => out.push_str("    movq %rax, (%r10,%r11)\n"),
+                        }
+                        out.push_str(&format!("    incq -{}(%rbp)\n", varoff(*len_var)));
+                    }
+                    Instr::VecPushStruct { ptr_var, len_var, cap_var, esz, size, tmp_var, tmp_slots } => {
+                        out.push_str(&format!("    mov -{}(%rbp), %r11\n", varoff(*len_var)));
+                        out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*cap_var)));
+                        out.push_str("    cmp %rcx, %r11\n    jb 6f\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %rdi\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %rdi\n", varoff(*ptr_var)));
+                        }
+                        out.push_str("    lea (%rcx,%rcx), %rsi\n");
+                        out.push_str(&format!("    imul ${}, %rsi\n", esz));
+                        out.push_str("    push %r11\n    sub $8, %rsp\n");
+                        out.push_str("    call realloc@PLT\n");
+                        out.push_str("    add $8, %rsp\n    pop %r11\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov %rax, {}\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov %rax, -{}(%rbp)\n", varoff(*ptr_var)));
+                        }
+                        out.push_str(&format!("    mov -{}(%rbp), %rcx\n", varoff(*cap_var)));
+                        out.push_str("    add %rcx, %rcx\n");
+                        out.push_str(&format!("    mov %rcx, -{}(%rbp)\n", varoff(*cap_var)));
+                        out.push_str("6:\n");
+                        if let Some(reg) = var_regs.get(ptr_var) {
+                            out.push_str(&format!("    mov {}, %r10\n", reg));
+                        } else {
+                            out.push_str(&format!("    mov -{}(%rbp), %r10\n", varoff(*ptr_var)));
+                        }
+                        out.push_str(&format!("    imul ${}, %r11, %r11\n", esz));
+                        out.push_str("    add %r11, %r10\n");
+                        let tmp_base = -8 * (*tmp_var + *tmp_slots) as i64;
+                        let mut done = 0u64;
+                        while done + 8 <= *size {
+                            out.push_str(&format!(
+                                "    movq {}(%rbp), %rax\n    mov %rax, {}(%r10)\n",
+                                tmp_base + done as i64,
+                                done
+                            ));
+                            done += 8;
+                        }
+                        while done < *size {
+                            out.push_str(&format!(
+                                "    movb {}(%rbp), %al\n    mov %al, {}(%r10)\n",
+                                tmp_base + done as i64,
+                                done
+                            ));
+                            done += 1;
+                        }
+                        out.push_str(&format!("    incq -{}(%rbp)\n", varoff(*len_var)));
                     }
                     Instr::StructInit { var_index, slots, fields } => {
                         let base = -8 * (*var_index + *slots) as i64;
