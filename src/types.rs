@@ -1039,6 +1039,34 @@ impl Checker {
                     }
                     return Ok(Ty::Void);
                 }
+                if name == "str_cat" {
+                    if args.len() != 2 { return Err(format!("{}: str_cat takes 2 arguments", e.line)); }
+                    self.check_expr(&args[0], Some(Ty::Str), scopes)?;
+                    self.check_expr(&args[1], Some(Ty::Str), scopes)?;
+                    return Ok(Ty::Str);
+                }
+                if name == "str_from_bytes" {
+                    if args.len() != 2 { return Err(format!("{}: str_from_bytes takes 2 arguments", e.line)); }
+                    let vname = match &args[0].kind { ExprKind::Var(n) => n, _ => return Err(format!("{}: str_from_bytes needs a [u8] variable", e.line)) };
+                    if lookup_array(scopes, vname) != Some(Ty::U8) { return Err(format!("{}: str_from_bytes needs a [u8] array", e.line)); }
+                    self.check_expr(&args[1], Some(Ty::I32), scopes)?;
+                    return Ok(Ty::Str);
+                }
+                if name == "proc_run" {
+                    if args.len() != 1 { return Err(format!("{}: proc_run takes 1 argument", e.line)); }
+                    self.check_expr(&args[0], Some(Ty::Str), scopes)?;
+                    return Ok(Ty::I32);
+                }
+                if name == "dir_mkdir" {
+                    if args.len() != 1 { return Err(format!("{}: dir_mkdir takes 1 argument", e.line)); }
+                    self.check_expr(&args[0], Some(Ty::Str), scopes)?;
+                    return Ok(Ty::I32);
+                }
+                if name == "path_exists" {
+                    if args.len() != 1 { return Err(format!("{}: path_exists takes 1 argument", e.line)); }
+                    self.check_expr(&args[0], Some(Ty::Str), scopes)?;
+                    return Ok(Ty::Bool);
+                }
                 if name == "v4_splat" || name == "v4_set" || name == "v4_add"
                     || name == "v4_sub" || name == "v4_mul" || name == "v4_div"
                     || name == "v4_sqrt" || name == "v4_fma" || name == "v4_cmpgt"

@@ -450,8 +450,45 @@ fn header_base(prog: &Program) -> String {
         }
         out.push_str(&format!("}} {};\n\n", s.name));
     }
-    out.push_str(r#"#include <immintrin.h>
-static _Thread_local __m128i magic_perm_v;
+    let mut all_calls = std::collections::HashSet::new();
+    for f in &prog.funcs {
+        collect_calls(&f.body, &mut all_calls);
+    }
+    let uses_launcher = ["str_cat", "str_from_bytes", "proc_run", "dir_mkdir", "path_exists"]
+        .iter().any(|n| all_calls.contains(*n));
+    let uses_perm = all_calls.iter().any(|n| n.starts_with("perm_") || n.starts_with("cnt_"));
+    if uses_launcher {
+        out.push_str(r#"#include <sys/stat.h>
+static inline const char *magic_str_cat(const char *a, const char *b) {
+    size_t na = strlen(a), nb = strlen(b);
+    char *r = (char*)malloc(na + nb + 1);
+    if (!r) magic_panic("str_cat: out of memory");
+    memcpy(r, a, na); memcpy(r + na, b, nb); r[na + nb] = 0;
+    return r;
+}
+static inline const char *magic_str_from_bytes(uint8_t *b, int32_t len) {
+    b[len] = 0;
+    return (const char*)b;
+}
+static inline int32_t magic_proc_run(const char *cmd) { return system(cmd); }
+static inline int32_t magic_dir_mkdir(const char *path) {
+#ifdef _WIN32
+    return _mkdir(path);
+#else
+    return mkdir(path, 0777);
+#endif
+}
+static inline int32_t magic_path_exists(const char *path) {
+#ifdef _WIN32
+    return _access(path, 0) == 0;
+#else
+    return access(path, F_OK) == 0;
+#endif
+}
+"#);
+    }
+    if uses_perm {
+        out.push_str(r#"static _Thread_local __m128i magic_perm_v;
 static _Thread_local int32_t magic_cnt[8];
 static inline void magic_cnt_init(void) { for (int i = 0; i < 8; i++) magic_cnt[i] = 0; }
 static inline void magic_cnt_set(int32_t i, int32_t v) { magic_cnt[i] = v; }
@@ -492,6 +529,7 @@ static inline int32_t magic_perm_flips(void) {
     return f;
 }
 "#);
+    }
     if prog.structs.iter().any(|s| s.name == "V4") {
         out.push_str(r#"static inline V4 magic_v4_splat(double x) { return _mm256_set1_pd(x); }
 static inline V4 magic_v4_set(double a, double b, double c, double d) { return _mm256_set_pd(d, c, b, a); }
@@ -1395,6 +1433,21 @@ fn expr(e: &Expr) -> String {
                     expr(&args[0]),
                     expr(&args[1])
                 );
+            }
+            if name == "str_cat" && args.len() == 2 {
+                return format!("magic_str_cat(({}), ({}))", expr(&args[0]), expr(&args[1]));
+            }
+            if name == "str_from_bytes" && args.len() == 2 {
+                return format!("magic_str_from_bytes(({}), (int32_t)({}))", expr(&args[0]), expr(&args[1]));
+            }
+            if name == "proc_run" && args.len() == 1 {
+                return format!("magic_proc_run(({}))", expr(&args[0]));
+            }
+            if name == "dir_mkdir" && args.len() == 1 {
+                return format!("magic_dir_mkdir(({}))", expr(&args[0]));
+            }
+            if name == "path_exists" && args.len() == 1 {
+                return format!("magic_path_exists(({}))", expr(&args[0]));
             }
             match name.as_str() {
                 "v4_splat" if args.len() == 1 => return format!("magic_v4_splat((double)({}))", expr(&args[0])),

@@ -1,0 +1,82 @@
+// Horizon Launcher Core — a small Minecraft-style launcher proof in MAGIC.
+// Commands:
+//   horizon init <dir>     create an instance directory with java/memory/main/classpath files
+//   horizon launch <dir>   read them, build the Java command and run it
+// The launcher core is deliberately file-based so an instance can be edited by hand.
+
+fn read_value(dir: str, name: str, buf: [u8], cap: i32) -> i32 {
+    var path = str_cat(str_cat(dir, "/"), name);
+    if !path_exists(path) { return -1; }
+    var fd = file_open(path, "r");
+    if fd < 0 { return -1; }
+    var n = file_read(fd, buf, cap - 1);
+    file_close(fd);
+    if n < 0 { return -1; }
+    return n as i32;
+}
+
+fn write_value(dir: str, name: str, value: str) -> i32 {
+    var path = str_cat(str_cat(dir, "/"), name);
+    var fd = file_open(path, "w");
+    if fd < 0 { return -1; }
+    var n = file_write_str(fd, value);
+    file_close(fd);
+    return n as i32;
+}
+
+fn main() {
+    if argc() < 3 {
+        print("horizon: usage: horizon init <dir> | horizon launch <dir>");
+        return;
+    }
+    var cmd = arg(1);
+    var dir = arg(2);
+    var jbuf: [u8] = [0; 256];
+    var mbuf: [u8] = [0; 256];
+    var nbuf: [u8] = [0; 256];
+    var cbuf: [u8] = [0; 256];
+
+    if str_eq(cmd, "init") {
+        if dir_mkdir(dir) != 0 && !path_exists(dir) {
+            print("horizon: cannot create instance directory");
+            return;
+        }
+        write_value(dir, "java", "java");
+        write_value(dir, "memory", "2G");
+        write_value(dir, "main", "net.minecraft.client.main.Main");
+        write_value(dir, "classpath", "");
+        print(str_cat("horizon: created instance ", dir));
+        return;
+    }
+
+    if str_eq(cmd, "launch") {
+        if !path_exists(dir) {
+            print("horizon: instance directory does not exist");
+            return;
+        }
+        var jn = read_value(dir, "java", jbuf, 256);
+        var mn = read_value(dir, "memory", mbuf, 256);
+        var nn = read_value(dir, "main", nbuf, 256);
+        var cn = read_value(dir, "classpath", cbuf, 256);
+
+        var java = "java";
+        var memory = "2G";
+        var main = "net.minecraft.client.main.Main";
+        var classpath = "";
+        if jn >= 0 { java = str_from_bytes(jbuf, jn); }
+        if mn >= 0 { memory = str_from_bytes(mbuf, mn); }
+        if nn >= 0 { main = str_from_bytes(nbuf, nn); }
+        if cn >= 0 { classpath = str_from_bytes(cbuf, cn); }
+
+        var line = str_cat(java, str_cat(" -Xmx", str_cat(memory,
+                   str_cat(" -cp ", str_cat(classpath, str_cat(" ", main))))));
+        print(str_cat("horizon: launching: ", line));
+        var rc = proc_run(line);
+        if rc != 0 {
+            print("horizon: java exited non-zero");
+        }
+        return;
+    }
+
+    print("horizon: unknown command (use init or launch)");
+}
