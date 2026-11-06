@@ -4236,6 +4236,7 @@ pub fn optimize(prog: &mut IrProgram) {
 pub fn emit(prog: &IrProgram) -> String {
     let mut out = String::new();
     out.push_str(".text\n");
+    out.push_str(".section .bss\n.align 8\n.Lbt_buf: .zero 512\n.text\n");
     out.push_str(".Lfmt_ll: .asciz \"%lld\\n\"\n");
     out.push_str(".Lfmt_s: .asciz \"%s\\n\"\n");
     out.push_str(".Ltrue: .asciz \"true\"\n");
@@ -4289,12 +4290,18 @@ pub fn emit(prog: &IrProgram) -> String {
         ));
     }
     out.push_str(".text\n");
-    out.push_str(".Lir_panic:\n");
-    out.push_str("    push %rbp\n    mov %rsp, %rbp\n");
+    out.push_str(".cfi_startproc\n.Lir_panic:\n");
+    out.push_str("    push %rbp\n");
+    out.push_str("    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n");
+    out.push_str("    mov %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n");
     out.push_str("    mov %rdi, %rdx\n");
     out.push_str("    mov stderr@GOTPCREL(%rip), %rax\n    mov (%rax), %rdi\n");
     out.push_str("    lea .Lfmt_panic(%rip), %rsi\n    xor %eax, %eax\n");
-    out.push_str("    call fprintf@PLT\n    mov $1, %edi\n    call exit@PLT\n");
+    out.push_str("    call fprintf@PLT\n");
+    out.push_str("    lea .Lbt_buf(%rip), %rdi\n    mov $64, %esi\n    call backtrace@PLT\n");
+    out.push_str("    lea .Lbt_buf(%rip), %rdi\n    mov %eax, %esi\n    mov $2, %edx\n");
+    out.push_str("    call backtrace_symbols_fd@PLT\n");
+    out.push_str("    mov $1, %edi\n    call exit@PLT\n.cfi_endproc\n");
     for f in &prog.funcs {
         // Variables used most often get a callee-saved register for the whole
         // function; the emitter never touches these registers elsewhere.
@@ -4363,8 +4370,12 @@ pub fn emit(prog: &IrProgram) -> String {
         }
 
         out.push_str(".p2align 4\n");
+        out.push_str(".cfi_startproc\n");
         out.push_str(&format!(".globl {}\n.type {}, @function\n{}:\n", f.name, f.name, f.name));
-        out.push_str("    push %rbp\n    mov %rsp, %rbp\n");
+        out.push_str("    push %rbp\n");
+        out.push_str("    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n");
+        out.push_str("    mov %rsp, %rbp\n");
+        out.push_str("    .cfi_def_cfa_register %rbp\n");
         let frame = 8 * (f.nvars + f.nvalues);
         let frame = (frame + 15) & !15;
         // Push all five callee-saved registers: the first `chosen.len()` hold
@@ -5248,10 +5259,14 @@ pub fn emit(prog: &IrProgram) -> String {
             }
         }
         out.push_str(&format!(".L{}_ret:\n", f.name));
+        out.push_str("    .cfi_def_cfa_register %rbp\n");
         for i in (0..5).rev() {
             out.push_str(&format!("    pop {}\n", ["%rbx", "%r12", "%r13", "%r14", "%r15"][i]));
         }
-        out.push_str("    leave\n    ret\n");
+        out.push_str("    leave\n");
+        out.push_str("    .cfi_def_cfa %rsp, 8\n");
+        out.push_str("    ret\n");
+        out.push_str(".cfi_endproc\n");
         out.push_str(&format!(".size {}, .-{}\n", f.name, f.name));
     }
     // File builtins: thin wrappers with the same argument order as the AST

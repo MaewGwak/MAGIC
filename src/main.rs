@@ -492,6 +492,8 @@ fn build_native(
     });
     let ld_cmd = env::var("LD").unwrap_or_else(|_| "ld".to_string());
     let mut link = Command::new(&ld_cmd);
+    link.arg("--eh-frame-hdr");
+    link.arg("-E");
     link.arg("-o").arg(abs_path(&exe_path)).arg(&crt1);
     if let Some(c) = &crti {
         link.arg(c);

@@ -325,3 +325,45 @@ fn main() {{
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn ir_panic_reports_file_line_and_stack_trace() {
+    if !(cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) {
+        return;
+    }
+    if !Command::new("as").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        return;
+    }
+    let Some(cc_cmd) = cc() else { return };
+    let dir = std::env::temp_dir().join(format!("magic_ir_trace_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = r#"
+fn inner(i: i32) -> i32 { var a: [i32] = [0; 2]; return a[i]; }
+fn middle(x: i32) -> i32 { return inner(x) + 1; }
+fn main() { print(middle(5)); }
+"#;
+    let asm = magic::compile_to_asm_ir(src).expect("compile");
+    let sp = dir.join("t.s");
+    std::fs::write(&sp, asm).expect("write asm");
+    let op = dir.join("t.o");
+    assert!(Command::new("as").arg("--64").arg("-o").arg(&op).arg(&sp).status().expect("as").success());
+    let exe = dir.join("t");
+    assert!(Command::new(&cc_cmd)
+        .arg("-rdynamic")
+        .arg(&op)
+        .arg("-o")
+        .arg(&exe)
+        .status()
+        .expect("cc")
+        .success());
+    let out = Command::new(&exe).output().expect("run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "exit status: {:?}", out.status);
+    assert!(out.stdout.is_empty(), "stdout: {:?}", String::from_utf8_lossy(&out.stdout));
+    assert!(stderr.contains("index out of bounds") && stderr.contains("line "), "stderr: {stderr}");
+    for frame in ["inner", "middle", "main"] {
+        assert!(stderr.contains(frame), "missing frame {frame} in:\n{stderr}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

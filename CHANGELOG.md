@@ -30,6 +30,18 @@ stays on the v0.8.8 codegen until the typed IR and its differential harness land
 through both backends and requires identical stdout and exit status, with timeouts; any native
 optimisation must pass it before being enabled.
 
+## v0.8.67 — file:line plus stack traces for IR panics (2026-11-06)
+
+Every IR function now carries DWARF CFI (`.cfi_startproc`, CFA/`%rbp` rules, epilogue CFA restore),
+the panic routine has its own FDE, and the linker emits `.eh_frame_hdr` and exports dynamic symbols
+(`--eh-frame-hdr -E`). At a panic the runtime prints the original `line N: ...` message and then a
+symbolized backtrace, e.g. `inner`, `middle`, `main`, libc and `_start`. Two bugs were found while
+bringing it up: `backtrace_symbols_fd` arguments were passed in the wrong order (segfault), and
+without `.eh_frame_hdr` the unwinder stopped after the panic frame. A Rust regression builds a nested
+panic program, asserts exit 1, empty stdout, the message and all three MAGIC frames. 164 tests; matmul
+IR binary is 16.9 KB before vs 17.2 KB after the export/unwind tables, still well under the 100 KB
+low-end budget.
+
 ## v0.8.66 — the Ds. agent crew charter (2026-11-06)
 
 `TEAM.md` gives the standing subagents durable identities — every member is DeepSeek and carries
