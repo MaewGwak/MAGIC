@@ -475,6 +475,59 @@ impl Emitter {
         Ok(())
     }
 
+    /// Evaluate an index expression in 64-bit registers so i32 arithmetic
+    /// cannot wrap before the bounds check. This is separate from normal
+    /// expression semantics: only the index tree is widened.
+    fn index_expr(&mut self, e: &Expr) -> Result<(), String> {
+        match &e.kind {
+            ExprKind::Bin { op, l, r }
+                if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem) =>
+            {
+                self.index_expr(l)?;
+                self.push("%rax");
+                self.index_expr(r)?;
+                self.line("    mov %rax, %rcx");
+                self.pop("%rax");
+                match op {
+                    BinOp::Add => self.line("    add %rcx, %rax"),
+                    BinOp::Sub => self.line("    sub %rcx, %rax"),
+                    BinOp::Mul => self.line("    imul %rcx, %rax"),
+                    BinOp::Div | BinOp::Rem => {
+                        let ok = self.fresh("idxdiv");
+                        self.line("    test %rcx, %rcx");
+                        self.line(&format!("    jne {}", ok));
+                        let msg = self.panic_msg(e.line, "division by zero");
+                        self.line(&format!("    lea {}(%rip), %rdi", msg));
+                        self.call(".Lmagic_panic");
+                        self.line(&format!("{}:", ok));
+                        self.line("    cqo");
+                        self.line("    idiv %rcx");
+                        if *op == BinOp::Rem {
+                            self.line("    mov %rdx, %rax");
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+                Ok(())
+            }
+            ExprKind::Un { op: UnOp::Neg, e } => {
+                self.index_expr(e)?;
+                self.line("    neg %rax");
+                Ok(())
+            }
+            _ => {
+                self.expr(e)?;
+                match self.expr_ty(e) {
+                    Ty::I32 => self.line("    movslq %eax, %rax"),
+                    Ty::U8 => self.line("    movzbq %al, %rax"),
+                    Ty::Bool => self.line("    test %rax, %rax\n    setne %al\n    movzbq %al, %rax"),
+                    _ => {}
+                }
+                Ok(())
+            }
+        }
+    }
+
     fn expr_ty(&self, e: &Expr) -> Ty {
         match &e.kind {
             ExprKind::Int(v) => {
@@ -617,7 +670,7 @@ impl Emitter {
                     format!("native backend line {}: unknown field `{}`", e.line, field)
                 })?;
                 let size = self.elem_size(elem);
-                self.expr(index)?;
+                self.index_expr(index)?;
                 self.bounds_check("%rax", name, e.line)?;
                 self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
                 self.scale_rax(size);
@@ -662,7 +715,7 @@ impl Emitter {
                     format!("native backend line {}: unknown field path", e.line)
                 })?;
                 let size = self.elem_size(elem);
-                self.expr(index)?;
+                self.index_expr(index)?;
                 self.bounds_check("%rax", name, e.line)?;
                 self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
                 self.scale_rax(size);
@@ -739,7 +792,7 @@ impl Emitter {
                     self.expr(e)?;
                     self.line("    cvtsi2sd %rax, %xmm0");
                 } else {
-                    self.expr(index)?;
+                    self.index_expr(index)?;
                     self.bounds_check("%rax", name, e.line)?;
                     self.line(&format!("    mov -{}(%rbp), %r10", off));
                     self.line("    movsd (%r10,%rax,8), %xmm0");
@@ -886,7 +939,7 @@ impl Emitter {
             format!("native backend line {}: unknown field path", line)
         })?;
         let esz = self.elem_size(elem);
-        self.expr(index)?;
+        self.index_expr(index)?;
         let msg = self.panic_msg(line, "index out of bounds");
         let ok = self.fresh("vfidx");
         self.line(&format!("    mov -{}(%rbp), %r11", l));
@@ -1348,7 +1401,7 @@ impl Emitter {
                     format!("native backend line {}: unknown field `{}`", e.line, field)
                 })?;
                 let size = self.elem_size(elem);
-                self.expr(index)?;
+                self.index_expr(index)?;
                 self.bounds_check("%rax", name, e.line)?;
                 self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
                 self.scale_rax(size);
@@ -1405,7 +1458,7 @@ impl Emitter {
                     format!("native backend line {}: unknown field path", e.line)
                 })?;
                 let size = self.elem_size(elem);
-                self.expr(index)?;
+                self.index_expr(index)?;
                 self.bounds_check("%rax", name, e.line)?;
                 self.line(&format!("    mov -{}(%rbp), %r10", arr_off));
                 self.scale_rax(size);
@@ -1584,7 +1637,7 @@ impl Emitter {
             ExprKind::Index { name, index } => {
                 if let Some((p, l, _, elem)) = self.vecs.get(name).copied() {
                     let esz = self.elem_size(elem);
-                    self.expr(index)?;
+                    self.index_expr(index)?;
                     let msg = self.panic_msg(e.line, "index out of bounds");
                     let ok = self.fresh("vidx");
                     self.line(&format!("    mov -{}(%rbp), %r11", l));
@@ -1608,7 +1661,7 @@ impl Emitter {
                     let (arr_off, elem, _) = *self.arrays.get(name).ok_or_else(|| {
                         format!("native backend line {}: unknown array `{}`", e.line, name)
                     })?;
-                    self.expr(index)?;
+                    self.index_expr(index)?;
                     self.bounds_check("%rax", name, e.line)?;
                     if elem == Ty::Bool {
                         self.line("    mov %rax, %r11");
@@ -2436,7 +2489,7 @@ impl Emitter {
                             self.truncate(fty);
                             self.push("%rax");
                         }
-                        self.expr(index)?;
+                        self.index_expr(index)?;
                         let msg = self.panic_msg(s.line, "index out of bounds");
                         let ok = self.fresh("vfw");
                         self.line(&format!("    mov -{}(%rbp), %r11", l));
@@ -2479,7 +2532,7 @@ impl Emitter {
                     self.truncate(fty);
                     self.push("%rax");
                 }
-                self.expr(index)?;
+                self.index_expr(index)?;
                 self.bounds_check("%rax", name, s.line)?;
                 if fty == Ty::F64 {
                     self.line("    movsd (%rsp), %xmm0");
@@ -2513,7 +2566,7 @@ impl Emitter {
                     self.truncate(fty);
                     self.push("%rax");
                 }
-                self.expr(index)?;
+                self.index_expr(index)?;
                 self.bounds_check("%rax", name, s.line)?;
                 if fty == Ty::F64 {
                     self.line("    movsd (%rsp), %xmm0");
@@ -2836,7 +2889,7 @@ if elem == Ty::Bool {
                         self.truncate(elem);
                         self.push("%rax");
                     }
-                    self.expr(index)?;
+                    self.index_expr(index)?;
                     let msg = self.panic_msg(s.line, "index out of bounds");
                     let ok = self.fresh("vidxw");
                     self.line(&format!("    mov -{}(%rbp), %r11", l));
@@ -2867,7 +2920,7 @@ if elem == Ty::Bool {
                 if elem == Ty::Bool {
                     self.expr(value)?;
                     self.push("%rax");
-                    self.expr(index)?;
+                    self.index_expr(index)?;
                     self.bounds_check("%rax", name, s.line)?;
                     self.line("    mov %rax, %r11");
                     self.line("    shr $6, %r11");
@@ -2893,7 +2946,7 @@ if elem == Ty::Bool {
                     self.fexpr(value)?;
                     self.line("    sub $16, %rsp");
                     self.line("    movsd %xmm0, (%rsp)");
-                    self.expr(index)?;
+                    self.index_expr(index)?;
                     self.bounds_check("%rax", name, s.line)?;
                     self.line("    movsd (%rsp), %xmm0");
                     self.line("    add $16, %rsp");
@@ -2902,7 +2955,7 @@ if elem == Ty::Bool {
                 } else {
                     self.expr(value)?;
                     self.push("%rax");
-                    self.expr(index)?;
+                    self.index_expr(index)?;
                     self.bounds_check("%rax", name, s.line)?;
                     self.pop("%rcx");
                     self.line(&format!("    mov -{}(%rbp), %r10", off));

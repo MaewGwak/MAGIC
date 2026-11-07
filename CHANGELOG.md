@@ -1,3 +1,15 @@
+## v0.12.7 — safety: index overflow, vec/view alias, vec-param push/pop (2026-11-07)
+
+- Widened index arithmetic to 64-bit before the bounds check in IR, C and native backends;
+  `a[x*y]` with a wrapped i32 product now panics instead of reading out of bounds.
+- Rejected passing the same variable as both `[T]` and `[T+]` (push/reserve can leave the
+  view dangling).
+- Fixed IR vec-parameter pointer/length/capacity by excluding `LoadPtr` destinations from
+  register promotion; push/pop through `[T+]` parameters now matches C.
+- `--report` now prints "syntactic fixed-array sum, NOT peak RSS"; the flag no longer
+  implies a proof.
+- Regression tests for index overflow, vec/view alias, vec-param push/pop.
+
 ## v0.12.6 — strings: len(str)/native str_cat, C namespacing, CI build (2026-11-07)
 
 `len(str)` now works in all backends; native IR implements `str_cat` with a libc

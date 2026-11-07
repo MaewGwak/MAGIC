@@ -1191,6 +1191,26 @@ impl Checker {
                         args.len()
                     ));
                 }
+                // A growable array may reallocate. Passing the same variable as
+                // both a fixed `[T]` view and a `[T+]` parameter would leave the
+                // view dangling after push/reserve; reject the aliasing call.
+                let mut vec_args: std::collections::HashSet<&str> = Default::default();
+                let mut array_args: std::collections::HashSet<&str> = Default::default();
+                for (a, p) in args.iter().zip(params.iter()) {
+                    if let ExprKind::Var(n) = &a.kind {
+                        match p {
+                            ParamTy::Vec(_) => { vec_args.insert(n.as_str()); }
+                            ParamTy::Array(_) => { array_args.insert(n.as_str()); }
+                            ParamTy::Scalar(_) => {}
+                        }
+                    }
+                }
+                if let Some(n) = vec_args.intersection(&array_args).next() {
+                    return Err(format!(
+                        "{}: cannot pass '{}' as both a fixed [T] view and a growable [T+]; push/reserve may invalidate the view",
+                        e.line, n
+                    ));
+                }
                 for (a, p) in args.iter().zip(params.iter()) {
                     match p {
                         ParamTy::Scalar(t) => {

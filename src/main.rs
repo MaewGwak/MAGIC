@@ -112,7 +112,7 @@ fn run() -> Result<(), String> {
              \x20 --backend c|native|ir   code generator (default ir; c emits C11)\n\
              \x20 --native  add -march=native to the C compiler (C backend only)\n\
              \x20 --fast    C backend at -O3 -march=native (recommended for speed)\n\
-             \x20 --report  print the static memory bound\n\
+             \x20 --report  print a syntactic fixed-array byte sum (NOT a peak-RSS bound)\n\
              \x20 --dev     compile at -O0 for fast iteration (C backend only)\n\
              \x20 --cc      C compiler command, may carry arguments (e.g. \"zig cc\")\n\
              \x20 --unroll  unroll small constant for-loops (C backend only)\n\n\
@@ -150,6 +150,11 @@ fn run() -> Result<(), String> {
     if report_bound {
         let rows =
             magic::memory_report(&source).map_err(|e| map_diagnostic(e, &segments, src_path))?;
+        if rows.iter().any(|(_, bytes)| *bytes > 0) {
+            println!(
+                "🔮 memory (syntactic fixed-array sum, NOT peak RSS): recursion, growth, stack and allocator are excluded"
+            );
+        }
         for (name, bytes) in rows {
             if bytes > 0 {
                 println!("🔮 memory: {} <= {} bytes", name, bytes);

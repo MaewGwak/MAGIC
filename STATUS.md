@@ -9,7 +9,7 @@ correctness/safety and a real memory-bound proof, not benchmark theatre.
 
 ## Proven, on this machine
 
-- **172 tests, all green** on a clean clone (`cargo test`; two skipped only if a C compiler is absent).
+- **175 tests, all green** on a clean clone (`cargo test`; two skipped only if a C compiler is absent).
 - **Compile speed**: 25 ms cold / 10 ms incremental for the 2,000-function source
   (gcc 47 ms, rustc 109 ms).
 - **Static floor**: 5,208-byte `hello` static ELF, no libc or PT_INTERP; native IR path
@@ -21,18 +21,27 @@ correctness/safety and a real memory-bound proof, not benchmark theatre.
 - **IEEE double** parity with gcc on the tested programs.
 - **No GC**.
 
+## Fixed safety blockers (0.12.7)
+
+- **Index overflow**: index arithmetic is evaluated in 64-bit before the bounds check in
+  IR, C and legacy native backends; a wrapped i32 product now panics, not reads OOB.
+- **`[T+]`/`[T]` alias**: passing the same variable as both a fixed view and a growable
+  parameter is rejected at type-check time (push/reserve could otherwise invalidate the view).
+- **IR vec-parameter push/pop**: `LoadPtr` destinations are no longer register-promoted;
+  push/pop through `[T+]` parameters now preserves pointer/length/capacity.
+- **File I/O**: fd table, cap checks, signed -1 returns, missing-fd safety in native/IR.
+
 ## Not proven / known losses
 
 - No same-algorithm/same-compiler workload where MAGIC beats optimized C/C++/Rust.
 - Native IR n-body 613 ms vs Rust 219 ms; fannkuch 63 ms vs 9 ms; raytrace 7.3 ms vs 3.2 ms.
-- **i32 index overflow** can bypass the bounds check (safety blocker).
-- **`[T+]` → `[T]` view invalidation**: realloc can leave a view dangling; ASan-confirmed
-  use-after-free (safety blocker).
-- **`--report` is not a memory proof**: it sums syntactic fixed-array sizes and ignores
-  recursion/growth/allocator overhead. The measured RSS can be orders of magnitude higher.
-- Default IR `file_*` validation was fixed in 0.12.x; clean-clone `verify.sh -Fast` passes,
-  but GitHub Actions history before that fix was red. Re-run CI and check the badge.
-- Legacy `--backend native` is not production-grade; it is kept for experiments only.
+- **`--report` is not a memory proof**: it prints a syntactic fixed-array sum and now says
+  "NOT peak RSS"; recursion/growth/allocator are excluded.
+- GitHub Actions history before the 0.12.7 release build fix was red; local clean-clone
+  fast gates pass, but CI needs a fresh green run before claiming 7 days.
+- Legacy `--backend native` is experimental; index safety is tested, but it is not the
+  production backend.
+- Strings/collections/generics/FFI/AI/web are not production-ready yet.
 
 ## Benchmark policy
 

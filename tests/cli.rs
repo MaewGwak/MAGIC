@@ -115,7 +115,7 @@ fn check_reports_the_memory_bound() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        text.contains("memory") && text.contains("40"),
+        text.contains("memory") && text.contains("40") && text.contains("NOT peak RSS"),
         "stdout was: {text}"
     );
 }
@@ -1451,4 +1451,86 @@ fn string_len_and_concat_work_in_both_backends() {
     let out = Command::new(&c_exe).output().expect("run c binary");
     assert!(out.status.success());
     assert_eq!(String::from_utf8_lossy(&out.stdout), "5\n11\nhello world\n");
+}
+
+#[test]
+fn index_arithmetic_overflow_is_rejected_both_backends() {
+    let dir = TempDir::new("idxov");
+    let src = dir.path().join("idx.magic");
+    std::fs::write(
+        &src,
+        "fn main() {\n\
+         var a: [i32] = [0; 4];\n\
+         var x: i32 = 65536;\n\
+         var y: i32 = 65536;\n\
+         a[x * y] = 7;\n\
+         print(a[0]);\n\
+         }\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("idx_ir");
+    Command::new(magicc()).arg("build").arg(&src).arg("-o").arg(&exe).output().expect("build");
+    let out = Command::new(&exe).output().expect("run");
+    assert!(!out.status.success(), "IR accepted wrapped index");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("index out of bounds"));
+
+    if !has_compiler() {
+        return;
+    }
+    let cexe = dir.path().join("idx_c");
+    let out = Command::new(magicc())
+        .args(["--backend", "c", "build", src.to_str().unwrap()])
+        .arg("-o")
+        .arg(&cexe)
+        .output()
+        .expect("build c");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(&cexe).output().expect("run c");
+    assert!(!out.status.success(), "C accepted wrapped index");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("index out of bounds"));
+}
+
+#[test]
+fn vec_view_alias_is_rejected() {
+    let dir = TempDir::new("vecalias");
+    let src = dir.path().join("a.magic");
+    std::fs::write(
+        &src,
+        "fn f(a: [i32], v: [i32+]) { v.push(1); print(a[0]); }\n\
+         fn main() { var v: [i32+] = []; v.push(77); f(v, v); }\n",
+    )
+    .unwrap();
+    let out = Command::new(magicc())
+        .args(["check", src.to_str().unwrap()])
+        .output()
+        .expect("check");
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("invalidat"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn vec_param_push_pop_keeps_length() {
+    let dir = TempDir::new("vecpop");
+    let src = dir.path().join("p.magic");
+    std::fs::write(
+        &src,
+        "fn addn(v: [i32+]) { v.push(5); pop(v); print(len(v)); }\n\
+         fn main() {\n\
+           var v: [i32+] = [];\n\
+           v.push(1); v.push(2);\n\
+           addn(v);\n\
+           print(len(v)); print(v[0]); print(v[1]);\n\
+         }\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("p_ir");
+    let out = Command::new(magicc()).arg("build").arg(&src).arg("-o").arg(&exe).output().expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(&exe).output().expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "2\n2\n1\n2\n");
 }

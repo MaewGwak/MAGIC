@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.12 (0.12.6)** — 172 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.12 (0.12.7)** — 175 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -195,9 +195,10 @@ Known losses and gaps (must stay visible):
   raytrace 7.3 ms vs 3.2 ms.
 - The fannkuch 8 ms and raytrace 2 ms entries use the **clang/gcc C backend plus
   benchmark-specific algorithms/SIMD**, not MAGIC codegen; they are not a language-speed win.
-- i32 index arithmetic can wrap and bypass a bounds check; `[T+]` growth can invalidate a
-  `[T]` view (known heap-use-after-free); `--report` is a syntactic bound, not a proof.
-  These are tracked as safety blockers before 1.0.0.
+- Index arithmetic is widened before bounds checks, and passing one variable as both a
+  `[T]` view and `[T+]` is rejected, so the reported overflow/UAF paths are closed in 0.12.7.
+- `--report` is a syntactic fixed-array sum, explicitly labelled NOT peak RSS; it is not a
+  memory proof.
 
 C/C++/Rust columns in this README are optimized builds (`-O3 -march=native`,
 `rustc -O -C target-cpu=native`). Files, flags and the fairness caveat are in

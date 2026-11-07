@@ -211,6 +211,7 @@ struct Builder {
     vbool: Vec<bool>,
     vty: Vec<Ty>,
     narrow: Vec<bool>,
+    wide_index: bool,
     var_bool: HashMap<String, bool>,
     var_ty: HashMap<String, Ty>,
     sigs: HashMap<String, Ty>,
@@ -634,6 +635,7 @@ impl Builder {
             vbool: Vec::new(),
             vty: Vec::new(),
             narrow: Vec::new(),
+            wide_index: false,
             var_bool: HashMap::new(),
             var_ty: HashMap::new(),
             sigs: HashMap::new(),
@@ -888,6 +890,24 @@ impl Builder {
         Ok(dst)
     }
 
+    fn lower_index_expr(&mut self, e: &Expr) -> Result<Value, String> {
+        let old = self.wide_index;
+        self.wide_index = true;
+        let r = self.lower_expr(e);
+        self.wide_index = old;
+        r
+    }
+
+    fn widen_index_value(&mut self, v: Value) -> Result<Value, String> {
+        if self.vty[v.0 as usize] == Ty::I64 {
+            return Ok(v);
+        }
+        let dst = self.value();
+        self.push(Instr::Trunc { dst, ty: Ty::I64, a: v });
+        self.vty[dst.0 as usize] = Ty::I64;
+        Ok(dst)
+    }
+
     fn lower_expr(&mut self, e: &Expr) -> Result<Value, String> {
         match &e.kind {
             ExprKind::Float(f) => {
@@ -959,7 +979,7 @@ impl Builder {
                     .vecs
                     .get(name)
                     .ok_or_else(|| format!("line {}: IR: unknown vector `{}`", e.line, name))?;
-                let idx = self.lower_expr(index)?;
+                let idx = self.lower_index_expr(index)?;
                 self.push(Instr::BoundsCheck { idx, len: LenRef::Var(lv), line: e.line });
                 let dst = self.value();
                 self.push(Instr::IndexLoad { dst, ptr_var: pv, idx, elem });
@@ -1087,6 +1107,8 @@ impl Builder {
                 let b = self.lower_expr(r)?;
                 let ta = self.vty[a.0 as usize];
                 let tb = self.vty[b.0 as usize];
+                let wide_arith = self.wide_index
+                    && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem);
                 if ta == Ty::F64 || tb == Ty::F64 {
                     let a = if ta == Ty::F64 {
                         a
@@ -1132,6 +1154,11 @@ impl Builder {
                     }
                     return Ok(dst);
                 }
+                let (a, b) = if wide_arith {
+                    (self.widen_index_value(a)?, self.widen_index_value(b)?)
+                } else {
+                    (a, b)
+                };
                 let op = match op {
                     BinOp::Add => Op::Add,
                     BinOp::Sub => Op::Sub,
@@ -1166,7 +1193,7 @@ impl Builder {
                 }
                 let ta = self.vty[a.0 as usize];
                 let tb = self.vty[b.0 as usize];
-                let rt = if ta == Ty::I64 || tb == Ty::I64 {
+                let rt = if wide_arith || ta == Ty::I64 || tb == Ty::I64 {
                     Ty::I64
                 } else {
                     Ty::I32
@@ -1200,6 +1227,10 @@ impl Builder {
                 let ta = self.vty[a.0 as usize];
                 self.vty[dst.0 as usize] = ta;
                 if ta == Ty::I32 {
+                    if self.wide_index {
+                        self.vty[dst.0 as usize] = Ty::I64;
+                        return Ok(dst);
+                    }
                     self.narrow[dst.0 as usize] = false;
                     return self.truncate_value(dst, Ty::I32);
                 }
@@ -1207,7 +1238,7 @@ impl Builder {
             }
             ExprKind::Index { name, index } => {
                 if let Some((elem, ptr_var, len_var, _cap, _esz)) = self.vecs.get(name).copied() {
-                    let idx = self.lower_expr(index)?;
+                    let idx = self.lower_index_expr(index)?;
                     let len = LenRef::Var(len_var);
                     self.push(Instr::BoundsCheck { idx, len, line: e.line });
                     let dst = self.value();
@@ -1218,7 +1249,7 @@ impl Builder {
                 let (elem, len) = *self.arrays.get(name).ok_or_else(|| {
                     format!("line {}: IR: unknown array `{}`", e.line, name)
                 })?;
-                let idx = self.lower_expr(index)?;
+                let idx = self.lower_index_expr(index)?;
                 self.push(Instr::BoundsCheck { idx, len, line: e.line });
                 let ptr_var = *self.vars.get(name).ok_or_else(|| {
                     format!("line {}: IR: unknown array `{}`", e.line, name)
@@ -1267,7 +1298,7 @@ impl Builder {
                             format!("line {}: IR: struct has no field `{}`", e.line, field)
                         })?;
                         let (size, _) = struct_layout(&self.struct_defs, id);
-                        let idx = self.lower_expr(index)?;
+                        let idx = self.lower_index_expr(index)?;
                         let dst = self.value();
                         self.push(Instr::IndexFieldLoad {
                             dst,
@@ -1293,7 +1324,7 @@ impl Builder {
                     format!("line {}: IR: struct has no field `{}`", e.line, field)
                 })?;
                 let (size, _) = struct_layout(&self.struct_defs, id);
-                let idx = self.lower_expr(index)?;
+                let idx = self.lower_index_expr(index)?;
                 let ptr_var = *self.vars.get(name).ok_or_else(|| {
                     format!("line {}: IR: unknown array `{}`", e.line, name)
                 })?;
@@ -1323,7 +1354,7 @@ impl Builder {
                     format!("line {}: IR: unknown field path", e.line)
                 })?;
                 let (size, _) = struct_layout(&self.struct_defs, id);
-                let idx = self.lower_expr(index)?;
+                let idx = self.lower_index_expr(index)?;
                 let ptr_var = *self.vars.get(name).ok_or_else(|| {
                     format!("line {}: IR: unknown array `{}`", e.line, name)
                 })?;
@@ -2718,7 +2749,7 @@ impl Builder {
                             format!("line {}: IR: struct has no field `{}`", s.line, field)
                         })?;
                         let (size, _) = struct_layout(&self.struct_defs, id);
-                        let idx = self.lower_expr(index)?;
+                        let idx = self.lower_index_expr(index)?;
                         let src = self.lower_expr(value)?;
                         self.push(Instr::IndexFieldStore {
                             ptr_var,
@@ -2743,7 +2774,7 @@ impl Builder {
                     format!("line {}: IR: struct has no field `{}`", s.line, field)
                 })?;
                 let (size, _) = struct_layout(&self.struct_defs, id);
-                let idx = self.lower_expr(index)?;
+                let idx = self.lower_index_expr(index)?;
                 let src = self.lower_expr(value)?;
                 let ptr_var = *self.vars.get(name).ok_or_else(|| {
                     format!("line {}: IR: unknown array `{}`", s.line, name)
@@ -2770,7 +2801,7 @@ impl Builder {
                     format!("line {}: IR: unknown field path", s.line)
                 })?;
                 let (size, _) = struct_layout(&self.struct_defs, id);
-                let idx = self.lower_expr(index)?;
+                let idx = self.lower_index_expr(index)?;
                 let src = self.lower_expr(value)?;
                 let ptr_var = *self.vars.get(name).ok_or_else(|| {
                     format!("line {}: IR: unknown array `{}`", s.line, name)
@@ -2788,7 +2819,7 @@ impl Builder {
             }
             StmtKind::IndexAssign { name, index, value } => {
                 if let Some((elem, ptr_var, len_var, _cap, _esz)) = self.vecs.get(name).copied() {
-                    let idx = self.lower_expr(index)?;
+                    let idx = self.lower_index_expr(index)?;
                     self.push(Instr::BoundsCheck { idx, len: LenRef::Var(len_var), line: s.line });
                     let src = self.lower_expr(value)?;
                     if self.par_body && elem == Ty::Bool {
@@ -2804,7 +2835,7 @@ impl Builder {
                         return Err(format!("line {}: IR: unknown array `{}`", s.line, name));
                     }
                 };
-                let idx = self.lower_expr(index)?;
+                let idx = self.lower_index_expr(index)?;
                 self.push(Instr::BoundsCheck { idx, len, line: s.line });
                 let src = self.lower_expr(value)?;
                 let ptr_var = *self.vars.get(name).ok_or_else(|| {
@@ -7245,6 +7276,12 @@ pub fn emit(prog: &IrProgram) -> String {
                     for k in 0..*slots {
                         addr_taken.insert(*var_index + k);
                     }
+                }
+                // LoadPtr writes its stack slot directly (loading through a
+                // vector-parameter pointer). Promoting the destination would
+                // leave the register stale, the same bug class as argc/vec_meta.
+                if let Instr::LoadPtr { dst_var, .. } = ins {
+                    addr_taken.insert(*dst_var);
                 }
             }
         }

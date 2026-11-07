@@ -78,9 +78,11 @@ pub fn compile_to_asm_ir_with_sources(src: &str, sources: &[(usize, String)]) ->
     Ok(ir::emit(&ir))
 }
 
-/// Static upper bound on the bytes each function's arrays can occupy.
-/// Only constant sizes (`[T] = [v; 10]` or `[v; n]` with `let n = 10`) are counted;
-/// anything dynamic is reported as 0 so the bound is never wrong, only loose.
+/// Syntactic sum of the bytes each function's fixed arrays can occupy.
+/// Only constant sizes (`[T] = [v; 10]` or `[v; n]` with `let n = 10`) are counted.
+/// This is NOT a peak-RSS bound: it ignores recursion depth, growable-array growth,
+/// stack frames, allocator metadata and fragmentation. Use it as a lowering hint,
+/// never as a proof.
 pub fn memory_report(src: &str) -> Result<Vec<(String, u64)>, String> {
     let tokens = lexer::Lexer::new(src).tokenize()?;
     let mut program = parser::Parser::new(tokens).parse_program()?;

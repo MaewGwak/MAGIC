@@ -1080,7 +1080,7 @@ fn emit_stmt(
                 "{}{}[magic_index((int64_t)({}), {}_len, \"line {}: index out of bounds\")].{} = {};\n",
                 pad(indent),
                 name,
-                expr(index),
+                expr_index(index),
                 name,
                 st.line,
                 path.join("."),
@@ -1097,7 +1097,7 @@ fn emit_stmt(
                 "{}{}[magic_index((int64_t)({}), {}_len, \"line {}: index out of bounds\")].{} = {};\n",
                 pad(indent),
                 name,
-                expr(index),
+                expr_index(index),
                 name,
                 st.line,
                 field,
@@ -1111,7 +1111,7 @@ fn emit_stmt(
                     pad(indent),
                     name,
                     name,
-                    expr(index),
+                    expr_index(index),
                     expr(value),
                     st.line
                 ));
@@ -1121,7 +1121,7 @@ fn emit_stmt(
                 "{}{}[magic_index((int64_t)({}), {}_len, \"line {}: index out of bounds\")] = {};\n",
                 pad(indent),
                 name,
-                expr(index),
+                expr_index(index),
                 name,
                 st.line,
                 expr(value)
@@ -1429,6 +1429,17 @@ fn emit_stmt(
         StmtKind::Expr(e) => {
             out.push_str(&format!("{}{};\n", pad(indent), expr(e)));
         }
+    }
+}
+
+fn expr_index(e: &Expr) -> String {
+    // Index arithmetic must not wrap in 32-bit before magic_index() sees it.
+    // Widen only the index tree; ordinary i32 expressions keep their semantics.
+    match &e.kind {
+        ExprKind::Bin { op: BinOp::Add, l, r } => format!("((int64_t)({}) + (int64_t)({}))", expr_index(l), expr_index(r)),
+        ExprKind::Bin { op: BinOp::Sub, l, r } => format!("((int64_t)({}) - (int64_t)({}))", expr_index(l), expr_index(r)),
+        ExprKind::Bin { op: BinOp::Mul, l, r } => format!("((int64_t)({}) * (int64_t)({}))", expr_index(l), expr_index(r)),
+        _ => format!("((int64_t)({}))", expr(e)),
     }
 }
 
@@ -1772,7 +1783,7 @@ fn expr(e: &Expr) -> String {
         ExprKind::IndexFieldPath { name, index, path } => format!(
             "{}[magic_index((int64_t)({}), {}_len, \"line {}: index out of bounds\")].{}",
             name,
-            expr(index),
+            expr_index(index),
             name,
             e.line,
             path.join(".")
@@ -1780,7 +1791,7 @@ fn expr(e: &Expr) -> String {
         ExprKind::IndexField { name, index, field } => format!(
             "{}[magic_index((int64_t)({}), {}_len, \"line {}: index out of bounds\")].{}",
             name,
-            expr(index),
+            expr_index(index),
             name,
             e.line,
             field
@@ -1791,14 +1802,14 @@ fn expr(e: &Expr) -> String {
                     "magic_bit_get((const uint64_t*)({}), {}_len, (int64_t)({}), \"line {}: index out of bounds\")",
                     name,
                     name,
-                    expr(index),
+                    expr_index(index),
                     e.line
                 );
             }
             format!(
                 "{}[magic_index((int64_t)({}), {}_len, \"line {}: index out of bounds\")]",
                 name,
-                expr(index),
+                expr_index(index),
                 name,
                 e.line
             )
@@ -1809,7 +1820,7 @@ fn expr(e: &Expr) -> String {
         ExprKind::VecParamIndex { name, index } => format!(
             "(*{})[magic_index((int64_t)({}), *{}_len, \"line {}: index out of bounds\")]",
             name,
-            expr(index),
+            expr_index(index),
             name,
             e.line
         ),

@@ -86,9 +86,9 @@ syntax; it wins by making the production path unsurprising.
 ## Phases and gates
 
 ### 0.13 — Safety and truth (next)
-- [ ] checked index arithmetic (trap or widen; no silent wrap)
-- [ ] view invalidation on `push`/`reserve`; deterministic ASan repro
-- [ ] rename `--report` to `--report=syntactic`; publish its assumptions
+- [x] checked index arithmetic (widen before bounds; no silent wrap)
+- [x] reject `[T]`/`[T+]` alias that `push`/`reserve` can invalidate (reported UAF path)
+- [x] label `--report` as a syntactic fixed-array sum, not peak RSS; document assumptions
 - [ ] clean-clone CI green for 7 consecutive days
 - [ ] no headline speed claim
 
