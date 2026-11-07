@@ -13,6 +13,8 @@ thread_local! {
 thread_local! {
     static LEN_NAMES: std::cell::RefCell<std::collections::HashSet<String>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
+    static STR_NAMES: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
 thread_local! {
@@ -51,6 +53,46 @@ fn has_par_for(stmts: &[Stmt]) -> bool {
         }
     }
     false
+}
+
+fn is_str_expr_in(e: &Expr, names: &std::collections::HashSet<String>) -> bool {
+    match &e.kind {
+        ExprKind::Str(_) => true,
+        ExprKind::Var(n) => names.contains(n),
+        ExprKind::Call { name, .. } => matches!(
+            name.as_str(),
+            "str_cat" | "str_from_bytes" | "env" | "arg" | "file_read_str" | "str_slice"
+        ),
+        _ => false,
+    }
+}
+
+fn is_str_expr(e: &Expr) -> bool {
+    STR_NAMES.with(|m| is_str_expr_in(e, &m.borrow()))
+}
+
+fn collect_string_vars(stmts: &[Stmt], names: &mut std::collections::HashSet<String>) {
+    for st in stmts {
+        match &st.kind {
+            StmtKind::Let { name, ty, init, .. } => {
+                if *ty == Some(Ty::Str) || is_str_expr_in(init, names) {
+                    names.insert(name.clone());
+                }
+            }
+            StmtKind::Assign { name, value } => {
+                if is_str_expr_in(value, names) {
+                    names.insert(name.clone());
+                }
+            }
+            StmtKind::If { then, els, .. } => {
+                collect_string_vars(then, names);
+                collect_string_vars(els, names);
+            }
+            StmtKind::While { body, .. } => collect_string_vars(body, names),
+            StmtKind::Arena { body } => collect_string_vars(body, names),
+            _ => {}
+        }
+    }
 }
 
 fn c_name_is_container(name: &str) -> bool {
@@ -233,6 +275,16 @@ fn header_base(prog: &Program) -> String {
          static int64_t magic_index(int64_t i, int64_t len, const char *msg) {\n\
          \x20   if ((uint64_t)i >= (uint64_t)len) magic_panic(msg);\n\
          \x20   return i;\n\
+         }\n\n",
+    );
+
+    out.push_str(
+        "static inline const char *magic_str_concat(const char *a, const char *b) {\n\
+         \x20   size_t na = strlen(a), nb = strlen(b);\n\
+         \x20   char *r = (char*)realloc(NULL, na + nb + 1);\n\
+         \x20   if (!r) magic_panic(\"string concat: out of memory\");\n\
+         \x20   memcpy(r, a, na); memcpy(r + na, b, nb); r[na + nb] = 0;\n\
+         \x20   return r;\n\
          }\n\n",
     );
 
@@ -850,6 +902,14 @@ fn definition(f: &Func, structs: &[StructDef], unroll: bool) -> String {
             if matches!(pty, ParamTy::Array(_) | ParamTy::Vec(_)) { m.insert(pname.clone()); }
         }
     });
+    STR_NAMES.with(|m| {
+        let mut m = m.borrow_mut();
+        m.clear();
+        for (pname, pty) in &f.params {
+            if matches!(pty, ParamTy::Scalar(Ty::Str)) { m.insert(pname.clone()); }
+        }
+        collect_string_vars(&f.body, &mut m);
+    });
     let mut s = String::new();
     s.push_str(&signature(f, structs));
     s.push_str(" {\n");
@@ -1444,6 +1504,16 @@ fn expr_index(e: &Expr) -> String {
 }
 
 fn expr(e: &Expr) -> String {
+    if let ExprKind::Bin { op, l, r } = &e.kind {
+        if is_str_expr(l) || is_str_expr(r) {
+            match op {
+                BinOp::Add => return format!("magic_str_concat(({}), ({}))", expr(l), expr(r)),
+                BinOp::Eq => return format!("(strcmp((const char*)({}), (const char*)({})) == 0)", expr(l), expr(r)),
+                BinOp::Ne => return format!("(strcmp((const char*)({}), (const char*)({})) != 0)", expr(l), expr(r)),
+                _ => {}
+            }
+        }
+    }
     match &e.kind {
         ExprKind::Int(v) => format!("{}", v),
         ExprKind::Float(v) => format!("{:?}", v),
@@ -1797,6 +1867,15 @@ fn expr(e: &Expr) -> String {
             field
         ),
         ExprKind::Index { name, index } => {
+            if STR_NAMES.with(|m| m.borrow().contains(name)) {
+                return format!(
+                    "((uint8_t)((const unsigned char*)({}))[magic_index((int64_t)({}), (int64_t)strlen((const char*)({})), \"line {}: index out of bounds\")])",
+                    name,
+                    expr_index(index),
+                    name,
+                    e.line
+                );
+            }
             if array_elem(name) == Some(Ty::Bool) {
                 return format!(
                     "magic_bit_get((const uint64_t*)({}), {}_len, (int64_t)({}), \"line {}: index out of bounds\")",

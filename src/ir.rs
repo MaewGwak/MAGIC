@@ -1107,6 +1107,32 @@ impl Builder {
                 let b = self.lower_expr(r)?;
                 let ta = self.vty[a.0 as usize];
                 let tb = self.vty[b.0 as usize];
+                if matches!(op, BinOp::Add | BinOp::Eq | BinOp::Ne)
+                    && (ta == Ty::Str || tb == Ty::Str)
+                {
+                    let dst = self.value();
+                    self.push(Instr::Call {
+                        dst: Some(dst),
+                        name: if *op == BinOp::Add { ".Lmf_str_cat".to_string() } else { ".Lmf_str_eq".to_string() },
+                        args: vec![a, b],
+                    });
+                    if *op == BinOp::Add {
+                        self.vty[dst.0 as usize] = Ty::Str;
+                    } else if *op == BinOp::Ne {
+                        let zero = self.value();
+                        self.push(Instr::Const { dst: zero, v: 0 });
+                        self.vty[zero.0 as usize] = Ty::I64;
+                        let inv = self.value();
+                        self.push(Instr::Bin { dst: inv, op: Op::Eq, l: dst, r: zero });
+                        self.vty[inv.0 as usize] = Ty::Bool;
+                        self.vbool[inv.0 as usize] = true;
+                        return Ok(inv);
+                    } else {
+                        self.vty[dst.0 as usize] = Ty::Bool;
+                        self.vbool[dst.0 as usize] = true;
+                    }
+                    return Ok(dst);
+                }
                 let wide_arith = self.wide_index
                     && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem);
                 if ta == Ty::F64 || tb == Ty::F64 {
@@ -1237,6 +1263,27 @@ impl Builder {
                 Ok(dst)
             }
             ExprKind::Index { name, index } => {
+                if self.var_ty.get(name).copied() == Some(Ty::Str) {
+                    let s = self.lower_expr(&Expr { kind: ExprKind::Var(name.clone()), line: e.line })?;
+                    let idx = self.lower_index_expr(index)?;
+                    let msg = self.value();
+                    let id = self.next_str;
+                    self.next_str += 1;
+                    self.push(Instr::Str {
+                        dst: msg,
+                        id,
+                        s: format!("line {}: index out of bounds", e.line),
+                    });
+                    self.vty[msg.0 as usize] = Ty::Str;
+                    let dst = self.value();
+                    self.push(Instr::Call {
+                        dst: Some(dst),
+                        name: ".Lmf_str_index".to_string(),
+                        args: vec![s, idx, msg],
+                    });
+                    self.vty[dst.0 as usize] = Ty::U8;
+                    return Ok(dst);
+                }
                 if let Some((elem, ptr_var, len_var, _cap, _esz)) = self.vecs.get(name).copied() {
                     let idx = self.lower_index_expr(index)?;
                     let len = LenRef::Var(len_var);
@@ -8876,6 +8923,12 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str("    lea (%rbx,%r14), %rdi\n    mov %r13, %rsi\n    mov %r15, %rdx\n    call memcpy@PLT\n");
     out.push_str("    add %r15, %r14\n    movb $0, (%rbx,%r14)\n    mov %rbx, %rax\n");
     out.push_str("2:\n    pop %r15\n    pop %r14\n    pop %r13\n    pop %r12\n    pop %rbx\n    ret\n");
+    out.push_str(".p2align 4\n.Lmf_str_index:\n    push %rbx\n    push %r12\n    push %r13\n");
+    out.push_str("    mov %rdi, %r12\n    mov %rsi, %rbx\n    mov %rdx, %r13\n");
+    out.push_str("    mov %r12, %rdi\n    call strlen@PLT\n");
+    out.push_str("    cmp %rax, %rbx\n    jb 2f\n");
+    out.push_str("    mov %r13, %rdi\n    call .Lir_panic\n");
+    out.push_str("2:\n    movzbl (%r12,%rbx), %eax\n    pop %r13\n    pop %r12\n    pop %rbx\n    ret\n");
     out.push_str(".p2align 4\n.Lmf_str_len:\n    test %rdi, %rdi\n    je 2f\n");
     out.push_str("    jmp strlen@PLT\n2:\n    xor %eax, %eax\n    ret\n");
     out.push_str(".p2align 4\n.Lmf_str_byte:\n    test %rdi, %rdi\n    je 2f\n");

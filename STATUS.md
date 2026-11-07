@@ -9,7 +9,7 @@ correctness/safety and a real memory-bound proof, not benchmark theatre.
 
 ## Proven, on this machine
 
-- **175 tests, all green** on a clean clone (`cargo test`; two skipped only if a C compiler is absent).
+- **177 tests, all green** on a clean clone (`cargo test`; two skipped only if a C compiler is absent).
 - **Compile speed**: 25 ms cold / 10 ms incremental for the 2,000-function source
   (gcc 47 ms, rustc 109 ms).
 - **Static floor**: 5,208-byte `hello` static ELF, no libc or PT_INTERP; native IR path
@@ -41,7 +41,8 @@ correctness/safety and a real memory-bound proof, not benchmark theatre.
   fast gates pass, but CI needs a fresh green run before claiming 7 days.
 - Legacy `--backend native` is experimental; index safety is tested, but it is not the
   production backend.
-- Strings/collections/generics/FFI/AI/web are not production-ready yet.
+- Strings now support `len`, `s[i]`, `==`/`!=`, `+`, `str_cat` in C and IR; `[str]`,
+  slices, formatting, native backend and collections/generics/FFI/AI/web are not ready.
 
 ## Benchmark policy
 

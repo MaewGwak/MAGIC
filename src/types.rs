@@ -585,7 +585,14 @@ impl Checker {
                     Ok(Ty::Bool)
                 }
             },
-            ExprKind::Bin { op, l, r } => match op {
+            ExprKind::Bin { op, l, r } => {
+                if matches!(op, BinOp::Add | BinOp::Eq | BinOp::Ne) {
+                    if self.check_expr(l, None, scopes)? == Ty::Str {
+                        self.check_expr(r, Some(Ty::Str), scopes)?;
+                        return Ok(if *op == BinOp::Add { Ty::Str } else { Ty::Bool });
+                    }
+                }
+                match op {
                 BinOp::And | BinOp::Or => {
                     self.check_expr(l, Some(Ty::Bool), scopes)?;
                     self.check_expr(r, Some(Ty::Bool), scopes)?;
@@ -611,7 +618,8 @@ impl Checker {
                     self.check_expr(r, Some(t), scopes)?;
                     Ok(Ty::Bool)
                 }
-            },
+                }
+            }
             ExprKind::Call { name, args } => {
                 if name == "len" {
                     if args.len() != 1 {
@@ -1398,6 +1406,13 @@ impl Checker {
                 Ok(fty)
             }
             ExprKind::Index { name, index } => {
+                if lookup(scopes, name).map(|(t, _)| t) == Some(Ty::Str) {
+                    let it = self.check_expr(index, Some(Ty::I64), scopes)?;
+                    if !it.is_numeric() {
+                        return Err(format!("{}: index must be an integer", e.line));
+                    }
+                    return Ok(Ty::U8);
+                }
                 let elem = match lookup_array(scopes, name) {
                     Some(t) => t,
                     None => lookup_vec(scopes, name).ok_or_else(|| {

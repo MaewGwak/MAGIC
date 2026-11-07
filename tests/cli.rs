@@ -1534,3 +1534,53 @@ fn vec_param_push_pop_keeps_length() {
     assert!(out.status.success());
     assert_eq!(String::from_utf8_lossy(&out.stdout), "2\n2\n1\n2\n");
 }
+
+#[test]
+fn natural_string_ops_work_in_both_backends() {
+    let dir = TempDir::new("strnat");
+    let src = dir.path().join("s.magic");
+    std::fs::write(
+        &src,
+        "fn main() {\n\
+         let s = \"hello\";\n\
+         print(len(s));\n\
+         print(s[1]);\n\
+         print(s == \"hello\");\n\
+         print(s != \"world\");\n\
+         print(s + \"!\");\n\
+         }\n",
+    )
+    .unwrap();
+    let expected = "5\n101\ntrue\ntrue\nhello!\n";
+    let exe = dir.path().join("s_ir");
+    let out = Command::new(magicc()).arg("build").arg(&src).arg("-o").arg(&exe).output().expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(&exe).output().expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
+
+    if !has_compiler() {
+        return;
+    }
+    let cexe = dir.path().join("s_c");
+    let out = Command::new(magicc())
+        .args(["--backend", "c", "build", src.to_str().unwrap()])
+        .arg("-o").arg(&cexe).output().expect("build c");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(&cexe).output().expect("run c");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
+}
+
+#[test]
+fn string_index_out_of_bounds_panics() {
+    let dir = TempDir::new("stroob");
+    let src = dir.path().join("s.magic");
+    std::fs::write(&src, "fn main() { let s = \"hello\"; print(s[5]); }\n").unwrap();
+    let exe = dir.path().join("s_ir");
+    let out = Command::new(magicc()).arg("build").arg(&src).arg("-o").arg(&exe).output().expect("build");
+    assert!(out.status.success());
+    let out = Command::new(&exe).output().expect("run");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("index out of bounds"));
+}

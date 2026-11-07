@@ -1,3 +1,14 @@
+## v0.12.9 — natural string operations in C and IR (2026-11-07)
+
+- `s[i]` with bounds checking (C uses `strlen` + `magic_index`; IR calls
+  `.Lmf_str_index`, which panics with a line-tagged message).
+- `s1 == s2` / `s1 != s2` via `strcmp`.
+- `s1 + s2` via a C helper / native `str_cat`; no manual `str_cat` needed.
+- `len(str)` remains supported.
+- Type checker infers string variables from params and `let`/assignments for these
+  operations. Still missing: `[str]`, slices, formatting, native backend, `<`/`>`.
+- Added C/IR parity and out-of-bounds regression tests (177 total).
+
 ## v0.12.8 — clean-clone fast gate builds the release compiler (2026-11-07)
 
 `./verify.sh -Fast` now runs `cargo build --release` before the native/IR gates, so a
