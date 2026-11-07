@@ -87,6 +87,14 @@ magicc build big.magic --unroll              # unroll small constant for-loops (
 magicc build main.magic lib.magic             # several files compile as one program, in order
 ```
 
+## Competitor baseline
+
+[`COMPETITORS.md`](COMPETITORS.md) analyses Goose — the closest no-heap,
+memory-safe systems language — including its published claims and local
+sanity measurements. MAGIC is not yet competitive on Goose's memory model or
+feature set; the next benchmark target is Goose parity on three matched
+workloads, not a blanket speed claim.
+
 ## Production roadmap
 
 MAGIC 0.12.x is an experimental base, not a Rust replacement yet. The production
