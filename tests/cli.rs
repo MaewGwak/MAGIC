@@ -1620,3 +1620,19 @@ fn string_arrays_and_vectors_work_in_both_backends() {
     assert!(out.status.success());
     assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
 }
+
+#[test]
+fn str_from_bytes_checks_terminator_capacity() {
+    if !has_compiler() { return; }
+    let dir = TempDir::new("strfrom");
+    let src = dir.path().join("b.magic");
+    std::fs::write(&src, "fn main() { var b: [u8] = [65; 3]; var s = str_from_bytes(b, 3); print(s); }\n").unwrap();
+    let exe = dir.path().join("b_c");
+    let out = Command::new(magicc())
+        .args(["--backend", "c", "build", src.to_str().unwrap()])
+        .arg("-o").arg(&exe).output().expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(&exe).output().expect("run");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no room for terminator"));
+}

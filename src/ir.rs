@@ -1566,9 +1566,15 @@ impl Builder {
                     self.vty[dst.0 as usize] = Ty::I32;
                     return Ok(dst);
                 }
-                if name.starts_with("perm_") || name.starts_with("cnt_") || name.starts_with("v4_") || matches!(name.as_str(), "str_from_bytes" | "proc_run" | "dir_mkdir" | "path_exists" | "dir_list" | "sha1_file" | "proc_exit") {
+                if name.starts_with("perm_") || name.starts_with("cnt_") || name.starts_with("v4_") {
                     return Err(format!(
                         "line {}: IR: `{}` is a C-backend SIMD intrinsic; build with --backend c/--fast",
+                        e.line, name
+                    ));
+                }
+                if matches!(name.as_str(), "str_from_bytes" | "proc_run" | "dir_mkdir" | "path_exists" | "dir_list" | "sha1_file" | "proc_exit") {
+                    return Err(format!(
+                        "line {}: IR: `{}` is only implemented by the C backend; build with --backend c",
                         e.line, name
                     ));
                 }

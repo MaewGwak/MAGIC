@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.12 (0.12.10)** — 178 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.12 (0.12.11)** — 179 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -210,7 +210,7 @@ Known losses and gaps (must stay visible):
 - The fannkuch 8 ms and raytrace 2 ms entries use the **clang/gcc C backend plus
   benchmark-specific algorithms/SIMD**, not MAGIC codegen; they are not a language-speed win.
 - Index arithmetic is widened before bounds checks, and passing one variable as both a
-  `[T]` view and `[T+]` is rejected, so the reported overflow/UAF paths are closed in 0.12.10.
+  `[T]` view and `[T+]` is rejected, so the reported overflow/UAF paths are closed in 0.12.11.
 - `--report` is a syntactic fixed-array sum, explicitly labelled NOT peak RSS; it is not a
   memory proof.
 

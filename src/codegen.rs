@@ -61,7 +61,7 @@ fn is_str_expr_in(e: &Expr, names: &std::collections::HashSet<String>) -> bool {
         ExprKind::Var(n) => names.contains(n),
         ExprKind::Call { name, .. } => matches!(
             name.as_str(),
-            "str_cat" | "str_from_bytes" | "env" | "arg" | "file_read_str" | "str_slice"
+            "str_cat" | "str_from_bytes" | "env" | "arg"
         ),
         ExprKind::Bin { op: BinOp::Add, l, r } => {
             is_str_expr_in(l, names) || is_str_expr_in(r, names)
@@ -532,7 +532,8 @@ static inline const char *magic_str_cat(const char *a, const char *b) {
     memcpy(r, a, na); memcpy(r + na, b, nb); r[na + nb] = 0;
     return r;
 }
-static inline const char *magic_str_from_bytes(uint8_t *b, int32_t len) {
+static inline const char *magic_str_from_bytes(uint8_t *b, int32_t len, int64_t cap, const char *msg) {
+    if (len < 0 || (int64_t)len >= cap) magic_panic(msg);
     b[len] = 0;
     return (const char*)b;
 }
@@ -1636,7 +1637,16 @@ fn expr(e: &Expr) -> String {
                 return format!("magic_str_cat(({}), ({}))", expr(&args[0]), expr(&args[1]));
             }
             if name == "str_from_bytes" && args.len() == 2 {
-                return format!("magic_str_from_bytes(({}), (int32_t)({}))", expr(&args[0]), expr(&args[1]));
+                let a = args[0].kind.clone();
+                if let ExprKind::Var(n) = a {
+                    return format!(
+                        "magic_str_from_bytes(({}), (int32_t)({}), (int64_t)({}_len), \"line {}: string buffer has no room for terminator\")",
+                        n,
+                        expr(&args[1]),
+                        n,
+                        e.line
+                    );
+                }
             }
             if name == "proc_run" && args.len() == 1 {
                 return format!("magic_proc_run(({}))", expr(&args[0]));

@@ -1,3 +1,10 @@
+## v0.12.11 — string buffer safety and honest backend diagnostics (2026-11-07)
+
+- `str_from_bytes` now receives the destination capacity and panics before writing
+  the terminator past the end. The previous C helper wrote `b[len] = 0` unchecked.
+- IR diagnostics no longer call app-specific C-only builtins "SIMD intrinsics".
+- Removed nonexistent `file_read_str`/`str_slice` names from string inference.
+
 ## v0.12.10 — string arrays and chained concatenation (2026-11-07)
 
 - `str` is now a valid fixed-array and growable-vector element: `[str]`, `[str+]`,

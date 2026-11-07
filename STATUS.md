@@ -9,7 +9,7 @@ correctness/safety and a real memory-bound proof, not benchmark theatre.
 
 ## Proven, on this machine
 
-- **178 tests, all green** on a clean clone (`cargo test`; two skipped only if a C compiler is absent).
+- **179 tests, all green** on a clean clone (`cargo test`; two skipped only if a C compiler is absent).
 - **Compile speed**: 25 ms cold / 10 ms incremental for the 2,000-function source
   (gcc 47 ms, rustc 109 ms).
 - **Static floor**: 5,208-byte `hello` static ELF, no libc or PT_INTERP; native IR path
