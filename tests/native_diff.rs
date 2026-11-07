@@ -68,7 +68,7 @@ fn build(src: &str, cc_cmd: &str, dir: &Path, name: &str, native: bool) -> Optio
     let s_path = dir.join(format!("{name}.s"));
     let exe = dir.join(name);
     if native {
-        let asm = magic::compile_to_asm(src).ok()?;
+        let asm = magic::compile_to_asm_ir(src).ok()?;
         std::fs::write(&s_path, asm).ok()?;
         let status = Command::new("as")
             .arg("--64")
@@ -167,7 +167,7 @@ fn native_matches_c_on_the_benchmark_corpus() {
         match (c_run, n_run) {
             (Some((cout, ccode)), Some((nout, ncode))) => {
                 if cout != nout || ccode != ncode {
-                    mismatches.push(format!("{path}: stdout/exit differ"));
+                    mismatches.push(format!("{path}: stdout/exit differ C={cout:?}/{ccode:?} N={nout:?}/{ncode:?}"));
                 }
             }
             _ => mismatches.push(format!("{path}: timed out or failed to run")),

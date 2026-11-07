@@ -1853,25 +1853,42 @@ impl Emitter {
                 self.line("    mov %rax, %rsi");
                 self.pop("%rdi");
                 self.call("fopen@PLT");
+                self.line("    test %rax, %rax");
+                self.line("    jne 2f");
+                self.line("    mov $-1, %rax");
+                self.line("2:");
             }
             "file_close" if args.len() == 1 => {
                 self.expr(&args[0])?;
+                self.line("    cmp $-1, %rax");
+                self.line("    je 2f");
                 self.line("    mov %rax, %rdi");
                 self.call("fclose@PLT");
+                self.line("    jmp 3f");
+                self.line("2:");
+                self.line("    mov $-1, %rax");
+                self.line("3:");
             }
             "file_read" | "file_write" if args.len() == 3 => {
+                self.expr(&args[0])?;
+                self.push("%rax");
                 self.expr(&args[1])?;
                 self.push("%rax");
                 self.expr(&args[2])?;
                 self.check_len("%rax", &args[1], line)?;
                 self.push("%rax");
-                self.expr(&args[0])?;
-                self.line("    mov %rax, %rcx");
                 self.pop("%rdx");
                 self.pop("%rdi");
+                self.pop("%rcx");
+                self.line("    cmp $-1, %rcx");
+                self.line("    je 4f");
                 self.line("    mov $1, %esi");
                 let f = if name == "file_read" { "fread@PLT" } else { "fwrite@PLT" };
                 self.call(f);
+                self.line("    jmp 5f");
+                self.line("4:");
+                self.line("    mov $-1, %rax");
+                self.line("5:");
             }
             "file_write_str" if args.len() == 2 => {
                 self.expr(&args[1])?;
