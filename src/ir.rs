@@ -1362,11 +1362,13 @@ impl Builder {
                     self.vty[iv.0 as usize] = Ty::I64;
                     let dst = self.value();
                     self.push(Instr::Trunc { dst, ty: *ty, a: iv });
+                    self.vty[dst.0 as usize] = *ty;
                     self.vbool[dst.0 as usize] = *ty == Ty::Bool;
                     return Ok(dst);
                 }
                 let dst = self.value();
                 self.push(Instr::Trunc { dst, ty: *ty, a });
+                self.vty[dst.0 as usize] = *ty;
                 self.vbool[dst.0 as usize] = *ty == Ty::Bool;
                 Ok(dst)
             }
@@ -7213,7 +7215,10 @@ pub fn emit(prog: &IrProgram) -> String {
             }
         }
         let mut ranked: Vec<(usize, u32)> = var_counts.into_iter().collect();
-        ranked.retain(|(v, _)| !addr_taken.contains(v) && !vec_meta.contains(v));
+        let mut fixed_slots: std::collections::HashSet<usize> = vec_meta.clone();
+        if let Some(v) = f.argc_var { fixed_slots.insert(v); }
+        if let Some(v) = f.argv_var { fixed_slots.insert(v); }
+        ranked.retain(|(v, _)| !addr_taken.contains(v) && !fixed_slots.contains(v));
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         let chosen: Vec<(usize, &'static str)> = ranked
             .into_iter()

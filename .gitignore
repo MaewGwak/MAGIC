@@ -13,6 +13,7 @@
 # Compile-speed scratch files
 /bench-compile/big.*
 *.s
+!runtime/static_runtime.s
 /bench-suite/nbody_unrolled.c
 /bench-suite/nbody_unrollpragma.c
 /bench-suite/nu_*.c
