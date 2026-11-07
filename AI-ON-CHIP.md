@@ -16,6 +16,34 @@ Measured 2026-11-07 on the development host:
 
 So every weight and every KV-cache byte competes for the same ~30 GiB.
 
+## DeepSeek V4.1 Flash 1017 is real
+
+The model is real (released 2026-10-17). Cloudflare's Workers AI changelog
+lists a **552B-parameter MoE backbone**, **8B active during prefill**, **16B
+active during decode**, and a **1,048,576-token context**. A direct Hugging
+Face `config.json` fetch failed here on DNS; the Cloudflare spec is the
+authoritative secondary source used below.
+
+| precision | 552B total weights | fits 30 GiB? |
+|---|---:|---|
+| FP16 | ~1,104 GB | no |
+| 8-bit | ~552 GB | no |
+| 4-bit | ~276 GB | no |
+| 2-bit | ~138 GB | no |
+| 1-bit | ~69 GB | no |
+| 0.43-bit | ~30 GB | only by destroying quality |
+
+Even with only 16B active parameters per decode token, 4-bit active weights
+are ~8 GB/token: at 100 GB/s that is a ~12.5 tok/s ceiling before attention,
+KV cache, routing and OS overhead. To reach 10,000 tok/s single-stream, the
+active working set would have to be ~0.08 GB/token (about 0.04 bit/parameter).
+That is not a language problem; it is bytes-per-token and memory bandwidth.
+
+What can still be researched: 1-bit/ternary weights, expert offload and
+caching, KV quantisation/paging, speculative decoding, distillation, and
+distribution across devices. Any of these that keeps quality while cutting
+bytes is valuable; none of them is created by adding syntax to a language.
+
 ## Why on-chip AI is fast
 
 Accelerators such as Groq, Cerebras, Etched Sohu and Taalas win by changing
