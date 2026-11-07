@@ -8,6 +8,8 @@ export PATH="${HOME}/.cargo/bin:${PATH}"
 fail=0
 echo "== cargo test =="
 cargo test || fail=1
+echo "== release build =="
+cargo build --release || fail=1
 echo "== check-docs =="
 ./check-docs.sh || fail=1
 echo "== native gate =="

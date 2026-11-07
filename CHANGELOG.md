@@ -1,3 +1,9 @@
+## v0.12.8 — clean-clone fast gate builds the release compiler (2026-11-07)
+
+`./verify.sh -Fast` now runs `cargo build --release` before the native/IR gates, so a
+fresh clone no longer fails because `target/release/magicc` is absent. This is the
+command the production gate documents.
+
 ## v0.12.7 — safety: index overflow, vec/view alias, vec-param push/pop (2026-11-07)
 
 - Widened index arithmetic to 64-bit before the bounds check in IR, C and native backends;
