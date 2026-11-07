@@ -769,6 +769,10 @@ fn c_type(t: Ty, structs: &[StructDef]) -> String {
     }
 }
 
+fn c_func_name(name: &str) -> String {
+    if name == "main" { "main".to_string() } else { format!("magic_fn_{}", name) }
+}
+
 fn signature(f: &Func, structs: &[StructDef]) -> String {
     let ret = if f.name == "main" {
         "int".to_string()
@@ -804,7 +808,7 @@ fn signature(f: &Func, structs: &[StructDef]) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    format!("{} {}({})", ret, f.name, params)
+    format!("{} {}({})", ret, c_func_name(&f.name), params)
 }
 
 fn definition(f: &Func, structs: &[StructDef], unroll: bool) -> String {
@@ -1739,7 +1743,7 @@ fn expr(e: &Expr) -> String {
                 );
             }
             let a = args.iter().map(expr).collect::<Vec<_>>().join(", ");
-            format!("{}({})", name, a)
+            format!("{}({})", c_func_name(name), a)
         }
         ExprKind::IndexFieldPath { name, index, path } => format!(
             "{}[magic_index((int64_t)({}), {}_len, \"line {}: index out of bounds\")].{}",
@@ -1871,8 +1875,8 @@ mod tests {
                    }\n\
                    fn main() { print(fib(10)); }";
         let c = compile_to_c(src).unwrap();
-        assert!(c.contains("int32_t fib(int32_t n)"));
-        assert!(c.contains("fib((n - 1))"));
+        assert!(c.contains("int32_t magic_fn_fib(int32_t n)"));
+        assert!(c.contains("magic_fn_fib((n - 1))"));
     }
 
     #[test]
@@ -2105,9 +2109,9 @@ mod tests {
                    }\n\
                    fn main() { var v: [i32+] = []; v.push(1); print(total(v)); }";
         let c = compile_to_c(src).unwrap();
-        assert!(c.contains("int32_t total(int32_t **v, int64_t *v_len, int64_t *v_cap)"));
+        assert!(c.contains("int32_t magic_fn_total(int32_t **v, int64_t *v_len, int64_t *v_cap)"));
         assert!(c.contains("(*v)[magic_index("));
-        assert!(c.contains("total(&v, &v_len, &v_cap)"));
+        assert!(c.contains("magic_fn_total(&v, &v_len, &v_cap)"));
     }
 
     #[test]
@@ -2140,8 +2144,8 @@ mod tests {
                    fn make() -> Point { return Point { x: 1, y: 2 }; }\n\
                    fn main() { var p: Point = make(); print(p.x); }";
         let c = compile_to_c(src).unwrap();
-        assert!(c.contains("Point make(void)"));
-        assert!(c.contains("Point p = make();"));
+        assert!(c.contains("Point magic_fn_make(void)"));
+        assert!(c.contains("Point p = magic_fn_make();"));
     }
 
     #[test]
@@ -2150,7 +2154,7 @@ mod tests {
                    fn px(p: Point) -> i32 { return p.x; }\n\
                    fn main() { var p: Point = Point { x: 7, y: 2 }; print(px(p)); }";
         let c = compile_to_c(src).unwrap();
-        assert!(c.contains("int32_t px(Point p)"));
+        assert!(c.contains("int32_t magic_fn_px(Point p)"));
     }
 
     #[test]
@@ -2260,7 +2264,7 @@ mod tests {
                    print(sum(a, 4));\n\
                    }";
         let c = compile_to_c(src).unwrap();
-        assert!(c.contains("int32_t sum(int32_t *xs, int64_t xs_len, int32_t n)"));
-        assert!(c.contains("sum(a, a_len, 4)"));
+        assert!(c.contains("int32_t magic_fn_sum(int32_t *xs, int64_t xs_len, int32_t n)"));
+        assert!(c.contains("magic_fn_sum(a, a_len, 4)"));
     }
 }

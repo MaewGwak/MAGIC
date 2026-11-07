@@ -151,7 +151,7 @@ fn large_programs_split_into_chunks() {
         .iter()
         .find(|p| p.contains("int main(int magic_argc, char **magic_argv) {"))
         .unwrap();
-    assert!(main_chunk.contains("int32_t f0(int32_t x);"));
+    assert!(main_chunk.contains("int32_t magic_fn_f0(int32_t x);"));
 }
 
 #[test]

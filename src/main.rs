@@ -204,7 +204,7 @@ fn run() -> Result<(), String> {
                 build_static_ir(&asm, &exe_path)?;
                 println!("\u{1F52E} built {} (static ir)", exe_path.display());
                 if command == "run" {
-                    let status = Command::new(&exe_path)
+                    let status = Command::new(abs_path(&exe_path))
                         .status()
                         .map_err(|e| format!("failed to run {}: {}", exe_path.display(), e))?;
                     if !status.success() {
@@ -680,7 +680,7 @@ fn build_native(
     if !flags_changed && exe_matches {
         println!("\u{1F52E} up to date {}", exe_path.display());
         if run {
-            let status = Command::new(&exe_path)
+            let status = Command::new(abs_path(&exe_path))
                 .status()
                 .map_err(|e| format!("failed to run {}: {}", exe_path.display(), e))?;
             if !status.success() {
@@ -772,7 +772,7 @@ fn build_native(
         if use_ir { "ir" } else { "native" }
     );
     if run {
-        let status = Command::new(&exe_path)
+        let status = Command::new(abs_path(&exe_path))
             .status()
             .map_err(|e| format!("failed to run {}: {}", exe_path.display(), e))?;
         if !status.success() {
