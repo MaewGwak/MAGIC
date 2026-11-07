@@ -1,3 +1,12 @@
+## v0.12.10 — string arrays and chained concatenation (2026-11-07)
+
+- `str` is now a valid fixed-array and growable-vector element: `[str]`, `[str+]`,
+  indexing, assignment, push, and string concatenation work in C and IR.
+- Str has size/alignment 8 (pointer) in the layout calculator; previous size 0
+  produced an invalid assembly scale factor.
+- Chained concatenation (`a + " " + b`) now recurses through string-typed Add.
+- Regression test covers both backends; 178 tests total.
+
 ## v0.12.9 — natural string operations in C and IR (2026-11-07)
 
 - `s[i]` with bounds checking (C uses `strlen` + `magic_index`; IR calls

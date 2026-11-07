@@ -130,7 +130,7 @@ pub fn ty_size(t: ast::Ty, structs: &[ast::StructDef]) -> u64 {
         }
         Bool | U8 => 1,
         I32 => 4,
-        I64 | F64 => 8,
+        I64 | F64 | Str => 8,
         _ => 0,
     }
 }

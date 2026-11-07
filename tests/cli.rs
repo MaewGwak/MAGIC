@@ -1584,3 +1584,39 @@ fn string_index_out_of_bounds_panics() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("index out of bounds"));
 }
+
+#[test]
+fn string_arrays_and_vectors_work_in_both_backends() {
+    let dir = TempDir::new("strarr");
+    let src = dir.path().join("a.magic");
+    std::fs::write(
+        &src,
+        "fn main() {\n\
+         var a: [str] = [\"zero\"; 3];\n\
+         a[0] = \"hello\"; a[1] = \"world\";\n\
+         print(a[0]); print(a[1]);\n\
+         print(a[0] + \" \" + a[1]);\n\
+         var v: [str+] = [];\n\
+         v.push(\"alpha\"); v.push(\"beta\");\n\
+         print(v[0]); print(v[1]);\n\
+         }\n",
+    )
+    .unwrap();
+    let expected = "hello\nworld\nhello world\nalpha\nbeta\n";
+    let exe = dir.path().join("a_ir");
+    let out = Command::new(magicc()).arg("build").arg(&src).arg("-o").arg(&exe).output().expect("build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(&exe).output().expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
+
+    if !has_compiler() { return; }
+    let cexe = dir.path().join("a_c");
+    let out = Command::new(magicc())
+        .args(["--backend", "c", "build", src.to_str().unwrap()])
+        .arg("-o").arg(&cexe).output().expect("build c");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(&cexe).output().expect("run c");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
+}

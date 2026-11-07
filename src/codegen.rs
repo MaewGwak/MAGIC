@@ -63,6 +63,9 @@ fn is_str_expr_in(e: &Expr, names: &std::collections::HashSet<String>) -> bool {
             name.as_str(),
             "str_cat" | "str_from_bytes" | "env" | "arg" | "file_read_str" | "str_slice"
         ),
+        ExprKind::Bin { op: BinOp::Add, l, r } => {
+            is_str_expr_in(l, names) || is_str_expr_in(r, names)
+        }
         _ => false,
     }
 }

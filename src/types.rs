@@ -60,18 +60,18 @@ impl Checker {
                     scopes[0].vars.insert(name.clone(), (*t, false));
                 }
                 ParamTy::Array(t) => {
-                    if !(t.is_numeric() || *t == Ty::Bool) {
+                    if !(t.is_numeric() || *t == Ty::Bool || *t == Ty::Str) {
                         return Err(format!(
-                            "array parameter '{}' must have a numeric or bool element",
+                            "array parameter '{}' must have a numeric, bool or string element",
                             name
                         ));
                     }
                     scopes[0].arrays.insert(name.clone(), *t);
                 }
                 ParamTy::Vec(t) => {
-                    if !(t.is_numeric() || *t == Ty::Bool) && !matches!(t, Ty::Struct(_)) {
+                    if !(t.is_numeric() || *t == Ty::Bool || *t == Ty::Str) && !matches!(t, Ty::Struct(_)) {
                         return Err(format!(
-                            "growable-array parameter '{}' must have a numeric, bool or struct element",
+                            "growable-array parameter '{}' must have a numeric, bool, string or struct element",
                             name
                         ));
                     }
@@ -268,9 +268,9 @@ impl Checker {
                         line
                     ));
                 }
-                if !(elem.is_numeric() || *elem == Ty::Bool) && !matches!(elem, Ty::Struct(_)) {
+                if !(elem.is_numeric() || *elem == Ty::Bool || *elem == Ty::Str) && !matches!(elem, Ty::Struct(_)) {
                     return Err(format!(
-                        "{}: vec element must be bool, u8, i32, i64, f64 or a struct",
+                        "{}: vec element must be bool, u8, i32, i64, f64, str or a struct",
                         line
                     ));
                 }
@@ -300,10 +300,10 @@ impl Checker {
                         line
                     ));
                 }
-                if !(elem.is_numeric() || *elem == Ty::Bool) {
+                if !(elem.is_numeric() || *elem == Ty::Bool || *elem == Ty::Str) {
                     if !matches!(elem, Ty::Struct(_)) {
                         return Err(format!(
-                            "{}: array element must be bool, u8, i32, i64, f64 or a struct",
+                            "{}: array element must be bool, u8, i32, i64, f64, str or a struct",
                             line
                         ));
                     }
