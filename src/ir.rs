@@ -1488,7 +1488,7 @@ impl Builder {
                     self.vty[dst.0 as usize] = Ty::I32;
                     return Ok(dst);
                 }
-                if name.starts_with("perm_") || name.starts_with("cnt_") || name.starts_with("v4_") || matches!(name.as_str(), "str_cat" | "str_from_bytes" | "proc_run" | "dir_mkdir" | "path_exists" | "dir_list" | "sha1_file" | "proc_exit") {
+                if name.starts_with("perm_") || name.starts_with("cnt_") || name.starts_with("v4_") || matches!(name.as_str(), "str_from_bytes" | "proc_run" | "dir_mkdir" | "path_exists" | "dir_list" | "sha1_file" | "proc_exit") {
                     return Err(format!(
                         "line {}: IR: `{}` is a C-backend SIMD intrinsic; build with --backend c/--fast",
                         e.line, name
@@ -1555,6 +1555,7 @@ impl Builder {
                     "str_len" => Some(".Lmf_str_len"),
                     "flush" => Some(".Lmf_flush"),
                     "env" => Some(".Lmf_env"),
+                    "str_cat" => Some(".Lmf_str_cat"),
                     "net_listen" => Some(".Lnet_listen"),
                     "net_port" => Some(".Lnet_port"),
                     "net_accept" => Some(".Lnet_accept"),
@@ -1635,10 +1636,11 @@ impl Builder {
                             return Ok(dst);
                         }
                     }
-                    return Err(format!(
-                        "line {}: IR: len() of this expression is not supported yet",
-                        e.line
-                    ));
+                    let a = self.lower_expr(&args[0])?;
+                    let dst = self.value();
+                    self.push(Instr::Call { dst: Some(dst), name: ".Lmf_str_len".to_string(), args: vec![a] });
+                    self.vty[dst.0 as usize] = Ty::I64;
+                    return Ok(dst);
                 }
                 if name == "sqrt" && args.len() == 1 {
                     let a = self.lower_expr(&args[0])?;
@@ -1713,7 +1715,7 @@ impl Builder {
                     name: builtin.unwrap_or(name.as_str()).to_string(),
                     args: vals,
                 });
-                self.vty[dst.0 as usize] = if name == "env" {
+                self.vty[dst.0 as usize] = if name == "env" || name == "str_cat" {
                     Ty::Str
                 } else {
                     ret.unwrap_or(Ty::I32)
@@ -8827,6 +8829,16 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str("    mov %ebx, %eax\n1:\n    add $16, %rsp\n    pop %r13\n    pop %r12\n    pop %rbx\n    ret\n");
     out.push_str("3:\n    mov %ebx, %edi\n    call close@PLT\n2:\n    mov $-1, %rax\n    jmp 1b\n");
     // String helpers with the native backend's NULL-safe semantics.
+    out.push_str(".p2align 4\n.Lmf_str_cat:\n    push %rbx\n    push %r12\n    push %r13\n    push %r14\n    push %r15\n");
+    out.push_str("    mov %rdi, %r12\n    mov %rsi, %r13\n");
+    out.push_str("    mov %r12, %rdi\n    call strlen@PLT\n    mov %rax, %r14\n");
+    out.push_str("    mov %r13, %rdi\n    call strlen@PLT\n    mov %rax, %r15\n");
+    out.push_str("    lea 1(%r14,%r15), %rdi\n    call malloc@PLT\n");
+    out.push_str("    test %rax, %rax\n    je 2f\n    mov %rax, %rbx\n");
+    out.push_str("    mov %rbx, %rdi\n    mov %r12, %rsi\n    mov %r14, %rdx\n    call memcpy@PLT\n");
+    out.push_str("    lea (%rbx,%r14), %rdi\n    mov %r13, %rsi\n    mov %r15, %rdx\n    call memcpy@PLT\n");
+    out.push_str("    add %r15, %r14\n    movb $0, (%rbx,%r14)\n    mov %rbx, %rax\n");
+    out.push_str("2:\n    pop %r15\n    pop %r14\n    pop %r13\n    pop %r12\n    pop %rbx\n    ret\n");
     out.push_str(".p2align 4\n.Lmf_str_len:\n    test %rdi, %rdi\n    je 2f\n");
     out.push_str("    jmp strlen@PLT\n2:\n    xor %eax, %eax\n    ret\n");
     out.push_str(".p2align 4\n.Lmf_str_byte:\n    test %rdi, %rdi\n    je 2f\n");

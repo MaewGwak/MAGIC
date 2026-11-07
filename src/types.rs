@@ -617,14 +617,16 @@ impl Checker {
                     if args.len() != 1 {
                         return Err(format!("{}: len takes 1 argument", e.line));
                     }
-                    let vname = match &args[0].kind {
-                        ExprKind::Var(n) => n,
-                        _ => return Err(format!("{}: len takes an array", e.line)),
-                    };
-                    if lookup_array(scopes, vname).is_none() && lookup_vec(scopes, vname).is_none() {
-                        return Err(format!("{}: '{}' is not an array", e.line, vname));
+                    if let ExprKind::Var(vname) = &args[0].kind {
+                        if lookup_array(scopes, vname).is_some() || lookup_vec(scopes, vname).is_some() {
+                            return Ok(Ty::I64);
+                        }
                     }
-                    return Ok(Ty::I64);
+                    let t = self.check_expr(&args[0], None, scopes)?;
+                    if t == Ty::Str {
+                        return Ok(Ty::I64);
+                    }
+                    return Err(format!("{}: len needs an array, vec or string", e.line));
                 }
                 if name == "min" || name == "max" {
                     if args.len() != 2 {

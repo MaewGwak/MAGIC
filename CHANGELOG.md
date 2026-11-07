@@ -1,3 +1,12 @@
+## v0.12.6 — strings: len(str)/native str_cat, C namespacing, CI build (2026-11-07)
+
+`len(str)` now works in all backends; native IR implements `str_cat` with a libc
+malloc/copy wrapper. C user functions are emitted as `magic_fn_<name>` to avoid libc
+collisions (`read`, `write`, `open`, ...). `magicc run` executes a relative output
+with an absolute path, so bare filenames work. CI now builds the release compiler
+before running benchmarks (the missing step that made every run red). Still open:
+i32 index overflow, `[T+]` view invalidation, and `--report` is not a proof.
+
 ## v0.12.5 — remove misleading speed headline (2026-11-07)
 
 Removed the README table that compared algorithmic variants/threading with the original C

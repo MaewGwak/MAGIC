@@ -11,6 +11,11 @@ thread_local! {
 }
 
 thread_local! {
+    static LEN_NAMES: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+thread_local! {
     static BITPACK: std::cell::Cell<bool> = std::cell::Cell::new(true);
 }
 
@@ -46,6 +51,10 @@ fn has_par_for(stmts: &[Stmt]) -> bool {
         }
     }
     false
+}
+
+fn c_name_is_container(name: &str) -> bool {
+    LEN_NAMES.with(|m| m.borrow().contains(name))
 }
 
 fn array_elem(name: &str) -> Option<Ty> {
@@ -832,6 +841,15 @@ fn definition(f: &Func, structs: &[StructDef], unroll: bool) -> String {
             }
         }
     }
+    LEN_NAMES.with(|m| {
+        let mut m = m.borrow_mut();
+        m.clear();
+        for a in &arrays { m.insert(a.name.clone()); }
+        for v in &vecs { m.insert(v.name.clone()); }
+        for (pname, pty) in &f.params {
+            if matches!(pty, ParamTy::Array(_) | ParamTy::Vec(_)) { m.insert(pname.clone()); }
+        }
+    });
     let mut s = String::new();
     s.push_str(&signature(f, structs));
     s.push_str(" {\n");
@@ -1474,8 +1492,14 @@ fn expr(e: &Expr) -> String {
             }
             if name == "len" && args.len() == 1 {
                 if let ExprKind::Var(n) = &args[0].kind {
-                    return format!("{}_len", n);
+                    // Arrays/vectors carry a generated `_len`; strings (which
+                    // the type checker only allows here when they are not
+                    // arrays/vectors) use strlen.
+                    if c_name_is_container(n) {
+                        return format!("{}_len", n);
+                    }
                 }
+                return format!("(int64_t)strlen((const char*)({}))", expr(&args[0]));
             }
             if (name == "min" || name == "max") && args.len() == 2 {
                 let a = expr(&args[0]);

@@ -1406,3 +1406,49 @@ fn default_ir_refuses_symlinked_assembly() {
     assert!(!out.status.success(), "build wrote through a symlink");
     assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched");
 }
+
+#[test]
+fn string_len_and_concat_work_in_both_backends() {
+    let dir = TempDir::new("strcat");
+    let src = dir.path().join("s.magic");
+    std::fs::write(
+        &src,
+        "fn main() {\n\
+         let a = \"hello\";\n\
+         let b = \" world\";\n\
+         let c = str_cat(a, b);\n\
+         print(len(a));\n\
+         print(len(c));\n\
+         print(c);\n\
+         }\n",
+    )
+    .unwrap();
+
+    let ir_exe = dir.path().join("s_ir");
+    let out = Command::new(magicc())
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&ir_exe)
+        .output()
+        .expect("run magicc");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(&ir_exe).output().expect("run ir binary");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "5\n11\nhello world\n");
+
+    if !has_compiler() {
+        return;
+    }
+    let c_exe = dir.path().join("s_c");
+    let out = Command::new(magicc())
+        .args(["--backend", "c", "build", src.to_str().unwrap()])
+        .arg("-o")
+        .arg(&c_exe)
+        .output()
+        .expect("run magicc c");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(&c_exe).output().expect("run c binary");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "5\n11\nhello world\n");
+}
