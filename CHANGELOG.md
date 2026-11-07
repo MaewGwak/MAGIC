@@ -1,3 +1,11 @@
+## v0.12.3 — 1.0.0 withheld for tooling/safety/portability (2026-11-07)
+
+1.0.0 is withdrawn again by owner decision. The performance gate remains earned (fannkuch 8 ms,
+raytrace 2 ms, no algorithmic losses, ties at the process floor), but 1.0.0 now requires the
+remaining roadmap: VS Code/tooling, compile-time safety, native runtime, portability/ABI/embedded,
+and optimization without the C backend where practical. Work starts with the VS Code extension
+(syntax + check command), then LSP and a DWARF symbolizer.
+
 ## v1.0.0 — best-of win under owner tie rule (2026-11-07)
 
 MAGIC now wins the independent best-of matrix at the workloads where the language
