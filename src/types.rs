@@ -585,41 +585,44 @@ impl Checker {
                     Ok(Ty::Bool)
                 }
             },
-            ExprKind::Bin { op, l, r } => {
-                if matches!(op, BinOp::Add | BinOp::Eq | BinOp::Ne) {
-                    if self.check_expr(l, None, scopes)? == Ty::Str {
-                        self.check_expr(r, Some(Ty::Str), scopes)?;
-                        return Ok(if *op == BinOp::Add { Ty::Str } else { Ty::Bool });
-                    }
-                }
-                match op {
+            ExprKind::Bin { op, l, r } => match op {
                 BinOp::And | BinOp::Or => {
                     self.check_expr(l, Some(Ty::Bool), scopes)?;
                     self.check_expr(r, Some(Ty::Bool), scopes)?;
                     Ok(Ty::Bool)
                 }
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
+                    let lt = match expected {
+                        Some(t) if t.is_numeric() => self.check_expr(l, Some(t), scopes)?,
+                        _ => self.check_expr(l, None, scopes)?,
+                    };
+                    if *op == BinOp::Add && lt == Ty::Str {
+                        self.check_expr(r, Some(Ty::Str), scopes)?;
+                        return Ok(Ty::Str);
+                    }
                     let t = match expected {
                         Some(t) if t.is_numeric() => t,
-                        _ => self.check_expr(l, None, scopes)?,
+                        _ => lt,
                     };
                     if !t.is_numeric() {
                         return Err(format!("{}: arithmetic on {}", e.line, t.c_name()));
                     }
-                    self.check_expr(l, Some(t), scopes)?;
                     self.check_expr(r, Some(t), scopes)?;
                     Ok(t)
                 }
                 _ => {
                     let t = self.check_expr(l, None, scopes)?;
+                    if matches!(op, BinOp::Eq | BinOp::Ne) && t == Ty::Str {
+                        self.check_expr(r, Some(Ty::Str), scopes)?;
+                        return Ok(Ty::Bool);
+                    }
                     if !(t.is_numeric() || t == Ty::Bool) {
                         return Err(format!("{}: cannot compare {}", e.line, t.c_name()));
                     }
                     self.check_expr(r, Some(t), scopes)?;
                     Ok(Ty::Bool)
                 }
-                }
-            }
+            },
             ExprKind::Call { name, args } => {
                 if name == "len" {
                     if args.len() != 1 {
