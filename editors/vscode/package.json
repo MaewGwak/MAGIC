@@ -1,0 +1,46 @@
+{
+  "name": "magic-language",
+  "displayName": "MAGIC",
+  "description": "MAGIC language support: syntax, snippets and compiler diagnostics",
+  "version": "0.1.0",
+  "publisher": "magic-lang",
+  "license": "MIT",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:magic"],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "magic",
+        "aliases": ["MAGIC", "magic"],
+        "extensions": [".magic"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "magic",
+        "scopeName": "source.magic",
+        "path": "./syntaxes/magic.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      { "language": "magic", "path": "./snippets/magic.json" }
+    ],
+    "commands": [
+      { "command": "magic.check", "title": "MAGIC: Check file" },
+      { "command": "magic.build", "title": "MAGIC: Build file" }
+    ],
+    "configuration": {
+      "title": "MAGIC",
+      "properties": {
+        "magic.compilerPath": {
+          "type": "string",
+          "default": "magicc",
+          "description": "Path to the magicc compiler executable."
+        }
+      }
+    }
+  }
+}

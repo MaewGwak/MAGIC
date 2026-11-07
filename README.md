@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.12 (0.12.3)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.12 (0.12.4)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -86,6 +86,13 @@ magicc build big.magic --backend c --cc "zig cc"  # C path: pick the compiler (m
 magicc build big.magic --unroll              # unroll small constant for-loops (clang/zig)
 magicc build main.magic lib.magic             # several files compile as one program, in order
 ```
+
+## Editor support
+
+A VS Code extension lives in [`editors/vscode`](editors/vscode/): syntax
+highlighting, snippets, `MAGIC: Check file` diagnostics and `MAGIC: Build file`.
+Install by copying the directory to `~/.vscode/extensions/magic-language-0.1.0`
+and reloading; set `magic.compilerPath` if `magicc` is not on `PATH`.
 
 Files can also pull each other in:
 

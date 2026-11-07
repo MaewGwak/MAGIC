@@ -1,3 +1,12 @@
+## v0.12.4 — VS Code extension (2026-11-07)
+
+Added `editors/vscode`: TextMate grammar for MAGIC, language configuration,
+snippets, and commands that run `magicc check --backend c` (with `file:line`
+diagnostics) and `magicc build --fast` in a terminal. No JavaScript build step
+or npm dependency is required; copy the directory into VS Code extensions.
+This is the first tooling milestone on the 1.0.0 roadmap (formatter/linter/LSP
+and DWARF symbolizer are next).
+
 ## v0.12.3 — 1.0.0 withheld for tooling/safety/portability (2026-11-07)
 
 1.0.0 is withdrawn again by owner decision. The performance gate remains earned (fannkuch 8 ms,

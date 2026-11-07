@@ -1,0 +1,32 @@
+{
+  "Main function": {
+    "prefix": "fnmain",
+    "body": ["fn main() {", "    $0", "}"],
+    "description": "MAGIC main function"
+  },
+  "Function": {
+    "prefix": "fn",
+    "body": ["fn ${1:name}(${2}) -> ${3:i32} {", "    $0", "}"],
+    "description": "MAGIC function"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": ["struct ${1:Name} { ${2:field}: ${3:i32} }", "$0"],
+    "description": "MAGIC struct"
+  },
+  "For loop": {
+    "prefix": "for",
+    "body": ["for ${1:i} in 0..${2:n} {", "    $0", "}"],
+    "description": "MAGIC for loop"
+  },
+  "Parallel for": {
+    "prefix": "parfor",
+    "body": ["par for ${1:i} in 0..${2:n} {", "    $0", "}"],
+    "description": "MAGIC parallel for"
+  },
+  "Growable array": {
+    "prefix": "vec",
+    "body": ["var ${1:v}: [${2:i32}+] = [];", "$0"],
+    "description": "MAGIC growable array"
+  }
+}

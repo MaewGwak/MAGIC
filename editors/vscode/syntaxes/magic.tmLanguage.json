@@ -1,0 +1,80 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "MAGIC",
+  "scopeName": "source.magic",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#functions" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.magic", "match": "//.*$" }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.magic",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.magic", "match": "\\\\[ntr\\\\\"]" }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.magic",
+          "match": "\\b(fn|let|var|if|else|while|return|for|par|in|break|continue|struct|arena|import|as|assert|print)\\b"
+        },
+        {
+          "name": "constant.language.boolean.magic",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.magic",
+          "match": "\\b(i32|i64|u8|u128|f64|bool|str|void|V4)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.float.magic", "match": "\\b[0-9]+\\.[0-9]+\\b" },
+        { "name": "constant.numeric.integer.magic", "match": "\\b[0-9]+\\b" }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "meta.function.magic",
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.magic" },
+            "2": { "name": "entity.name.function.magic" }
+          }
+        },
+        {
+          "name": "entity.name.function.call.magic",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\s*(?=\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.magic", "match": "==|!=|<=|>=|&&|\\|\\||[-+*/%<>=!]" }
+      ]
+    }
+  }
+}
