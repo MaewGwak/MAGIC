@@ -1494,6 +1494,50 @@ impl Builder {
                         e.line, name
                     ));
                 }
+                if (name == "file_read" || name == "file_write") && args.len() == 3 {
+                    let fd = self.lower_expr(&args[0])?;
+                    let buf = self.lower_expr(&args[1])?;
+                    let len = self.lower_expr(&args[2])?;
+                    let cap = match &args[1].kind {
+                        ExprKind::Var(vn) => {
+                            if let Some((_, lenref)) = self.arrays.get(vn).copied() {
+                                Some(lenref)
+                            } else if let Some((_, _, _, cvar, _)) = self.vecs.get(vn).copied() {
+                                Some(LenRef::Var(cvar))
+                            } else { None }
+                        }
+                        _ => None,
+                    };
+                    if let Some(capref) = cap {
+                        let zero = self.value();
+                        self.push(Instr::Const { dst: zero, v: 0 });
+                        self.vty[zero.0 as usize] = Ty::I64;
+                        let ge = self.value();
+                        self.push(Instr::Bin { dst: ge, op: Op::Ge, l: len, r: zero });
+                        self.vty[ge.0 as usize] = Ty::Bool;
+                        self.vbool[ge.0 as usize] = true;
+                        self.push(Instr::Assert { cond: ge, line: e.line });
+                        let capv = self.value();
+                        match capref {
+                            LenRef::Const(n) => self.push(Instr::Const { dst: capv, v: n }),
+                            LenRef::Var(v) => self.push(Instr::LoadVar { dst: capv, var: v }),
+                        }
+                        self.vty[capv.0 as usize] = Ty::I64;
+                        let le = self.value();
+                        self.push(Instr::Bin { dst: le, op: Op::Le, l: len, r: capv });
+                        self.vty[le.0 as usize] = Ty::Bool;
+                        self.vbool[le.0 as usize] = true;
+                        self.push(Instr::Assert { cond: le, line: e.line });
+                    }
+                    let dst = self.value();
+                    self.push(Instr::Call {
+                        dst: Some(dst),
+                        name: if name == "file_read" { ".Lmf_read".to_string() } else { ".Lmf_write".to_string() },
+                        args: vec![fd, buf, len],
+                    });
+                    self.vty[dst.0 as usize] = Ty::I64;
+                    return Ok(dst);
+                }
                 let builtin = match name.as_str() {
                     "file_open" => Some(".Lmf_open"),
                     "file_close" => Some(".Lmf_close"),
@@ -7084,7 +7128,7 @@ pub fn optimize(prog: &mut IrProgram) {
 pub fn emit(prog: &IrProgram) -> String {
     let mut out = String::new();
     out.push_str(".text\n");
-    out.push_str(".section .bss\n.align 8\n.Lbt_buf: .zero 512\n.Lcpu_avx2: .zero 1\n.text\n");
+    out.push_str(".section .bss\n.align 8\n.Lbt_buf: .zero 512\n.Lcpu_avx2: .zero 1\n.Lmf_table: .zero 2048\n.text\n");
     out.push_str(".Lfmt_ll: .asciz \"%lld\\n\"\n");
     out.push_str(".Lfmt_s: .asciz \"%s\\n\"\n");
     out.push_str(".Ltrue: .asciz \"true\"\n");
@@ -8415,31 +8459,301 @@ pub fn emit(prog: &IrProgram) -> String {
         out.push_str(".cfi_endproc\n");
         out.push_str(&format!(".size {}, .-{}\n", f.name, f.name));
     }
-    // File builtins: thin wrappers with the same argument order as the AST
-    // native backend. They call libc directly.
-    out.push_str(".p2align 4\n.Lmf_open:\n    jmp fopen@PLT\n");
-    out.push_str(".p2align 4\n.Lmf_close:\n    jmp fclose@PLT\n");
-    out.push_str(".p2align 4\n.Lmf_read:\n    mov %rdi, %rcx\n    mov %rsi, %rdi\n");
-    out.push_str("    mov $1, %esi\n    sub $8, %rsp\n    call fread@PLT\n");
-    out.push_str("    add $8, %rsp\n    ret\n");
-    out.push_str(".p2align 4\n.Lmf_write:\n    mov %rdi, %rcx\n    mov %rsi, %rdi\n");
-    out.push_str("    mov $1, %esi\n    sub $8, %rsp\n    call fwrite@PLT\n");
-    out.push_str("    add $8, %rsp\n    ret\n");
-    out.push_str(".p2align 4\n.Lmf_seek:\n    jmp fseek@PLT\n");
-    out.push_str(".p2align 4\n.Lmf_tell:\n    jmp ftell@PLT\n");
-    out.push_str(".p2align 4\n.Lmf_write_str:\n    xchg %rdi, %rsi\n    jmp fputs@PLT\n");
-    // read_at / write_at: fseek(fd, off, SEEK_SET) then fread/fwrite(buf, 1, len, fd)
-    // read_at/write_at(fd, buf, off_in_buf, len): the native backend reads into
-    // buf + off at the current file position, so mirror that exactly.
-    for (label, lib) in [(".Lmf_read_at", "fread"), (".Lmf_write_at", "fwrite")] {
-        out.push_str(&format!(".p2align 4\n{}:\n", label));
-        out.push_str("    push %rbx\n    push %r12\n    sub $8, %rsp\n");
-        out.push_str("    mov %rdi, %rbx\n    mov %rsi, %r12\n");
-        out.push_str("    lea (%r12,%rdx), %rdi\n    mov %rcx, %rdx\n");
-        out.push_str("    mov $1, %esi\n    mov %rbx, %rcx\n");
-        out.push_str(&format!("    call {}@PLT\n", lib));
-        out.push_str("    add $8, %rsp\n    pop %r12\n    pop %rbx\n    ret\n");
-    }
+    // File builtins use a small fd table (3..255 -> FILE*), matching the C
+    // backend's handle semantics. Invalid/missing handles return -1 instead of
+    // dereferencing a truncated FILE*.
+    out.push_str(r#".p2align 4
+.Lmf_open:
+    push %rbx
+    push %r12
+    sub $8, %rsp
+    call fopen@PLT
+    test %rax, %rax
+    je 4f
+    mov %rax, %r12
+    mov $3, %ebx
+1:
+    cmp $256, %ebx
+    jge 2f
+    lea .Lmf_table(%rip), %rdx
+    cmpq $0, (%rdx,%rbx,8)
+    je 3f
+    inc %ebx
+    jmp 1b
+2:
+    mov %r12, %rdi
+    call fclose@PLT
+    mov $-1, %rax
+    jmp 5f
+3:
+    mov %r12, (%rdx,%rbx,8)
+    mov %ebx, %eax
+    jmp 5f
+4:
+    mov $-1, %rax
+5:
+    add $8, %rsp
+    pop %r12
+    pop %rbx
+    ret
+
+.p2align 4
+.Lmf_close:
+    cmp $3, %edi
+    jl 2f
+    cmp $256, %edi
+    jge 2f
+    lea .Lmf_table(%rip), %rax
+    mov (%rax,%rdi,8), %rax
+    test %rax, %rax
+    je 2f
+    push %rbx
+    mov %edi, %ebx
+    mov %rax, %rdi
+    call fclose@PLT
+    lea .Lmf_table(%rip), %rax
+    movq $0, (%rax,%rbx,8)
+    xor %eax, %eax
+    pop %rbx
+    ret
+2:
+    mov $-1, %rax
+    ret
+
+.p2align 4
+.Lmf_read:
+    cmp $3, %edi
+    jl 2f
+    cmp $256, %edi
+    jge 2f
+    lea .Lmf_table(%rip), %rax
+    mov (%rax,%rdi,8), %rcx
+    test %rcx, %rcx
+    je 2f
+    mov %rdx, %r8
+    mov %rsi, %rdi
+    mov $1, %esi
+    mov %r8, %rdx
+    sub $8, %rsp
+    call fread@PLT
+    add $8, %rsp
+    ret
+2:
+    mov $-1, %rax
+    ret
+
+.p2align 4
+.Lmf_write:
+    cmp $3, %edi
+    jl 2f
+    cmp $256, %edi
+    jge 2f
+    lea .Lmf_table(%rip), %rax
+    mov (%rax,%rdi,8), %rcx
+    test %rcx, %rcx
+    je 2f
+    mov %rdx, %r8
+    mov %rsi, %rdi
+    mov $1, %esi
+    mov %r8, %rdx
+    sub $8, %rsp
+    call fwrite@PLT
+    add $8, %rsp
+    ret
+2:
+    mov $-1, %rax
+    ret
+
+.p2align 4
+.Lmf_seek:
+    cmp $3, %edi
+    jl 2f
+    cmp $256, %edi
+    jge 2f
+    lea .Lmf_table(%rip), %rax
+    mov (%rax,%rdi,8), %rax
+    test %rax, %rax
+    je 2f
+    mov %rax, %rdi
+    sub $8, %rsp
+    call fseek@PLT
+    add $8, %rsp
+    ret
+2:
+    mov $-1, %rax
+    ret
+
+.p2align 4
+.Lmf_tell:
+    cmp $3, %edi
+    jl 2f
+    cmp $256, %edi
+    jge 2f
+    lea .Lmf_table(%rip), %rax
+    mov (%rax,%rdi,8), %rdi
+    test %rdi, %rdi
+    je 2f
+    jmp ftell@PLT
+2:
+    mov $-1, %rax
+    ret
+
+.p2align 4
+.Lmf_write_str:
+    cmp $3, %edi
+    jl 2f
+    cmp $256, %edi
+    jge 2f
+    lea .Lmf_table(%rip), %rax
+    mov (%rax,%rdi,8), %rax
+    test %rax, %rax
+    je 2f
+    mov %rsi, %rdi
+    mov %rax, %rsi
+    jmp fputs@PLT
+2:
+    mov $-1, %rax
+    ret
+
+.p2align 4
+.Lmf_read_at:
+    cmp $3, %edi
+    jl 2f
+    cmp $256, %edi
+    jge 2f
+    lea .Lmf_table(%rip), %rax
+    mov (%rax,%rdi,8), %rax
+    test %rax, %rax
+    je 2f
+    push %rbx
+    push %r12
+    sub $8, %rsp
+    mov %rax, %rbx
+    mov %rsi, %r12
+    lea (%r12,%rdx), %rdi
+    mov %rcx, %rdx
+    mov $1, %esi
+    mov %rbx, %rcx
+    call fread@PLT
+    add $8, %rsp
+    pop %r12
+    pop %rbx
+    ret
+2:
+    mov $-1, %rax
+    ret
+
+.p2align 4
+.Lmf_write_at:
+    cmp $3, %edi
+    jl 2f
+    cmp $256, %edi
+    jge 2f
+    lea .Lmf_table(%rip), %rax
+    mov (%rax,%rdi,8), %rax
+    test %rax, %rax
+    je 2f
+    push %rbx
+    push %r12
+    sub $8, %rsp
+    mov %rax, %rbx
+    mov %rsi, %r12
+    lea (%r12,%rdx), %rdi
+    mov %rcx, %rdx
+    mov $1, %esi
+    mov %rbx, %rcx
+    call fwrite@PLT
+    add $8, %rsp
+    pop %r12
+    pop %rbx
+    ret
+2:
+    mov $-1, %rax
+    ret
+
+.p2align 4
+.Lmf_size:
+    cmp $3, %edi
+    jl 2f
+    cmp $256, %edi
+    jge 2f
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $8, %rsp
+    mov %edi, %ebx
+    lea .Lmf_table(%rip), %rax
+    mov (%rax,%rbx,8), %r12
+    test %r12, %r12
+    je 3f
+    mov %r12, %rdi
+    call ftell@PLT
+    mov %rax, %r13
+    mov %r12, %rdi
+    xor %esi, %esi
+    mov $1, %edx
+    call fseek@PLT
+    mov %r12, %rdi
+    call ftell@PLT
+    mov %rax, %r14
+    mov %r12, %rdi
+    mov %r13, %rsi
+    xor %edx, %edx
+    call fseek@PLT
+    mov %r14, %rax
+    jmp 4f
+3:
+    mov $-1, %rax
+4:
+    add $8, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    ret
+2:
+    mov $-1, %rax
+    ret
+
+.p2align 4
+.Lmf_pread_at:
+    cmp $3, %edi
+    jl 2f
+    cmp $256, %edi
+    jge 2f
+    lea .Lmf_table(%rip), %rax
+    mov (%rax,%rdi,8), %rax
+    test %rax, %rax
+    je 2f
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $8, %rsp
+    mov %rax, %r14
+    mov %rsi, %r12
+    add %rdx, %r12
+    mov %rcx, %r13
+    mov %r8, %rsi
+    mov %r14, %rdi
+    xor %edx, %edx
+    call fseek@PLT
+    mov %r12, %rdi
+    mov $1, %esi
+    mov %r13, %rdx
+    mov %r14, %rcx
+    call fread@PLT
+    add $8, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    ret
+2:
+    mov $-1, %rax
+    ret
+"#);
     // Parallel-for runtime: fixed fan-out of four pthreads (main thread takes
     // the first chunk). Each worker calls the generated body function with
     // (ctx, lo, hi).
@@ -8502,8 +8816,8 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str("    test %eax, %eax\n    js 3f\n    mov %ebx, %edi\n    mov $16, %esi\n    call listen@PLT\n");
     out.push_str("    test %eax, %eax\n    js 3f\n    mov %ebx, %eax\n    add $16, %rsp\n");
     out.push_str("1:\n    add $8, %rsp\n    pop %r12\n    pop %rbx\n    ret\n");
-    out.push_str("3:\n    mov %ebx, %edi\n    call close@PLT\n    mov $-1, %eax\n    add $16, %rsp\n    jmp 1b\n");
-    out.push_str("2:\n    mov $-1, %eax\n    jmp 1b\n");
+    out.push_str("3:\n    mov %ebx, %edi\n    call close@PLT\n    mov $-1, %rax\n    add $16, %rsp\n    jmp 1b\n");
+    out.push_str("2:\n    mov $-1, %rax\n    jmp 1b\n");
     out.push_str(".p2align 4\n.Lnet_connect:\n    push %rbx\n    push %r12\n    push %r13\n    sub $16, %rsp\n");
     out.push_str("    mov %esi, %r12d\n    call inet_addr@PLT\n    mov %eax, 4(%rsp)\n");
     out.push_str("    movw $2, (%rsp)\n    mov %r12d, %eax\n    rol $8, %ax\n    movw %ax, 2(%rsp)\n");
@@ -8511,7 +8825,7 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str("    test %eax, %eax\n    js 2f\n    mov %eax, %ebx\n    mov %ebx, %edi\n    mov %rsp, %rsi\n");
     out.push_str("    mov $16, %edx\n    call connect@PLT\n    test %eax, %eax\n    js 3f\n");
     out.push_str("    mov %ebx, %eax\n1:\n    add $16, %rsp\n    pop %r13\n    pop %r12\n    pop %rbx\n    ret\n");
-    out.push_str("3:\n    mov %ebx, %edi\n    call close@PLT\n2:\n    mov $-1, %eax\n    jmp 1b\n");
+    out.push_str("3:\n    mov %ebx, %edi\n    call close@PLT\n2:\n    mov $-1, %rax\n    jmp 1b\n");
     // String helpers with the native backend's NULL-safe semantics.
     out.push_str(".p2align 4\n.Lmf_str_len:\n    test %rdi, %rdi\n    je 2f\n");
     out.push_str("    jmp strlen@PLT\n2:\n    xor %eax, %eax\n    ret\n");
@@ -8525,23 +8839,6 @@ pub fn emit(prog: &IrProgram) -> String {
     out.push_str("1:\n    test %rsi, %rsi\n    jne 2f\n    xor %eax, %eax\n    ret\n");
     out.push_str("2:\n    sub $8, %rsp\n    call strcmp@PLT\n    add $8, %rsp\n");
     out.push_str("    test %eax, %eax\n    sete %al\n    movzbq %al, %rax\n    ret\n");
-    // pread_at(fd, buf, off_in_buf, len, file_off): seek then read into the
-    // buffer fragment, matching the native backend exactly.
-    out.push_str(".p2align 4\n.Lmf_pread_at:\n");
-    out.push_str("    push %rbx\n    push %r12\n    push %r13\n    sub $8, %rsp\n");
-    out.push_str("    mov %rdi, %rbx\n    lea (%rsi,%rdx), %r12\n    mov %rcx, %r13\n");
-    out.push_str("    mov %r8, %rsi\n    mov %rbx, %rdi\n    xor %edx, %edx\n");
-    out.push_str("    call fseek@PLT\n");
-    out.push_str("    mov %r12, %rdi\n    mov $1, %esi\n    mov %r13, %rdx\n    mov %rbx, %rcx\n");
-    out.push_str("    call fread@PLT\n");
-    out.push_str("    add $8, %rsp\n    pop %r13\n    pop %r12\n    pop %rbx\n    ret\n");
-    // file_size: save position, seek to end, tell, restore.
-    out.push_str(".p2align 4\n.Lmf_size:\n    push %rbx\n    push %r12\n    push %r13\n    sub $8, %rsp\n    mov %rdi, %rbx\n");
-    out.push_str("    call ftell@PLT\n    mov %rax, %r13\n");
-    out.push_str("    mov %rbx, %rdi\n    xor %esi, %esi\n    mov $1, %edx\n    call fseek@PLT\n");
-    out.push_str("    mov %rbx, %rdi\n    call ftell@PLT\n    mov %rax, %r12\n");
-    out.push_str("    mov %rbx, %rdi\n    mov %r13, %rsi\n    xor %edx, %edx\n    call fseek@PLT\n");
-    out.push_str("    mov %r12, %rax\n    add $8, %rsp\n    pop %r13\n    pop %r12\n    pop %rbx\n    ret\n");
     // Arena blocks: allocations are anonymous mmap regions (lazily zeroed
     // pages) that are munmap'd when the block ends, so sequential regions
     // never accumulate and untouched pages stay unreachable.
