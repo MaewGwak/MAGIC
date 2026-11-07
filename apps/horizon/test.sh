@@ -31,4 +31,12 @@ grep -q '^4G$' "$TMP/inst/memory"
 printf '/bin/echo' > "$TMP/inst/java"
 "$TMP/horizon" launch "$TMP/inst" | tee "$TMP/out" | grep -q 'launching: /bin/echo -Xmx4G'
 grep -q -- '-Xmx4G' "$TMP/out"
+printf '#!/bin/sh\nexit 7\n' > "$TMP/failjava"; chmod +x "$TMP/failjava"
+"$TMP/horizon" set "$TMP/inst" java "$TMP/failjava" >/dev/null
+"$TMP/horizon" set "$TMP/inst" main Whatever >/dev/null
+set +e
+"$TMP/horizon" launch "$TMP/inst" >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" != 7 ]; then echo "expected exit 7, got $rc"; exit 1; fi
 echo "horizon launcher smoke test passed"

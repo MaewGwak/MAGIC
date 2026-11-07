@@ -1,0 +1,5 @@
+*.c
+*.flags
+*.o
+*.s
+horizon

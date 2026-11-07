@@ -411,7 +411,8 @@ fn main() {
 
         var line = str_cat(java, str_cat(" -Xmx", str_cat(memory, str_cat(" ", jvmargs))));
         if str_eq(jar, "") {
-            line = str_cat(line, str_cat(" -cp ", str_cat(classpath, str_cat(" ", main))));
+            if !str_eq(classpath, "") { line = str_cat(line, str_cat(" -cp ", classpath)); }
+            line = str_cat(line, str_cat(" ", main));
         } else {
             line = str_cat(line, str_cat(" -jar ", jar));
         }
@@ -421,6 +422,7 @@ fn main() {
         if rc != 0 {
             print("horizon: java exited non-zero");
         }
+        proc_exit(rc);
         return;
     }
 

@@ -1039,6 +1039,11 @@ impl Checker {
                     }
                     return Ok(Ty::Void);
                 }
+                if name == "proc_exit" {
+                    if args.len() != 1 { return Err(format!("{}: proc_exit takes 1 argument", e.line)); }
+                    self.check_expr(&args[0], Some(Ty::I32), scopes)?;
+                    return Ok(Ty::Void);
+                }
                 if name == "sha1_file" {
                     if args.len() != 3 { return Err(format!("{}: sha1_file takes 3 arguments", e.line)); }
                     self.check_expr(&args[0], Some(Ty::Str), scopes)?;

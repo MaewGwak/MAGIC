@@ -454,11 +454,12 @@ fn header_base(prog: &Program) -> String {
     for f in &prog.funcs {
         collect_calls(&f.body, &mut all_calls);
     }
-    let uses_launcher = ["str_cat", "str_from_bytes", "proc_run", "dir_mkdir", "path_exists", "dir_list"]
+    let uses_launcher = ["str_cat", "str_from_bytes", "proc_run", "dir_mkdir", "path_exists", "dir_list", "proc_exit"]
         .iter().any(|n| all_calls.contains(*n));
     let uses_perm = all_calls.iter().any(|n| n.starts_with("perm_") || n.starts_with("cnt_"));
     if uses_launcher {
         out.push_str(r#"#include <sys/stat.h>
+#include <sys/wait.h>
 #include <dirent.h>
 static inline const char *magic_str_cat(const char *a, const char *b) {
     size_t na = strlen(a), nb = strlen(b);
@@ -471,7 +472,13 @@ static inline const char *magic_str_from_bytes(uint8_t *b, int32_t len) {
     b[len] = 0;
     return (const char*)b;
 }
-static inline int32_t magic_proc_run(const char *cmd) { return system(cmd); }
+static inline int32_t magic_proc_run(const char *cmd) {
+    int st = system(cmd);
+    if (st == -1) return -1;
+    if (WIFEXITED(st)) return WEXITSTATUS(st);
+    return st;
+}
+static inline void magic_proc_exit(int32_t code) { exit(code); }
 static inline int32_t magic_dir_mkdir(const char *path) {
 #ifdef _WIN32
     return _mkdir(path);
@@ -1503,6 +1510,9 @@ fn expr(e: &Expr) -> String {
                     expr(&args[0]),
                     expr(&args[1])
                 );
+            }
+            if name == "proc_exit" && args.len() == 1 {
+                return format!("magic_proc_exit((int32_t)({}))", expr(&args[0]));
             }
             if name == "sha1_file" && args.len() == 3 {
                 return format!("magic_sha1_file(({}), ({}), (int32_t)({}))", expr(&args[0]), expr(&args[1]), expr(&args[2]));
