@@ -87,6 +87,12 @@ magicc build big.magic --unroll              # unroll small constant for-loops (
 magicc build main.magic lib.magic             # several files compile as one program, in order
 ```
 
+## AI hardware reality check
+
+[`AI-ON-CHIP.md`](AI-ON-CHIP.md) separates on-chip SRAM/dataflow advantages
+from the physics of this laptop (30 GiB shared RAM, no discrete GPU), with
+weight/KV-cache arithmetic and an honest 7B/27B/1M-context target ladder.
+
 ## Competitor baseline
 
 [`COMPETITORS.md`](COMPETITORS.md) analyses Goose — the closest no-heap,
