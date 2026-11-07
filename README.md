@@ -87,6 +87,12 @@ magicc build big.magic --unroll              # unroll small constant for-loops (
 magicc build main.magic lib.magic             # several files compile as one program, in order
 ```
 
+## Production roadmap
+
+MAGIC 0.12.x is an experimental base, not a Rust replacement yet. The production
+plan, safety gates, AI/web scope and Horizon comparison are in
+[`PRODUCTION.md`](PRODUCTION.md). No 1.0.0 until those gates pass.
+
 ## Editor support
 
 A VS Code extension lives in [`editors/vscode`](editors/vscode/): syntax
