@@ -2,7 +2,7 @@
 
 **M**emory-**A**ware **G**enerated **I**ntermediate **C**ode — a small systems language.
 
-**Status: v0.12 (0.12.4)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
+**Status: v0.12 (0.12.5)** — 171 tests green, eight benchmark workloads, no runtime and no GC.
 The compiler is dependency-free Rust; programs go source → tokens → AST → type check → typed IR →
 GNU assembler → native binary. A C11 backend remains available for comparison.
 
@@ -163,43 +163,40 @@ and array elements; struct arrays inside an arena are not supported yet. Growabl
 top-level locals or parameters. `return` and `break`/`continue` inside an arena are
 rejected. Integer overflow is not trapped.
 
-## Benchmarks
+## Performance and memory: no speed headline
 
-All timings are wall-clock medians of 3–5 warm runs in **milliseconds (ms)**, lower is better, on the
-same host (Ryzen AI 7 350, gcc 16.2, clang 22.1, rustc 1.99). This is the **1.0 performance gate**
-enforced by `verify.sh`. Baselines use `gcc/g++ -O3 -march=native` and
-`rustc -O -C target-cpu=native`; the optimized MAGIC path uses the explicit clang C backend for all
-eight workloads. Ties are acceptable per owner guidance.
+**MAGIC does not claim to be faster than optimized C, C++ or Rust.** An independent
+audit compared the same algorithm and compiler on all eight workloads and found no
+workload where MAGIC wins; the earlier "20–50x" table compared algorithmic variants
+(blocked sieve, closed-form particles, level-order trees, `par for`) with the original
+C sources. That table has been removed from the headline. Algorithmic variants are
+still documented in [`BENCHMARKS.md`](BENCHMARKS.md) with an explicit label.
 
-| Workload | C (ms) | C++ (ms) | Rust (ms) | Fastest (ms) | MAGIC (ms) |
-|---|---:|---:|---:|---:|---:|
-| sieve 100M | 403 | 389 | 398 | **389** (C++) | **17** |
-| fannkuch n=10 | 154 | 160 | **146** | **146** (Rust) | **27** |
-| ray tracer 1536² | 29 | 33 | 31 | **29** (C) | **8** |
-| hash 1M | 25 | 27 | **23** | **23** (Rust) | **4** |
-| particles 1M × 100 | 66 | 66 | 131 | **66** (C/C++) | **3** |
-| n-body 10M | 328 | 326 | **219** | **219** (Rust) | **199** |
-| binary trees | **697** | — | 1279 | **697** (C) | **2** |
-| matmul 384 | **4** | 5 | 24 | **4** (C) | **3** |
+What is reproducible on this machine:
 
-Source files: C `bench-suite/*_c.c` (bt: `bench-bt/bt_c.c`), C++ `bench-suite/*_cpp.cpp`, Rust
-`bench-suite/*_rs.rs` (bt: `bench-bt/bt_rust_flat.rs`), MAGIC `bench-suite/*_magic*.magic` and
-`bench-bt/bt_magic_loop.magic`. `bench-parity-gate.sh` builds and checks exact output tails; see
-BENCHMARKS for the full method and fairness caveats.
+- **Compile time**: 25 ms cold for the 2,000-function source vs gcc 47 ms and rustc 109 ms;
+  10 ms incremental rebuild.
+- **Static binary / floor**: 13,224-byte `hello` static ELF with no libc/PT_INTERP; native
+  IR path, no C compiler.
+- **Static peak RSS**: the table below; it compares the freestanding static layout with
+  dynamically linked baselines, so it is a deployability result, not a same-allocator proof.
+- **Diagnostics**: bounds/div-zero panics report `file:line` plus a stack trace.
+- **No GC**; arrays/vectors/arena have deterministic ownership.
 
-For the speed path, `--fast` selects the explicit C backend with `-O3 -march=native` and prefers
-clang when available. It needs a C compiler and is not the native/no-C path; measured on n-body it
-is ~196–201 ms with clang vs 613 ms native (and ~326 ms with gcc).
+Known losses and gaps (must stay visible):
 
-**This is not a best-of claim.** A separate independent best-of suite (`bench-best/RESULTS.md`)
-shows MAGIC wins fannkuch (8 ms vs Rust 9.01), raytrace (2 ms vs C/C++ 3.23) and sieve; the other
-five workloads are ties at the process/start-up floor (0.01–0.16 ms) with no algorithmic loss
-(owner-approved tie rule); an untuned default MAGIC user does not beat best C/C++/Rust. The
-table above is the 1.0 gate against the original-algorithm optimized baselines. See BENCHMARKS.
+- Native IR n-body is **613 ms** vs Rust 219 ms; fannkuch native 63 ms vs 9 ms;
+  raytrace 7.3 ms vs 3.2 ms.
+- The fannkuch 8 ms and raytrace 2 ms entries use the **clang/gcc C backend plus
+  benchmark-specific algorithms/SIMD**, not MAGIC codegen; they are not a language-speed win.
+- i32 index arithmetic can wrap and bypass a bounds check; `[T+]` growth can invalidate a
+  `[T]` view (known heap-use-after-free); `--report` is a syntactic bound, not a proof.
+  These are tracked as safety blockers before 1.0.0.
 
-Native no-C fallback (for `--static`/no C compiler) remains available but is not the speed headline:
-sieve 33 ms, fannkuch 60 ms, matmul 6 ms, n-body 613 ms, raytrace 17 ms, hash 4 ms, particles 4 ms,
-binary trees 442 ms.
+C/C++/Rust columns in this README are optimized builds (`-O3 -march=native`,
+`rustc -O -C target-cpu=native`). Files, flags and the fairness caveat are in
+[`BENCHMARKS.md`](BENCHMARKS.md); `bench-parity-gate.sh` is the old original-algorithm
+gate and is not evidence of same-algorithm performance.
 
 ### Static peak RSS
 

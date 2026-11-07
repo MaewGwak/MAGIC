@@ -1,3 +1,13 @@
+## v0.12.5 — remove misleading speed headline (2026-11-07)
+
+Removed the README table that compared algorithmic variants/threading with the original C
+sources and was read as "20–50x faster". README now states no same-algorithm speed claim,
+lists the measured native losses and the three safety blockers, and points to the
+experimental algorithmic tables only. STATUS.md was rewritten from the stale "C parity on
+every workload" scoreboard to proven facts vs known losses. Fixed in 0.12.x immediately
+before this: tracked `runtime/static_runtime.s`, native i64 casts, argc/argv promotion,
+native file fd table/cap checks, and clean-clone `verify.sh -Fast`.
+
 ## v0.12.4 — VS Code extension (2026-11-07)
 
 Added `editors/vscode`: TextMate grammar for MAGIC, language configuration,
