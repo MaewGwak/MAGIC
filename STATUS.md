@@ -12,7 +12,7 @@ correctness/safety and a real memory-bound proof, not benchmark theatre.
 - **172 tests, all green** on a clean clone (`cargo test`; two skipped only if a C compiler is absent).
 - **Compile speed**: 25 ms cold / 10 ms incremental for the 2,000-function source
   (gcc 47 ms, rustc 109 ms).
-- **Static floor**: 13,224-byte `hello` static ELF, no libc or PT_INTERP; native IR path
+- **Static floor**: 5,208-byte `hello` static ELF, no libc or PT_INTERP; native IR path
   needs no C compiler.
 - **Normal safety checks**: `a[4]`, `a[-1]`, `a[len]`, huge simple indices, division and
   modulo by zero panic with `file:line` and exit 1.

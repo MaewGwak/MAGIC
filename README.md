@@ -176,7 +176,7 @@ What is reproducible on this machine:
 
 - **Compile time**: 25 ms cold for the 2,000-function source vs gcc 47 ms and rustc 109 ms;
   10 ms incremental rebuild.
-- **Static binary / floor**: 13,224-byte `hello` static ELF with no libc/PT_INTERP; native
+- **Static binary / floor**: 5,208-byte `hello` static ELF with no libc/PT_INTERP; native
   IR path, no C compiler.
 - **Static peak RSS**: the table below; it compares the freestanding static layout with
   dynamically linked baselines, so it is a deployability result, not a same-allocator proof.
